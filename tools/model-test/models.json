@@ -1,0 +1,42 @@
+{
+  "_note": "Prices are third-party figures from Aug 2026 (invideo.io, myarchitectai.com). Check them against platform.openai.com/docs/pricing and ai.google.dev/gemini-api/docs/pricing before deciding. Model IDs can change: run with --list-gemini to see the Gemini image models your key can use.",
+  "models": [
+    {
+      "id": "openai-gpt-image-2",
+      "provider": "openai",
+      "model": "gpt-image-2",
+      "size": "1536x1024",
+      "quality": "medium",
+      "pricing": { "text_in_per_m": 5, "image_in_per_m": 8, "image_out_per_m": 30 }
+    },
+    {
+      "id": "openai-gpt-image-1-mini",
+      "provider": "openai",
+      "model": "gpt-image-1-mini",
+      "size": "1536x1024",
+      "quality": "medium",
+      "pricing": { "text_in_per_m": 2, "image_in_per_m": 2.5, "image_out_per_m": 8 }
+    },
+    {
+      "id": "gemini-2.5-flash-image",
+      "provider": "google",
+      "model": "gemini-2.5-flash-image",
+      "pricing": { "per_image": 0.039 }
+    },
+    {
+      "id": "gemini-3.1-flash-image",
+      "provider": "google",
+      "model": "gemini-3.1-flash-image-preview",
+      "image_size": "1K",
+      "pricing": { "per_image": 0.067 }
+    },
+    {
+      "id": "gemini-3-pro-image",
+      "provider": "google",
+      "model": "gemini-3-pro-image-preview",
+      "image_size": "1K",
+      "enabled": false,
+      "pricing": { "per_image": 0.134 }
+    }
+  ]
+}
