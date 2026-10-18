@@ -1,0 +1,279 @@
+// Tryora database schema (PostgreSQL).
+// This database never stores image bytes, base64 data, room-photo URLs, EXIF data or thumbnails.
+// Merchant product references are stored as Shopify media IDs only; the images stay in Shopify.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Shopify session storage (required by the Shopify app template) ----------
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+// ---------- Shops and settings ----------
+
+model Shop {
+  id               String   @id // myshopify domain
+  installState     String   @default("installed") // installed | uninstalled
+  timezone         String?
+  settingsVersion  Int      @default(1)
+  leadCapture      String   @default("required") // off | required | skippable
+  paidPlanActive   Boolean  @default(false)
+  storefrontEnabled Boolean @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  quotaPolicy   QuotaPolicy?
+  appearance    Appearance[]
+  products      ProductPreviewConfig[]
+  ledger        CreditLedgerEntry[]
+  jobs          PreviewJob[]
+  quotaUsage    QuotaUsage[]
+  entitlement   BillingEntitlement?
+  campaigns     Campaign[]
+  leads         LeadDelivery[]
+  consents      ConsentRecord[]
+  issues        IssueReport[]
+  events        Event[]
+}
+
+model QuotaPolicy {
+  shopId       String   @id
+  shop         Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  enabled      Boolean  @default(false)
+  perProduct   Int?
+  storeWide    Int?
+  windowType   String   @default("rolling") // rolling | manual
+  windowHours  Int      @default(24)
+  resetEpoch   DateTime?
+  updatedAt    DateTime @updatedAt
+}
+
+/// Template, brand tokens, copy and launcher placement. Store default (scope "store") plus product/collection overrides.
+model Appearance {
+  id          String   @id @default(uuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  scope       String   @default("store") // store | product | collection
+  scopeId     String?
+  template    String   @default("gallery") // gallery | atelier | noir | hearth | studio
+  tokens      Json     // colours, fonts, radius, logo media id
+  copy        Json     // merchant wording overrides
+  launchers   Json     // launcher types, styles, positions, mobile/desktop visibility
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shopId, scope, scopeId])
+}
+
+// ---------- Product setup ----------
+
+model ProductPreviewConfig {
+  id                 String   @id @default(uuid())
+  shopId             String
+  shop               Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productId          String   // Shopify product GID
+  enabled            Boolean  @default(false)
+  visualOptionName   String?  // the one previewable option, e.g. "Colour"; null for single-style products
+  visualOptionType   String?  // colour | design | configuration
+  frozenContext      Json     // fixed values of all other options
+  readiness          String   @default("needs_attention") // ready | needs_attention | not_eligible
+  readinessReasons   Json     @default("[]")
+  subjectCrop        Json?    // merchant-confirmed sold item outline on staged photos
+  referenceMediaId   String?  // approved product reference (Shopify media GID)
+  referenceAngle     String?  // front | diagonal | side
+  templateOverride   String?
+  updatedAt          DateTime @updatedAt
+
+  choices VisualChoice[]
+
+  @@unique([shopId, productId])
+}
+
+model VisualChoice {
+  id                String   @id @default(uuid())
+  configId          String
+  config            ProductPreviewConfig @relation(fields: [configId], references: [id], onDelete: Cascade)
+  optionValue       String
+  variantIds        Json     // eligible Shopify variant GIDs
+  approvedMediaIds  Json     // product photos for this exact choice (Shopify media GIDs)
+  swatchMediaId     String?
+  angle             String?
+  referenceVersion  String   // changes whenever underlying reference content changes
+  available         Boolean  @default(true)
+  unavailableReason String?
+
+  @@unique([configId, optionValue])
+}
+
+// ---------- Credits, jobs and limits ----------
+
+/// Append-only. Balances are derived from these rows; nothing updates or deletes them.
+model CreditLedgerEntry {
+  id        String    @id @default(uuid())
+  shopId    String
+  shop      Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  type      String    // GRANT | RESERVE | CONSUME | RELEASE
+  quantity  Int
+  reference String    // e.g. grant:trial, grant:period:<id>, grant:topup:<chargeId>, reserve:<jobId>, refund:<jobId>
+  bucket    String?   // trial | period | refund | topup
+  grantId   String?
+  jobId     String?
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@unique([shopId, reference])
+  @@index([shopId, type])
+  @@index([jobId])
+}
+
+model PreviewJob {
+  id                     String    @id @default(uuid())
+  shopId                 String
+  shop                   Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  idempotencyKey         String
+  visitorId              String
+  verifiedCustomerId     String?
+  productId              String
+  optionValue            String
+  referenceVersion       String
+  roomPhotoHash          String    // opaque hash for "same room" checks; not the image
+  state                  String
+  reasonCode             String?
+  providerRequestId      String?
+  providerModel          String?
+  promptVersion          String?
+  attempts               Int       @default(0)
+  deliveryToken          String?
+  deliveryTokenExpiresAt DateTime?
+  costMicros             Int       @default(0)
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
+  deliveredAt            DateTime?
+  refundedAt             DateTime?
+
+  @@unique([shopId, idempotencyKey])
+  @@index([shopId, state])
+  @@index([state, updatedAt])
+}
+
+model QuotaUsage {
+  jobId              String    @id
+  shopId             String
+  shop               Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  visitorId          String
+  verifiedCustomerId String?
+  productId          String
+  state              String    // RESERVED | DELIVERED | RELEASED
+  reservedAt         DateTime
+  deliveredAt        DateTime?
+
+  @@index([shopId, visitorId])
+  @@index([shopId, verifiedCustomerId])
+}
+
+model BillingEntitlement {
+  shopId            String    @id
+  shop              Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  plan              String    @default("trial") // trial | starter | growth | scale | none
+  status            String    @default("trial") // trial | active | pending | cancelled | frozen
+  subscriptionId    String?   // Shopify AppSubscription GID
+  currentPeriodId   String?
+  currentPeriodEnds DateTime?
+  trialStartedAt    DateTime?
+  autoTopUp         Boolean   @default(false)
+  monthlySpendCapCents Int?
+  updatedAt         DateTime  @updatedAt
+}
+
+// ---------- Offers, leads and consent ----------
+
+model Campaign {
+  id                 String   @id @default(uuid())
+  shopId             String
+  shop               Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  mode               String   @default("off") // off | offer
+  productScope       Json     @default("[]")
+  discountId         String?  // existing Shopify discount GID
+  code               String?
+  copy               Json
+  validitySnapshot   Json?    // real discount rules captured when connected
+  active             Boolean  @default(true)
+  updatedAt          DateTime @updatedAt
+}
+
+/// Minimal record of a lead sent to the merchant's Shopify customer system. No images, ever.
+model LeadDelivery {
+  id                 String   @id @default(uuid())
+  shopId             String
+  shop               Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customerRef        String?  // Shopify customer GID once created/updated
+  productId          String
+  optionValue        String?
+  campaignId         String?
+  status             String   // queued | accepted | failed
+  retryCount         Int      @default(0)
+  lastError          String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model ConsentRecord {
+  id            String   @id @default(uuid())
+  shopId        String
+  shop          Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  subjectRef    String   // Shopify customer GID or hashed email
+  wording       String   // exact checkbox wording shown
+  wordingVersion String
+  action        String   // granted | not_granted
+  channel       String   @default("email")
+  createdAt     DateTime @default(now())
+}
+
+model IssueReport {
+  id          String   @id @default(uuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  jobId       String
+  category    String   // wrong_product | wrong_colour | room_changed | placement_problem
+  outcome     String?  // confirmed | unconfirmed | analysis_failed
+  refundRef   String?
+  createdAt   DateTime @default(now())
+}
+
+/// Allowlisted, non-image analytics events.
+model Event {
+  id         String   @id @default(uuid())
+  shopId     String
+  shop       Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name       String   // open | upload_complete | input_rejected | lead_captured | delivered | download | offer_copy | ...
+  productId  String?
+  option     String?
+  jobId      String?
+  campaignId String?
+  template   String?
+  device     String?
+  createdAt  DateTime @default(now())
+
+  @@index([shopId, name, createdAt])
+}
