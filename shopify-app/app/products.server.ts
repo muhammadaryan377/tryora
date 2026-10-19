@@ -76,6 +76,8 @@ export async function getShopProduct(admin: AdminApiContext, id: string): Promis
 /** Default shopper-facing word from the Shopify product type, e.g. "Sofas" -> "sofa". */
 export function defaultNoun(productType: string, title: string): string {
   const base = (productType || title.split(" ").slice(-1)[0] || "item").trim().toLowerCase();
+  if (base.endsWith("ies")) return base.slice(0, -3) + "y"; // accessories -> accessory
+  if (/(ch|sh|x)es$/.test(base)) return base.slice(0, -2); // benches -> bench
   return base.endsWith("s") && !base.endsWith("ss") ? base.slice(0, -1) : base;
 }
 
