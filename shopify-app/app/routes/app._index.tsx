@@ -4,10 +4,11 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { tryora } from "../tryora.server";
+import { salesReport } from "../attribution.server";
 import { TRIAL_CREDITS } from "../core/index";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shopId = session.shop;
 
   // The free trial starts the first time the merchant opens Tryora. Safe to call on every visit.
@@ -27,8 +28,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.leadDelivery.count({ where: { shopId, createdAt: { gte: monthStart } } }),
   ]);
 
+  const sales = await salesReport(admin, shopId);
+
   return {
     shop: shopId,
+    sales: sales?.show ? sales : null,
     credits: { available: balance.availableTotal, reserved: balance.reserved },
     trial: {
       active: trial.started && trial.active,
@@ -47,6 +51,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     month: { previews: previewsThisMonth, leads: leadsThisMonth },
   };
 };
+
+function money(amount: number, currency: string) {
+  return new Intl.NumberFormat("en-GB", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
+}
 
 function daysLeft(iso: string | null) {
   if (!iso) return 0;
@@ -107,6 +115,31 @@ export default function Dashboard() {
             See plans
           </s-button>
         </s-banner>
+      )}
+
+      {d.sales && (
+        <s-section heading="Sales from Tryora – last 30 days">
+          <s-grid gridTemplateColumns="repeat(auto-fit, minmax(160px, 1fr))" gap="base">
+            <s-box padding="base" background="subdued" borderRadius="base">
+              <s-text color="subdued">Sales</s-text>
+              <s-heading>{money(d.sales.sales, d.sales.currency)}</s-heading>
+            </s-box>
+            <s-box padding="base" background="subdued" borderRadius="base">
+              <s-text color="subdued">Orders</s-text>
+              <s-heading>{d.sales.orders}</s-heading>
+            </s-box>
+            <s-box padding="base" background="subdued" borderRadius="base">
+              <s-text color="subdued">Return on Tryora</s-text>
+              <s-heading>{d.sales.roas}×</s-heading>
+            </s-box>
+          </s-grid>
+          <s-paragraph>
+            <s-text color="subdued">
+              Orders where the shopper saw the product in their own room before buying, counting only those products.
+              Compared with what you paid for Tryora over the same 30 days.
+            </s-text>
+          </s-paragraph>
+        </s-section>
       )}
 
       <s-section heading={`Get set up (${doneCount} of ${steps.length})`}>
