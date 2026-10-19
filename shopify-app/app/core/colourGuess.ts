@@ -57,7 +57,7 @@ export function guessColour(name: string): string | null {
   return base;
 }
 
-export type SwatchSource = "shopify" | "merchant" | "guess" | "missing";
+export type SwatchSource = "shopify" | "merchant" | "photo" | "guess" | "missing";
 
 export interface SwatchInput {
   value: string;
@@ -73,23 +73,37 @@ export interface ResolvedSwatch {
   source: SwatchSource;
 }
 
+export interface AutoFill {
+  /** Store-wide approval to fill missing swatches automatically (owner decision, 19 Oct 2026). */
+  approved: boolean;
+  /** Colours read from each value's own variant photo, when it has one. */
+  photoColours?: Record<string, string>;
+}
+
+const HEX = /^#[0-9a-fA-F]{6}$/;
+
 /**
- * Picks each colour's swatch: Shopify's own swatch first, then a colour the merchant set in Tryora,
- * then (only if the merchant approved guessing) a colour guessed from the name. Anything left is "missing".
+ * Picks each colour's swatch, in order: Shopify's own swatch, a colour the merchant set in Tryora, then – only if the
+ * merchant approved filling gaps automatically – the colour of that variant's photo, then a guess from the name.
+ * Anything left is "missing" and shows as a name label in the popup.
  */
 export function resolveSwatches(
   values: SwatchInput[],
   merchantColours: Record<string, string>,
-  guessApproved: boolean,
+  auto: AutoFill,
 ): ResolvedSwatch[] {
   return values.map((v) => {
     if (v.shopifyColour || v.shopifyImage) {
       return { value: v.value, colour: v.shopifyColour ?? null, image: v.shopifyImage ?? null, source: "shopify" };
     }
     const own = merchantColours[v.value];
-    if (own && /^#[0-9a-fA-F]{6}$/.test(own)) return { value: v.value, colour: own, image: null, source: "merchant" };
-    const guess = guessApproved ? guessColour(v.value) : null;
-    if (guess) return { value: v.value, colour: guess, image: null, source: "guess" };
+    if (own && HEX.test(own)) return { value: v.value, colour: own, image: null, source: "merchant" };
+    if (auto.approved) {
+      const photo = auto.photoColours?.[v.value];
+      if (photo && HEX.test(photo)) return { value: v.value, colour: photo, image: null, source: "photo" };
+      const guess = guessColour(v.value);
+      if (guess) return { value: v.value, colour: guess, image: null, source: "guess" };
+    }
     return { value: v.value, colour: null, image: null, source: "missing" };
   });
 }

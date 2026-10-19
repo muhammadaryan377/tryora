@@ -57,7 +57,9 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
 
   const optionName = config.visualOptionName;
   const option = optionName ? p.options.find((o: any) => o.name === optionName) : null;
-  const swatches: Swatch[] = (option?.optionValues ?? []).map((v: any) => {
+  // One colour (e.g. just a black sofa) needs no swatches: the product's own photos are used.
+  const values = (option?.optionValues ?? []).length > 1 ? option.optionValues : [];
+  const swatches: Swatch[] = values.map((v: any) => {
     const variants = p.variants.nodes.filter((n: any) =>
       n.selectedOptions.some((s: any) => s.name === optionName && s.value === v.name),
     );
@@ -69,11 +71,12 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
       group: null, // colour groups come from merchant settings (not built yet), so no chips show
     };
   });
+  const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
   // Fill gaps with the merchant's own colours, or name-based guesses if they approved guessing.
   const resolved = resolveSwatches(
     swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
     (config.swatchColours as Record<string, string>) ?? {},
-    config.swatchGuessApproved,
+    { approved: !!shopRow?.swatchAutoFill, photoColours: cachedPhotoColours(config.photoColours) },
   );
   swatches.forEach((s, i) => {
     s.colour = resolved[i]!.colour;
@@ -124,6 +127,12 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
       : null,
     mock: provider.capabilities().name === "mock",
   };
+}
+
+function cachedPhotoColours(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries((raw as Record<string, { colour?: string | null }>) ?? {})) if (v?.colour) out[k] = v.colour;
+  return out;
 }
 
 // ---------- Photo check (no credit used) ----------

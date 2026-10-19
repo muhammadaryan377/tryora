@@ -4,6 +4,7 @@ import { Form, useActionData, useLoaderData, useNavigation } from "react-router"
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { getShopProduct, refreshPhotoColours } from "../products.server";
 import {
   DEFAULT_WORDING,
   defaultLauncher,
@@ -30,7 +31,8 @@ async function load(shopId: string) {
   const template = (row?.template as TemplateName) ?? "gallery";
   const tokens: Tokens = { accent: null, useThemeFont: true, ...((row?.tokens as object) ?? {}) };
   const launcher: LauncherSettings = { ...defaultLauncher(template), ...((row?.launchers as object) ?? {}) };
-  return { saved: !!row, template, tokens, launcher };
+  const shop = await prisma.shop.findUnique({ where: { id: shopId } });
+  return { saved: !!row, template, tokens, launcher, swatchAutoFill: shop?.swatchAutoFill ?? false };
 }
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -39,7 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shopId = session.shop;
   const f = await request.formData();
   const template = String(f.get("template")) as TemplateName;
@@ -64,7 +66,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     accent: /^#[0-9a-fA-F]{6}$/.test(accent) ? accent : null,
     useThemeFont: f.get("useThemeFont") === "on",
   };
-  await prisma.shop.upsert({ where: { id: shopId }, create: { id: shopId }, update: {} });
+  const swatchAutoFill = f.get("swatchAutoFill") === "on";
+  const before = await prisma.shop.findUnique({ where: { id: shopId } });
+  await prisma.shop.upsert({ where: { id: shopId }, create: { id: shopId, swatchAutoFill }, update: { swatchAutoFill } });
+  if (swatchAutoFill && !before?.swatchAutoFill) {
+    // Read variant-photo colours for live products now, so shoppers see swatches straight away.
+    const configs = await prisma.productPreviewConfig.findMany({ where: { shopId, enabled: true }, take: 50 });
+    for (const c of configs) {
+      const product = await getShopProduct(admin, c.productId);
+      if (!product) continue;
+      const next = await refreshPhotoColours(product, c.visualOptionName, (c.photoColours as any) ?? {});
+      if (next) await prisma.productPreviewConfig.update({ where: { id: c.id }, data: { photoColours: next as object } });
+    }
+  }
   const existing = await prisma.appearance.findFirst({ where: { shopId, scope: "store", scopeId: null } });
   const data = { template, tokens: tokens as object, launchers: launcher as object, copy: {} };
   if (existing) await prisma.appearance.update({ where: { id: existing.id }, data });
@@ -87,6 +101,7 @@ export default function Appearance() {
   const [themeButton, setThemeButton] = useState(d.launcher.background === null);
   const [accent, setAccent] = useState(d.tokens.accent ?? "");
   const [themeFont, setThemeFont] = useState(d.tokens.useThemeFont);
+  const [autoSwatch, setAutoSwatch] = useState(d.swatchAutoFill);
   const val = (e: any) => e.currentTarget.value as string;
   const checked = (e: any) => !!e.currentTarget.checked;
   const showTryoraButton = mode !== "own";
@@ -105,6 +120,7 @@ export default function Appearance() {
         {mobile && <input type="hidden" name="showOnMobile" value="on" />}
         {themeButton && <input type="hidden" name="useThemeButton" value="on" />}
         {themeFont && <input type="hidden" name="useThemeFont" value="on" />}
+        {autoSwatch && <input type="hidden" name="swatchAutoFill" value="on" />}
 
         {result?.ok && (
           <s-banner tone="success" heading="Saved">
@@ -158,6 +174,15 @@ export default function Appearance() {
             value={accent}
             onInput={(e: any) => setAccent(val(e))}
             details="Used for the main buttons. Leave empty to keep the style's colour."
+          />
+        </s-section>
+
+        <s-section heading="Colour swatches">
+          <s-switch
+            label="Fill missing swatches automatically"
+            checked={autoSwatch || undefined}
+            onChange={(e: any) => setAutoSwatch(checked(e))}
+            details="For colours with no swatch in Shopify, Tryora uses the colour of that variant's photo, or guesses from the name (e.g. Navy, Oatmeal). Check them on each product and change any that look wrong. When off, those colours show as their name."
           />
         </s-section>
 

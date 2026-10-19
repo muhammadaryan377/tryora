@@ -44,6 +44,7 @@ model Shop {
   leadSettings     Json     @default("{}")      // opt-in checkbox on/off and wording, customer tag
   paidPlanActive   Boolean  @default(false)
   storefrontEnabled Boolean @default(false)
+  swatchAutoFill   Boolean  @default(false) // merchant approved filling missing swatches from variant photos and colour names
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -110,7 +111,8 @@ model ProductPreviewConfig {
   referenceAngle     String?  // front | diagonal | side
   templateOverride   String?
   swatchColours      Json     @default("{}") // merchant-set swatch colours by option value, e.g. {"Oat":"#d8c6ae"}
-  swatchGuessApproved Boolean @default(false) // merchant approved guessing colours from names for values with no swatch
+  swatchGuessApproved Boolean @default(false) // superseded by Shop.swatchAutoFill (kept for existing rows)
+  photoColours       Json     @default("{}") // cache: colour read from each value's variant photo, {"Navy":{"url":"…","colour":"#…"}}
   updatedAt          DateTime @updatedAt
 
   choices VisualChoice[]

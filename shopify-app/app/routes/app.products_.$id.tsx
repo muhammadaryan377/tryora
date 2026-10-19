@@ -3,10 +3,9 @@ import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "re
 import { Form, redirect, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { getShopProduct, productRows, saveProductConfig } from "../products.server";
+import prisma from "../db.server";
+import { getShopProduct, productRows, refreshPhotoColours, saveProductConfig, swatchesFor } from "../products.server";
 import type { Placement } from "../core/index";
-// Imported directly (not via core/index) so no server-only code reaches the browser.
-import { resolveSwatches } from "../core/colourGuess";
 
 const gid = (id: string) => `gid://shopify/Product/${id}`;
 
@@ -14,8 +13,24 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const product = await getShopProduct(admin, gid(params.id!));
   if (!product) throw new Response("Product not found", { status: 404 });
+  // If the merchant approved auto-fill, read colours from any variant photos not seen before, and cache them.
+  const shop = await prisma.shop.findUnique({ where: { id: session.shop } });
+  const config = await prisma.productPreviewConfig.findUnique({
+    where: { shopId_productId: { shopId: session.shop, productId: product.id } },
+  });
+  if (shop?.swatchAutoFill && config) {
+    const next = await refreshPhotoColours(product, config.visualOptionName, (config.photoColours as any) ?? {});
+    if (next) await prisma.productPreviewConfig.update({ where: { id: config.id }, data: { photoColours: next as object } });
+  }
   const [row] = await productRows(session.shop, [product]);
-  return { row: row! };
+  // What each colour would be without the merchant's own picks, so "Clear" can show the fallback.
+  const fresh = await prisma.productPreviewConfig.findUnique({
+    where: { shopId_productId: { shopId: session.shop, productId: product.id } },
+  });
+  const auto = Object.fromEntries(
+    swatchesFor(product, row!.visualOptionName, {}, row!.swatchAutoFill, (fresh?.photoColours as any) ?? {}).map((s) => [s.value, s]),
+  );
+  return { row: row!, auto };
 };
 
 export const action = async ({ request, params }: ActionFunctionArgs) => {
@@ -32,7 +47,6 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     visualOptionName: option && option !== "__none" ? option : null,
     referenceMediaId: String(f.get("referenceMediaId") ?? "") || null,
     swatchColours: parseColours(String(f.get("swatchColours") ?? "{}")),
-    swatchGuessApproved: f.get("swatchGuessApproved") === "on",
   });
   return redirect("/app/products");
 };
@@ -48,7 +62,13 @@ function parseColours(raw: string): Record<string, string> {
   }
 }
 
-const SOURCE_LABEL = { shopify: "From Shopify", merchant: "Set in Tryora", guess: "Guessed from name", missing: "Needs a colour" };
+const SOURCE_LABEL = {
+  shopify: "From Shopify",
+  merchant: "Set in Tryora",
+  photo: "From variant photo",
+  guess: "Guessed from name",
+  missing: "Shows as name",
+} as const;
 
 const PLACEMENTS: { value: Placement; label: string }[] = [
   { value: "replace", label: "Replace an item in the room (sofa, bed, chair, table)" },
@@ -60,7 +80,7 @@ const PLACEMENTS: { value: Placement; label: string }[] = [
 ];
 
 export default function ProductSetup() {
-  const { row } = useLoaderData<typeof loader>();
+  const { row, auto } = useLoaderData<typeof loader>();
   const nav = useNavigation();
   const [reference, setReference] = useState(row.referenceMediaId ?? "");
   const [noun, setNoun] = useState(row.itemNoun);
@@ -69,16 +89,16 @@ export default function ProductSetup() {
   const [setting, setSetting] = useState<string>(row.setting);
   const [option, setOption] = useState<string>(row.visualOptionName ?? "__none");
   const [colours, setColours] = useState<Record<string, string>>(row.swatchColours);
-  const [guess, setGuess] = useState(row.swatchGuessApproved);
   const val = (e: any) => e.currentTarget.value as string;
-  const chosen = row.options.find((o) => o.name === option);
-  const swatches = chosen
-    ? resolveSwatches(
-        chosen.swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
-        colours,
-        guess,
-      )
-    : [];
+  // Swatches only matter for the option chosen when the page loaded; after changing option, save to see them.
+  const swatches =
+    option === row.visualOptionName
+      ? row.resolvedSwatches.map((s) => {
+          const base = auto[s.value] ?? s;
+          if (base.source !== "shopify" && colours[s.value]) return { ...base, colour: colours[s.value]!, source: "merchant" as const };
+          return base;
+        })
+      : [];
   const needsColours = swatches.some((s) => s.source !== "shopify");
   const missing = swatches.filter((s) => s.source === "missing").length;
 
@@ -93,7 +113,6 @@ export default function ProductSetup() {
         <input type="hidden" name="setting" value={setting} />
         <input type="hidden" name="visualOptionName" value={option} />
         <input type="hidden" name="swatchColours" value={JSON.stringify(colours)} />
-        {guess && <input type="hidden" name="swatchGuessApproved" value="on" />}
         <s-section heading="Show this product in Tryora">
           <s-switch
             label="Let shoppers see this product in their room"
@@ -138,19 +157,21 @@ export default function ProductSetup() {
         {needsColours && (
           <s-section heading="Colour swatches">
             {missing > 0 ? (
-              <s-banner tone="warning" heading={`${missing} colour${missing === 1 ? " has" : "s have"} no swatch`}>
+              <s-banner tone="warning" heading={`${missing} colour${missing === 1 ? " shows" : "s show"} as a name in the popup`}>
                 <s-paragraph>
-                  Shoppers pick colours from swatches in the popup. Set these in Shopify (product options), pick them
-                  below, or let Tryora guess from the colour names. The product won't go live until every colour has one.
+                  Shoppers find it easier to choose from colour swatches. Add swatches in Shopify (product options), pick
+                  colours below
+                  {row.swatchAutoFill ? "." : ", or turn on automatic swatches in Appearance."}
                 </s-paragraph>
               </s-banner>
             ) : null}
-            <s-checkbox
-              label="Guess swatch colours from the colour names (e.g. Red, Navy, Oatmeal)"
-              checked={guess || undefined}
-              onChange={(e: any) => setGuess(!!e.currentTarget.checked)}
-              details="Only used for colours with no swatch in Shopify or below. Guesses may not match your fabric exactly – check them here."
-            />
+            <s-paragraph>
+              <s-text color="subdued">
+                {row.swatchAutoFill
+                  ? "Automatic swatches are on: colours with no swatch use their variant photo, or a guess from the colour name. Check them below and change any that look wrong."
+                  : "Automatic swatches are off for your store. You can turn them on in Appearance."}
+              </s-text>
+            </s-paragraph>
             <s-stack gap="small-200">
               {swatches.map((s) => (
                 <s-stack key={s.value} direction="inline" gap="base" alignItems="center">

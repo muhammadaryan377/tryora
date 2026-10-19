@@ -28,11 +28,16 @@ describe("resolveSwatches", () => {
     { value: "Olive" },
   ];
   it("prefers Shopify, then merchant colours, and never guesses without approval", () => {
-    const r = resolveSwatches(values, { Olive: "#556b2f" }, false);
+    const r = resolveSwatches(values, { Olive: "#556b2f" }, { approved: false, photoColours: { Navy: "#112233" } });
     expect(r.map((s) => s.source)).toEqual(["shopify", "missing", "missing", "merchant"]);
   });
   it("guesses only names it recognises once approved", () => {
-    const r = resolveSwatches(values, {}, true);
+    const r = resolveSwatches(values, {}, { approved: true });
     expect(r.map((s) => s.source)).toEqual(["shopify", "guess", "missing", "guess"]);
+  });
+  it("prefers the variant photo's colour over a name guess", () => {
+    const r = resolveSwatches(values, {}, { approved: true, photoColours: { Navy: "#112233", Harbour: "#445566" } });
+    expect(r.map((s) => s.source)).toEqual(["shopify", "photo", "photo", "guess"]);
+    expect(r[2]!.colour).toBe("#445566");
   });
 });

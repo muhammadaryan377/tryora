@@ -55,6 +55,9 @@ export default function Products() {
                     {r.readinessReason && (
                       <s-text color="subdued"> {r.readinessReason}</s-text>
                     )}
+                    {r.swatchNote && (
+                      <s-text color="subdued"> {r.swatchNote}</s-text>
+                    )}
                   </s-table-cell>
                   <s-table-cell>
                     <s-button variant="tertiary" href={`/app/products/${encodeURIComponent(r.id.split("/").pop()!)}`}>
