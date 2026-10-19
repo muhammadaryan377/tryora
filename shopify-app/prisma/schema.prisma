@@ -109,6 +109,8 @@ model ProductPreviewConfig {
   referenceMediaId   String?  // approved product reference (Shopify media GID)
   referenceAngle     String?  // front | diagonal | side
   templateOverride   String?
+  swatchColours      Json     @default("{}") // merchant-set swatch colours by option value, e.g. {"Oat":"#d8c6ae"}
+  swatchGuessApproved Boolean @default(false) // merchant approved guessing colours from names for values with no swatch
   updatedAt          DateTime @updatedAt
 
   choices VisualChoice[]

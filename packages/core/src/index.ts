@@ -8,3 +8,4 @@ export * from "./previewService.js";
 export * from "./flow.js";
 export * from "./provider.js";
 export * from "./launcher.js";
+export * from "./colourGuess.js";

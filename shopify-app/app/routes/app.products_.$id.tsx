@@ -5,6 +5,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { getShopProduct, productRows, saveProductConfig } from "../products.server";
 import type { Placement } from "../core/index";
+// Imported directly (not via core/index) so no server-only code reaches the browser.
+import { resolveSwatches } from "../core/colourGuess";
 
 const gid = (id: string) => `gid://shopify/Product/${id}`;
 
@@ -29,9 +31,24 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
     setting: String(f.get("setting") ?? "indoor") as "indoor" | "outdoor" | "either",
     visualOptionName: option && option !== "__none" ? option : null,
     referenceMediaId: String(f.get("referenceMediaId") ?? "") || null,
+    swatchColours: parseColours(String(f.get("swatchColours") ?? "{}")),
+    swatchGuessApproved: f.get("swatchGuessApproved") === "on",
   });
   return redirect("/app/products");
 };
+
+function parseColours(raw: string): Record<string, string> {
+  try {
+    const obj = JSON.parse(raw);
+    return Object.fromEntries(
+      Object.entries(obj).filter(([k, v]) => typeof k === "string" && typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v)),
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+const SOURCE_LABEL = { shopify: "From Shopify", merchant: "Set in Tryora", guess: "Guessed from name", missing: "Needs a colour" };
 
 const PLACEMENTS: { value: Placement; label: string }[] = [
   { value: "replace", label: "Replace an item in the room (sofa, bed, chair, table)" },
@@ -51,7 +68,19 @@ export default function ProductSetup() {
   const [placement, setPlacement] = useState<string>(row.placement);
   const [setting, setSetting] = useState<string>(row.setting);
   const [option, setOption] = useState<string>(row.visualOptionName ?? "__none");
+  const [colours, setColours] = useState<Record<string, string>>(row.swatchColours);
+  const [guess, setGuess] = useState(row.swatchGuessApproved);
   const val = (e: any) => e.currentTarget.value as string;
+  const chosen = row.options.find((o) => o.name === option);
+  const swatches = chosen
+    ? resolveSwatches(
+        chosen.swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
+        colours,
+        guess,
+      )
+    : [];
+  const needsColours = swatches.some((s) => s.source !== "shopify");
+  const missing = swatches.filter((s) => s.source === "missing").length;
 
   return (
     <s-page heading={row.title}>
@@ -63,6 +92,8 @@ export default function ProductSetup() {
         <input type="hidden" name="placement" value={placement} />
         <input type="hidden" name="setting" value={setting} />
         <input type="hidden" name="visualOptionName" value={option} />
+        <input type="hidden" name="swatchColours" value={JSON.stringify(colours)} />
+        {guess && <input type="hidden" name="swatchGuessApproved" value="on" />}
         <s-section heading="Show this product in Tryora">
           <s-switch
             label="Let shoppers see this product in their room"
@@ -103,6 +134,62 @@ export default function ProductSetup() {
             ))}
           </s-select>
         </s-section>
+
+        {needsColours && (
+          <s-section heading="Colour swatches">
+            {missing > 0 ? (
+              <s-banner tone="warning" heading={`${missing} colour${missing === 1 ? " has" : "s have"} no swatch`}>
+                <s-paragraph>
+                  Shoppers pick colours from swatches in the popup. Set these in Shopify (product options), pick them
+                  below, or let Tryora guess from the colour names. The product won't go live until every colour has one.
+                </s-paragraph>
+              </s-banner>
+            ) : null}
+            <s-checkbox
+              label="Guess swatch colours from the colour names (e.g. Red, Navy, Oatmeal)"
+              checked={guess || undefined}
+              onChange={(e: any) => setGuess(!!e.currentTarget.checked)}
+              details="Only used for colours with no swatch in Shopify or below. Guesses may not match your fabric exactly – check them here."
+            />
+            <s-stack gap="small-200">
+              {swatches.map((s) => (
+                <s-stack key={s.value} direction="inline" gap="base" alignItems="center">
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      width: 28, height: 28, borderRadius: 6, border: "1px solid #ccc", flex: "none",
+                      background: s.image ? `center / cover url(${s.image})` : (s.colour ?? "repeating-linear-gradient(45deg,#eee 0 4px,#fff 4px 8px)"),
+                    }}
+                  />
+                  <s-text>{s.value}</s-text>
+                  <s-badge tone={s.source === "missing" ? "warning" : s.source === "guess" ? "info" : "neutral"}>
+                    {SOURCE_LABEL[s.source]}
+                  </s-badge>
+                  {s.source !== "shopify" && (
+                    <input
+                      type="color"
+                      aria-label={`Swatch colour for ${s.value}`}
+                      value={colours[s.value] ?? s.colour ?? "#cccccc"}
+                      onChange={(e) => setColours({ ...colours, [s.value]: e.currentTarget.value })}
+                      style={{ width: 36, height: 28, padding: 0, border: "none", background: "none", cursor: "pointer" }}
+                    />
+                  )}
+                  {colours[s.value] && (
+                    <s-button
+                      variant="tertiary"
+                      onClick={() => {
+                        const { [s.value]: _, ...rest } = colours;
+                        setColours(rest);
+                      }}
+                    >
+                      Clear
+                    </s-button>
+                  )}
+                </s-stack>
+              ))}
+            </s-stack>
+          </s-section>
+        )}
 
         <s-section heading="Reference photo">
           <s-paragraph>

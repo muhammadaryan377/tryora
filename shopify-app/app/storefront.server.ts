@@ -7,6 +7,7 @@ import {
   TRIAL_CREDITS,
   TryoraError,
   defaultLauncher,
+  resolveSwatches,
   type ImageProvider,
   type LauncherSettings,
   type Placement,
@@ -62,13 +63,21 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     );
     return {
       value: v.name,
-      // Swatch image set in Shopify, else that colour's own variant photo. With neither (and no swatch colour),
-      // the popup shows the colour name as a label rather than guessing a colour.
-      image: v.swatch?.image?.image?.url ?? variants.find((n: any) => n.image?.url)?.image.url ?? null,
+      image: v.swatch?.image?.image?.url ?? null,
       colour: v.swatch?.color ?? null,
       available: variants.some((n: any) => n.availableForSale),
       group: null, // colour groups come from merchant settings (not built yet), so no chips show
     };
+  });
+  // Fill gaps with the merchant's own colours, or name-based guesses if they approved guessing.
+  const resolved = resolveSwatches(
+    swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
+    (config.swatchColours as Record<string, string>) ?? {},
+    config.swatchGuessApproved,
+  );
+  swatches.forEach((s, i) => {
+    s.colour = resolved[i]!.colour;
+    s.image = resolved[i]!.image;
   });
 
   const [appearance, shop, campaign, balance] = await Promise.all([
