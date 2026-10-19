@@ -98,6 +98,9 @@ model ProductPreviewConfig {
   enabled            Boolean  @default(false)
   visualOptionName   String?  // the one previewable option, e.g. "Colour"; null for single-style products
   visualOptionType   String?  // colour | design | configuration
+  itemNoun           String?  // shopper-facing word, e.g. "sofa", "rug"; defaults from the Shopify product type
+  placement          String   @default("replace") // replace | place | floor_cover | wall_cover | wall_hang | light
+  setting            String   @default("indoor")  // indoor | outdoor | either
   frozenContext      Json     // fixed values of all other options
   readiness          String   @default("needs_attention") // ready | needs_attention | not_eligible
   readinessReasons   Json     @default("[]")
