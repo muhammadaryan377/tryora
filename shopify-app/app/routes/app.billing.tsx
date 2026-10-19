@@ -43,6 +43,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ]);
 
   return {
+    trialCredits: TRIAL_CREDITS,
+    trialDays: TRIAL_DAYS,
     paid: shop?.paidPlanActive ?? false,
     plan: entitlement?.plan ?? "trial",
     periodEnds: entitlement?.currentPeriodEnds?.toISOString() ?? null,
@@ -126,9 +128,9 @@ export default function Billing() {
       )}
 
       {!d.paid && d.trial.active && (
-        <s-banner tone="info" heading={`Free trial: ${d.trial.used} of ${TRIAL_CREDITS} previews used, ${daysLeft(d.trial.endsAt)} days left`}>
+        <s-banner tone="info" heading={`Free trial: ${d.trial.used} of ${d.trialCredits} previews used, ${daysLeft(d.trial.endsAt)} days left`}>
           <s-paragraph>
-            The trial ends after {TRIAL_DAYS} days or {TRIAL_CREDITS} previews, whichever comes first. It never turns into a
+            The trial ends after {d.trialDays} days or {d.trialCredits} previews, whichever comes first. It never turns into a
             paid plan on its own. Choose a plan below when you're ready.
           </s-paragraph>
         </s-banner>
