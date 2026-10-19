@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialFlow, isViewed, reduce, type FlowEvent, type FlowState } from "../src/flow.js";
+import { initialFlow, isViewed, reduce, showLeadOnResult, type FlowEvent, type FlowState } from "../src/flow.js";
 
 function run(state: FlowState, ...events: FlowEvent[]) {
   const commands: string[] = [];
@@ -160,5 +160,28 @@ describe("photos that don't make sense", () => {
   it("garden furniture asks for an outdoor photo instead", () => {
     expect(photoProblemMessage("wrong_setting", "bench", "outdoor")).toContain("outdoor spaces");
     expect(photoProblemMessage("not_a_room", "bench", "outdoor")).toContain("patio");
+  });
+
+  describe("email after the first image", () => {
+    const after = (mode: "required" | "skippable") => initialFlow({ leadMode: mode, leadTiming: "after", defaultOption: "Oat" });
+    it("makes the first image without asking, then asks before the next one", () => {
+      let r = run(after("required"), ...ready, { type: "GENERATE_PRESSED" });
+      expect(r.state.step).toBe("generating");
+      r = run(r.state, deliver("Oat"));
+      expect(showLeadOnResult(r.state)).toBe(true);
+      r = run(r.state, { type: "TRY_ANOTHER_COLOUR" }, { type: "SELECT_OPTION", option: "Rust" }, { type: "GENERATE_PRESSED" });
+      expect(r.state.step).toBe("emailStep");
+    });
+    it("accepts the email on the result screen without starting a job", () => {
+      const r = run(after("required"), ...ready, { type: "GENERATE_PRESSED" }, deliver("Oat"), { type: "LEAD_SUBMITTED" });
+      expect(r.state.leadDone).toBe(true);
+      expect(r.state.step).toBe("result");
+      expect(r.commands.at(-1)).toBe("SUBMIT_LEAD");
+      expect(r.commands.filter((c) => c === "CREATE_PREVIEW")).toHaveLength(1);
+    });
+    it("lets shoppers skip on the result screen only when optional", () => {
+      expect(run(after("required"), ...ready, { type: "GENERATE_PRESSED" }, deliver("Oat"), { type: "LEAD_SKIPPED" }).state.leadDone).toBe(false);
+      expect(run(after("skippable"), ...ready, { type: "GENERATE_PRESSED" }, deliver("Oat"), { type: "LEAD_SKIPPED" }).state.leadDone).toBe(true);
+    });
   });
 });

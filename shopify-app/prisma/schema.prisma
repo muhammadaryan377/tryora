@@ -42,9 +42,12 @@ model Shop {
   settingsVersion  Int      @default(1)
   leadCapture      String   @default("required") // off | required | skippable
   leadSettings     Json     @default("{}")      // opt-in checkbox on/off and wording, customer tag
+  leadTiming       String   @default("before") // before | after the first image
   paidPlanActive   Boolean  @default(false)
   storefrontEnabled Boolean @default(false)
   swatchAutoFill   Boolean  @default(false) // merchant approved filling missing swatches from variant photos and colour names
+  dailyPreviewCap  Int?     @default(30) // store-wide new previews per day; null = no daily cap
+  abuseAlertAt     DateTime? // last time unusual activity paused previews
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

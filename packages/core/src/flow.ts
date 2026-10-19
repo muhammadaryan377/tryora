@@ -39,6 +39,8 @@ export interface FlowState {
   selectedOption: string | null;
   photo: { id: string; check: PhotoCheck } | null;
   leadMode: "off" | "required" | "skippable";
+  /** Merchant's choice (19 Oct 2026): ask before the first image, or after it (first image free). */
+  leadTiming: "before" | "after";
   leadDone: boolean;
   /** Results generated for the current room photo in this live session, keyed by option. */
   results: Record<string, GeneratedResult>;
@@ -81,12 +83,17 @@ export type FlowCommand =
   | { type: "RELEASE_IMAGES"; photoId: string } // revoke object URLs for this room's images
   | { type: "SUBMIT_LEAD" };
 
-export function initialFlow(options: { leadMode: FlowState["leadMode"]; defaultOption: string | null }): FlowState {
+export function initialFlow(options: {
+  leadMode: FlowState["leadMode"];
+  leadTiming?: FlowState["leadTiming"];
+  defaultOption: string | null;
+}): FlowState {
   return {
     step: "opening",
     selectedOption: options.defaultOption,
     photo: null,
     leadMode: options.leadMode,
+    leadTiming: options.leadTiming ?? "before",
     leadDone: options.leadMode === "off",
     results: {},
     shownOption: null,
@@ -97,6 +104,17 @@ export function initialFlow(options: { leadMode: FlowState["leadMode"]; defaultO
 
 export function isViewed(state: FlowState, option: string): boolean {
   return !!state.results[option];
+}
+
+/** True when the next new image may be made without asking for the email first. */
+export function leadSatisfied(state: FlowState): boolean {
+  if (state.leadDone) return true;
+  return state.leadTiming === "after" && Object.keys(state.results).length === 0;
+}
+
+/** "After" timing: the email card is shown on the result screen until the shopper answers it. */
+export function showLeadOnResult(state: FlowState): boolean {
+  return state.leadTiming === "after" && !state.leadDone && state.step === "result";
 }
 
 export function canGenerate(state: FlowState): boolean {
@@ -194,18 +212,22 @@ export function reduce(state: FlowState, event: FlowEvent): Transition {
       if (state.results[option]) {
         return none({ ...state, step: "result", shownOption: option, notice: null });
       }
-      if (!state.leadDone) return none({ ...state, step: "emailStep", notice: null });
+      if (!leadSatisfied(state)) return none({ ...state, step: "emailStep", notice: null });
       return startGeneration(state, option);
     }
 
     case "LEAD_SUBMITTED": {
+      // "After" timing: answered on the result screen; nothing else changes.
+      if (state.step === "result" && !state.leadDone) return { state: { ...state, leadDone: true }, commands: [{ type: "SUBMIT_LEAD" }] };
       if (state.step !== "emailStep") return none(state);
       const next = startGeneration({ ...state, leadDone: true }, state.selectedOption!);
       return { state: next.state, commands: [{ type: "SUBMIT_LEAD" }, ...next.commands] };
     }
 
     case "LEAD_SKIPPED": {
-      if (state.step !== "emailStep" || state.leadMode !== "skippable") return none(state);
+      if (state.leadMode !== "skippable") return none(state);
+      if (state.step === "result") return none({ ...state, leadDone: true });
+      if (state.step !== "emailStep") return none(state);
       return startGeneration({ ...state, leadDone: true }, state.selectedOption!);
     }
 

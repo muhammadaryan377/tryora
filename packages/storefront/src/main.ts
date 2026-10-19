@@ -6,7 +6,9 @@
 import {
   initialFlow,
   isViewed,
+  leadSatisfied,
   photoNote,
+  showLeadOnResult,
   photoProblemMessage,
   reduce,
   type FlowCommand,
@@ -37,7 +39,7 @@ interface Config {
   swatches: Swatch[];
   style: { template: string; accent: string | null; useThemeFont: boolean };
   launcher: LauncherSettings;
-  lead: { mode: "required" | "skippable" | "off"; showOptIn: boolean; optInWording: string };
+  lead: { mode: "required" | "skippable" | "off"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
   offer: { code: string; headline: string; details: string } | null;
   mock: boolean;
 }
@@ -150,7 +152,7 @@ class Tryora {
 
   constructor(private readonly cfg: Config) {
     const firstAvailable = cfg.swatches.find((s) => s.available)?.value ?? null;
-    this.state = initialFlow({ leadMode: cfg.lead.mode, defaultOption: cfg.swatches.length ? (preselected(cfg) ?? firstAvailable) : SINGLE });
+    this.state = initialFlow({ leadMode: cfg.lead.mode, leadTiming: cfg.lead.timing ?? "before", defaultOption: cfg.swatches.length ? (preselected(cfg) ?? firstAvailable) : SINGLE });
     if (!cfg.available) this.state = reduce(this.state, { type: "PREVIEWS_UNAVAILABLE" }).state;
   }
 
@@ -196,15 +198,20 @@ class Tryora {
         const photo = this.photos.get(c.photoId);
         if (!photo) return;
         try {
-          const r = await post("check", { photo: photo.blob });
+          const r = await post("check", { photo: photo.blob, visitor: visitorId() });
           if (this.state.photo?.id !== c.photoId) return;
           this.dispatch({
             type: "PHOTO_CHECKED",
             check: r.ok ? { status: "ok", detected: r.detected } : { status: "needsCorrection", reason: r.reason },
           });
-        } catch {
+        } catch (e: any) {
+          if (this.state.photo?.id !== c.photoId) return;
+          if (e?.code === "RATE_LIMITED") {
+            this.fileProblem = "You've tried a lot of photos. Please wait a little while and try again.";
+            return this.dispatch({ type: "REMOVE_PHOTO" });
+          }
           // If the check service is down we don't block the shopper; the generation step checks again.
-          if (this.state.photo?.id === c.photoId) this.dispatch({ type: "PHOTO_CHECKED", check: { status: "ok" } });
+          this.dispatch({ type: "PHOTO_CHECKED", check: { status: "ok" } });
         }
         return;
       }
@@ -245,15 +252,15 @@ class Tryora {
         option,
         visitor: visitorId(),
         key: crypto.randomUUID(),
-        leadDone: this.state.leadDone ? "1" : "0",
+        leadDone: leadSatisfied(this.state) ? "1" : "0",
       });
       jobId = r.jobId;
     } catch (e: any) {
       const code = e?.code;
       const reason =
-        code === "QUOTA_PRODUCT" || code === "QUOTA_STORE"
+        code === "QUOTA_PRODUCT" || code === "QUOTA_STORE" || code === "RATE_LIMITED"
           ? "quota_reached"
-          : code === "CREDITS_EXHAUSTED" || code === "PLAN_INACTIVE"
+          : code === "CREDITS_EXHAUSTED" || code === "PLAN_INACTIVE" || code === "DAILY_CAP"
             ? "previews_paused"
             : "generation_failed";
       return this.dispatch({ type: "JOB_FAILED", reason });
@@ -552,23 +559,11 @@ class Tryora {
       }
       case "emailStep":
         return `
-          <h3 class="tryora__h3 tryora__h3--first">Enter your email to create your preview</h3>
-          ${c.offer ? `<p class="tryora__small">We'll also send you your offer.</p>` : ""}
+          <h3 class="tryora__h3 tryora__h3--first">${
+            s.leadTiming === "after" ? "Enter your email to create another image" : "Enter your email to create your preview"
+          }</h3>
           <p class="tryora__label"><strong>${esc(c.product)}</strong>${shown(s.selectedOption) ? ` · ${esc(shown(s.selectedOption))}` : ""}</p>
-          <label class="tryora__field"><span>Email address</span>
-            <input name="email" type="email" autocomplete="email" value="${esc(this.email)}" data-autofocus ${this.emailError ? 'aria-invalid="true"' : ""}></label>
-          ${this.emailError ? `<p class="tryora__notice" role="alert">${esc(this.emailError)}</p>` : ""}
-          <label class="tryora__field"><span>First name (optional)</span>
-            <input name="firstName" autocomplete="given-name" value="${esc(this.firstName)}"></label>
-          ${
-            c.lead.showOptIn
-              ? `<label class="tryora__opt"><input type="checkbox" name="marketing" ${this.marketing ? "checked" : ""}> <span>${esc(c.lead.optInWording)}</span></label>`
-              : ""
-          }
-          <button class="tryora__btn" data-act="lead-submit">Generate image</button>
-          ${c.lead.mode === "skippable" ? `<button class="tryora__link" data-act="lead-skip">Skip</button>` : ""}
-          <p class="tryora__small">Your image is never emailed.</p>
-          ${this.privacy()}`;
+          ${this.leadFields("Generate image")}`;
       case "generating": {
         const g = s.generation!;
         const order = ["waiting", ...STAGES.map((x) => x.key)];
@@ -594,10 +589,46 @@ class Tryora {
           }
           <p class="tryora__links"><button class="tryora__link" data-act="new-room">Use a different room</button> | <button class="tryora__link" data-act="issue">Report an issue</button></p>
           ${notice}
-          ${this.voucher()}`;
+          ${
+            showLeadOnResult(s)
+              ? `<div class="tryora__leadcard">
+                  <h3 class="tryora__h3 tryora__h3--first">${
+                    c.offer ? esc(c.offer.headline) : "Keep in touch"
+                  }</h3>
+                  <p class="tryora__small">${
+                    c.offer ? "Enter your email to get your code." : "Enter your email for updates from this store."
+                  }</p>
+                  ${this.leadFields(c.offer ? "Get my code" : "Submit")}
+                </div>`
+              : ""
+          }
+          ${
+            // With "after" + required, the offer is the reason to give an email, so it shows once they have.
+            showLeadOnResult(s) && c.lead.mode === "required" ? "" : this.voucher()
+          }`;
       case "unavailable":
         return `<p>${esc(NOTICES.previews_paused!)}</p><button class="tryora__btn" data-act="close">Close</button>`;
     }
+  }
+
+  /** Email, first name and the (always unticked) marketing box. Shared by the email step and the result-screen card. */
+  private leadFields(submitLabel: string): string {
+    const c = this.cfg;
+    return `
+      <label class="tryora__field"><span>Email address</span>
+        <input name="email" type="email" autocomplete="email" value="${esc(this.email)}" ${this.state.step === "emailStep" ? "data-autofocus" : ""} ${this.emailError ? 'aria-invalid="true"' : ""}></label>
+      ${this.emailError ? `<p class="tryora__notice" role="alert">${esc(this.emailError)}</p>` : ""}
+      <label class="tryora__field"><span>First name (optional)</span>
+        <input name="firstName" autocomplete="given-name" value="${esc(this.firstName)}"></label>
+      ${
+        c.lead.showOptIn
+          ? `<label class="tryora__opt"><input type="checkbox" name="marketing" ${this.marketing ? "checked" : ""}> <span>${esc(c.lead.optInWording)}</span></label>`
+          : ""
+      }
+      <button class="tryora__btn" data-act="lead-submit">${esc(submitLabel)}</button>
+      ${c.lead.mode === "skippable" ? `<button class="tryora__link" data-act="lead-skip">${this.state.step === "result" ? "No thanks" : "Skip"}</button>` : ""}
+      <p class="tryora__small">Your image is never emailed.</p>
+      ${this.privacy()}`;
   }
 
   private privacy() {

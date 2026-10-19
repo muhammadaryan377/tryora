@@ -38,6 +38,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const leadsTotal = await prisma.leadDelivery.count({ where: { shopId } });
   return {
     leadCapture: settings.leadCapture,
+    leadTiming: (shop?.leadTiming ?? "before") as "before" | "after",
     lead,
     offer: { on: campaign?.mode === "offer" && campaign.active, code: campaign?.code ?? "", ...copy },
     leadsTotal,
@@ -51,6 +52,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const errors: string[] = [];
 
   const leadCapture = String(f.get("leadCapture")) as LeadCaptureMode;
+  const leadTiming = f.get("leadTiming") === "after" ? "after" : "before";
   const lead: LeadSettings = {
     showOptIn: f.get("showOptIn") === "on",
     optInWording: String(f.get("optInWording") ?? "").trim(),
@@ -70,7 +72,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const settings = await tryora.ensureSettings(shopId);
   await tryora.updateSettings({ ...settings, leadCapture });
-  await prisma.shop.update({ where: { id: shopId }, data: { leadSettings: lead as object } });
+  await prisma.shop.update({ where: { id: shopId }, data: { leadSettings: lead as object, leadTiming } });
 
   const existing = await prisma.campaign.findFirst({ where: { shopId }, orderBy: { updatedAt: "desc" } });
   const data = { mode: offerOn ? "offer" : "off", code: code || null, copy: copy as object, active: offerOn };
@@ -84,6 +86,7 @@ export default function Leads() {
   const result = useActionData<typeof action>();
   const nav = useNavigation();
   const [leadCapture, setLeadCapture] = useState<string>(d.leadCapture);
+  const [leadTiming, setLeadTiming] = useState<string>(d.leadTiming);
   const [showOptIn, setShowOptIn] = useState(d.lead.showOptIn);
   const [optInWording, setOptInWording] = useState(d.lead.optInWording);
   const [customerTag, setCustomerTag] = useState(d.lead.customerTag);
@@ -98,6 +101,7 @@ export default function Leads() {
     <s-page heading="Leads & offers">
       <Form method="post">
         <input type="hidden" name="leadCapture" value={leadCapture} />
+        <input type="hidden" name="leadTiming" value={leadTiming} />
         {showOptIn && <input type="hidden" name="showOptIn" value="on" />}
         <input type="hidden" name="optInWording" value={optInWording} />
         <input type="hidden" name="customerTag" value={customerTag} />
@@ -121,17 +125,32 @@ export default function Leads() {
           </s-banner>
         )}
 
-        <s-section heading="Email before the first preview">
+        <s-section heading="Collect shoppers' emails">
           <s-select
             label="Ask shoppers for their email"
             value={leadCapture}
             onChange={(e: any) => setLeadCapture(val(e))}
-            details="Asked once per visit, just before their first image is made. The image itself is never emailed."
+            details="Asked once per visit. The image itself is never emailed."
           >
             <s-option value="required">Required</s-option>
             <s-option value="skippable">Optional (shoppers can skip)</s-option>
-            <s-option value="off">Off</s-option>
+            <s-option value="off">Off – don't ask</s-option>
           </s-select>
+          {leadCapture !== "off" && (
+            <s-select
+              label="When to ask"
+              value={leadTiming}
+              onChange={(e: any) => setLeadTiming(val(e))}
+              details={
+                leadTiming === "after"
+                  ? "Shoppers see their first image straight away. The email is asked for on the result (to unlock your offer, if you have one) and before any further images."
+                  : "Shoppers enter their email before their first image is made."
+              }
+            >
+              <s-option value="before">Before the first image</s-option>
+              <s-option value="after">After the first image</s-option>
+            </s-select>
+          )}
 
           {leadCapture !== "off" && (
             <s-stack gap="base">

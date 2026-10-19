@@ -187,3 +187,4 @@ html.tryora-open { overflow: hidden; }
 .tryora__s.is-text.is-selected .tryora__chip { outline: 2px solid var(--t-fg); outline-offset: 1px; font-weight: 600; }
 .tryora[data-tryora-style="hearth"] .tryora__s.is-text.is-selected .tryora__chip,
 .tryora[data-tryora-style="studio"] .tryora__s.is-text.is-selected .tryora__chip { outline-color: var(--t-accent); }
+.tryora__leadcard { border: 1px solid var(--t-line); border-radius: 10px; padding: 12px; display: grid; gap: 8px; margin-top: 6px; }

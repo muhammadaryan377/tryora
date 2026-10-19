@@ -10,7 +10,9 @@ export type ReasonCode =
   | "BAD_TOKEN"
   | "ALREADY_REFUNDED"
   | "NOT_DELIVERED"
-  | "BAD_EMAIL"; // shopper typed an email that is not valid
+  | "BAD_EMAIL" // shopper typed an email that is not valid
+  | "RATE_LIMITED" // too many requests from one shopper, or an unusual burst for the store (abuse protection)
+  | "DAILY_CAP"; // the store's daily preview limit is reached
 
 export class TryoraError extends Error {
   constructor(

@@ -37,6 +37,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       endsAt: trial.started && trial.endsAt ? new Date(trial.endsAt).toISOString() : null,
     },
     paid: shop?.paidPlanActive ?? false,
+    abuseAlert: shop?.abuseAlertAt && Date.now() - shop.abuseAlertAt.getTime() < 86_400_000 ? shop.abuseAlertAt.toISOString() : null,
     leadCapture: shop?.leadCapture ?? "required",
     checklist: {
       products: productsReady,
@@ -83,6 +84,15 @@ export default function Dashboard() {
 
   return (
     <s-page heading="Tryora">
+      {d.abuseAlert && (
+        <s-banner tone="warning" heading="Unusual activity paused some previews">
+          <s-paragraph>
+            On {new Date(d.abuseAlert).toLocaleString("en-GB")} we saw far more previews than usual in a short time and
+            paused new ones for a few minutes to protect your credits. If this keeps happening, lower your limits in
+            Shopper limits or contact us.
+          </s-paragraph>
+        </s-banner>
+      )}
       {d.trial.active && !d.paid && (
         <s-banner tone="info" heading={`Free trial: ${d.trial.total - d.trial.used} of ${d.trial.total} previews left`}>
           <s-paragraph>

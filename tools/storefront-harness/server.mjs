@@ -12,7 +12,7 @@ const config = () => ({
   swatches: NAMES.slice(0, count).map((n, i) => ({ value: n, image: null, colour: HEX[i], available: n !== "Rust" && n !== "Rose", group: null })),
   style: { template, accent: null, useThemeFont: false },
   launcher: { mode: "tryora", type: "overlay", wording: "See it in your room", showIcon: true, background: "#111111", text: "#ffffff", radiusPx: 999, position: "bottom-right", offsetPx: { x: 16, y: 16 }, showOnMobile: true, showOnDesktop: true },
-  lead: { mode: process.env.LEAD ?? "required", showOptIn: true, optInWording: "Email me offers and updates from Nordhaus. I can unsubscribe at any time." },
+  lead: { mode: process.env.LEAD ?? "required", timing: process.env.LEAD_TIMING ?? "before", showOptIn: true, optInWording: "Email me offers and updates from Nordhaus. I can unsubscribe at any time." },
   offer: { code: "MYROOM15", headline: "15% off this sofa", details: "This sofa only. Cannot be combined." },
   mock: true,
 });

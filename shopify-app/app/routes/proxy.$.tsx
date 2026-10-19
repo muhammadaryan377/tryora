@@ -10,6 +10,7 @@ import {
   startPreview,
   storefrontConfig,
 } from "../storefront.server";
+import { guardPhotoCheck, guardPreview } from "../guard.server";
 
 /**
  * Storefront API behind the Shopify app proxy: the store's /apps/tryora/<path> arrives here as /proxy/<path>.
@@ -57,11 +58,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   try {
     switch (path) {
       case "check": {
+        guardPhotoCheck(shopId, field("visitor"));
         const photo = await photoFrom(form);
         if (!photo) return json({ ok: false, reason: "dark_or_blurred" });
         return json(await checkPhoto(photo));
       }
       case "preview": {
+        await guardPreview(shopId, field("visitor"));
         const photo = await photoFrom(form);
         if (!photo) return json({ error: "BAD_PHOTO" }, 400);
         return json(

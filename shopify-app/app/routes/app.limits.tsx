@@ -3,6 +3,7 @@ import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "re
 import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 import { tryora } from "../tryora.server";
 import type { QuotaPolicy } from "../core/index";
 
@@ -10,7 +11,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const s = await tryora.ensureSettings(session.shop);
   const w = s.quota.window;
+  const shop = await prisma.shop.findUnique({ where: { id: session.shop } });
   return {
+    dailyCap: shop ? shop.dailyPreviewCap : 30,
     enabled: s.quota.enabled,
     perProduct: s.quota.perProduct ?? null,
     storeWide: s.quota.storeWide ?? null,
@@ -43,7 +46,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const errors: string[] = [];
   if (Number.isNaN(perProduct) || Number.isNaN(storeWide)) errors.push("Limits must be whole numbers above zero.");
   if (enabled && perProduct === undefined && storeWide === undefined) errors.push("Set at least one limit, or turn limits off.");
+  const dailyOn = f.get("dailyOn") === "on";
+  const dailyCap = num("dailyCap");
+  if (dailyOn && (dailyCap === undefined || Number.isNaN(dailyCap))) errors.push("Set a daily limit above zero, or turn it off.");
   if (errors.length) return { ok: false as const, message: "", errors };
+  await prisma.shop.upsert({
+    where: { id: session.shop },
+    create: { id: session.shop, dailyPreviewCap: dailyOn ? dailyCap! : null },
+    update: { dailyPreviewCap: dailyOn ? dailyCap! : null },
+  });
 
   const window: QuotaPolicy["window"] =
     windowChoice === "manual"
@@ -61,6 +72,8 @@ export default function Limits() {
   const [perProduct, setPerProduct] = useState(d.perProduct?.toString() ?? "");
   const [storeWide, setStoreWide] = useState(d.storeWide?.toString() ?? "");
   const [windowChoice, setWindowChoice] = useState(d.resetAt ? "manual" : String(d.windowHours ?? 24));
+  const [dailyOn, setDailyOn] = useState(d.dailyCap !== null);
+  const [dailyCap, setDailyCap] = useState(String(d.dailyCap ?? 30));
   const val = (e: any) => e.currentTarget.value as string;
 
   return (
@@ -80,6 +93,20 @@ export default function Limits() {
         <input type="hidden" name="perProduct" value={perProduct} />
         <input type="hidden" name="storeWide" value={storeWide} />
         <input type="hidden" name="window" value={windowChoice} />
+        {dailyOn && <input type="hidden" name="dailyOn" value="on" />}
+        <input type="hidden" name="dailyCap" value={dailyCap} />
+        <s-section heading="Daily limit for your store">
+          <s-paragraph>
+            <s-text color="subdued">
+              On by default, so a bot or an unusual spike can't use up your credits in one day. When it's reached,
+              shoppers see a short message and can try again tomorrow. Your store and checkout keep working.
+            </s-text>
+          </s-paragraph>
+          <s-switch label="Limit new previews per day" checked={dailyOn || undefined} onChange={(e: any) => setDailyOn(!!e.currentTarget.checked)} />
+          {dailyOn && (
+            <s-number-field label="Previews per day, across the whole store" value={dailyCap} min={1} onInput={(e: any) => setDailyCap(val(e))} />
+          )}
+        </s-section>
         <s-section heading="Limit previews per shopper">
           <s-paragraph>
             <s-text color="subdued">
@@ -134,6 +161,12 @@ export default function Limits() {
         <s-paragraph>
           When a shopper reaches the limit, the popup tells them politely and keeps any images they've already made
           on screen. No credit is used for a blocked attempt.
+        </s-paragraph>
+      </s-section>
+      <s-section slot="aside" heading="Always on">
+        <s-paragraph>
+          To protect your credits, each shopper can make up to 10 previews an hour, and unusual bursts of activity are
+          paused automatically. We'll show a warning on your Home page if that happens.
         </s-paragraph>
       </s-section>
     </s-page>
