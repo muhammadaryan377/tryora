@@ -40,8 +40,8 @@ async function seed({ request }: ActionFunctionArgs) {
 
   // Don't create a second copy.
   const existing: any = await (await admin.graphql(`#graphql
-    query { products(first: 1, query: "tag:tryora-test") { nodes { id handle } } }`)).json();
-  if (existing.data?.products?.nodes?.length) {
+    query { products(first: 5, query: "title:\\"Form Sofa (Tryora test)\\"") { nodes { id handle title } } }`)).json();
+  if (existing.data?.products?.nodes?.some((n: any) => n.title === "Form Sofa (Tryora test)")) {
     return { ok: false as const, errors: [`Test sofa already exists (${existing.data.products.nodes[0].handle}).`] };
   }
 
