@@ -24,9 +24,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return null;
 };
 
-export const action = async ({ request }: ActionFunctionArgs) => {
+export const action = async (args: ActionFunctionArgs) => {
+  try {
+    return await seed(args);
+  } catch (e: any) {
+    if (e instanceof Response) throw e;
+    const detail = e?.body?.errors?.graphQLErrors?.map((g: any) => g.message) ?? e?.body?.errors ?? e?.message ?? String(e);
+    return { ok: false as const, errors: [typeof detail === "string" ? detail : JSON.stringify(detail).slice(0, 800)] };
+  }
+};
+
+async function seed({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   if (session.shop !== TEST_STORE) throw new Response("Not found", { status: 404 });
+
+  // Don't create a second copy.
+  const existing: any = await (await admin.graphql(`#graphql
+    query { products(first: 1, query: "tag:tryora-test") { nodes { id handle } } }`)).json();
+  if (existing.data?.products?.nodes?.length) {
+    return { ok: false as const, errors: [`Test sofa already exists (${existing.data.products.nodes[0].handle}).`] };
+  }
 
   // Reuse a photo already in the store as the product photo.
   const imgRes = await admin.graphql(`#graphql
@@ -104,7 +121,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     update: { enabled: true, visualOptionName: "Colour", referenceMediaId: mediaId, readiness: mediaId ? "ready" : "needs_attention" },
   });
   return { ok: true as const, handle: product.handle as string, errors, mediaReady: !!mediaId };
-};
+}
 
 export default function DevSeed() {
   const result = useActionData<typeof action>();
