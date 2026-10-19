@@ -728,7 +728,12 @@ function mediaContainer(): HTMLElement | null {
   ];
   for (const sel of selectors) {
     const el = [...document.querySelectorAll<HTMLElement>(sel)].find((e) => e.offsetHeight > 120);
-    if (el) return el;
+    if (!el) continue;
+    // Prefer the box that wraps the image itself, which can be narrower than its slot.
+    const inner = [...el.querySelectorAll<HTMLElement>(".product-media-container, .product__media, .media")].find(
+      (e) => e.offsetHeight > 120,
+    );
+    return inner ?? el;
   }
   return null;
 }
