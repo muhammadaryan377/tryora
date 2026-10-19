@@ -1,0 +1,14 @@
+{% comment %}
+  Optional: place the "See it in your room" button exactly where you want it on the product page.
+  The Tryora app embed must also be on. Wording and colours are set in the Tryora app.
+{% endcomment %}
+<div data-tryora-slot></div>
+
+{% schema %}
+{
+  "name": "Tryora button",
+  "target": "section",
+  "enabled_on": { "templates": ["product"] },
+  "settings": []
+}
+{% endschema %}

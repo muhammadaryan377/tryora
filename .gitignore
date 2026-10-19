@@ -7,3 +7,4 @@ coverage/
 tools/model-test/output/
 *.log
 tools/model-test/inputs/
+tools/storefront-harness/shots/

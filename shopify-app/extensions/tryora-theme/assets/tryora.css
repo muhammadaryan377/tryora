@@ -1,0 +1,179 @@
+/* Tryora shopper popup. One layout, five styles set by data-tryora-style. */
+html.tryora-open { overflow: hidden; }
+
+.tryora {
+  --t-bg: #ffffff;
+  --t-fg: #111111;
+  --t-muted: #5f5f5f;
+  --t-line: #e3e3e3;
+  --t-soft: #f4f4f4;
+  --t-accent: #111111;
+  --t-accent-fg: #ffffff;
+  --t-link: #2457d6;
+  --t-radius: 14px;
+  --t-btn-radius: 999px;
+  --t-sw-radius: 6px;
+  --t-head: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --t-body: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --t-head-weight: 600;
+  --t-head-case: none;
+  --t-head-size: 26px;
+  position: fixed; inset: 0; z-index: 2147483000;
+  display: grid; place-items: center;
+  font-family: var(--t-body); color: var(--t-fg);
+  font-size: 15px; line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+}
+.tryora *, .tryora *::before, .tryora *::after { box-sizing: border-box; }
+.tryora.tryora--theme-font { --t-body: inherit; --t-head: inherit; }
+
+.tryora[data-tryora-style="atelier"] {
+  --t-bg: #fbf8f5; --t-fg: #2b1d16; --t-muted: #6f5c50; --t-line: #e7ddd4; --t-soft: #f3ece6;
+  --t-accent: #5a3726; --t-link: #7a2e1e;
+  --t-radius: 4px; --t-btn-radius: 2px; --t-sw-radius: 50%;
+  --t-head: "Cormorant Garamond", "Playfair Display", Georgia, serif; --t-head-weight: 500; --t-head-size: 30px;
+}
+.tryora[data-tryora-style="noir"] {
+  --t-bg: #15181c; --t-fg: #f3f3f3; --t-muted: #a3a7ad; --t-line: #2c3138; --t-soft: #1f2328;
+  --t-accent: #ff5a1f; --t-accent-fg: #ffffff; --t-link: #9fc3ff;
+  --t-radius: 10px; --t-btn-radius: 6px; --t-sw-radius: 4px;
+}
+.tryora[data-tryora-style="hearth"] {
+  --t-bg: #fbf7f0; --t-fg: #233026; --t-muted: #5d6a5f; --t-line: #e6dfd2; --t-soft: #f2ece1;
+  --t-accent: #2f4b3c; --t-link: #2f4b3c;
+  --t-radius: 16px; --t-btn-radius: 10px; --t-sw-radius: 8px;
+  --t-head: Georgia, "Times New Roman", serif; --t-head-weight: 500; --t-head-size: 28px;
+}
+.tryora[data-tryora-style="studio"] {
+  --t-accent: #0a5cff; --t-link: #0a5cff;
+  --t-radius: 6px; --t-btn-radius: 4px; --t-sw-radius: 4px;
+  --t-head: "Archivo Black", "Arial Black", Impact, sans-serif; --t-head-weight: 900; --t-head-case: uppercase; --t-head-size: 26px;
+}
+
+.tryora__backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.55); }
+.tryora__dialog {
+  position: relative; width: min(920px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto;
+  background: var(--t-bg); border-radius: var(--t-radius); padding: 20px 24px 24px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3);
+}
+.tryora__top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.tryora__brand { font-size: 11px; letter-spacing: .18em; text-transform: uppercase; font-weight: 700; color: var(--t-muted); }
+.tryora__x { border: 0; background: none; color: var(--t-fg); font-size: 26px; line-height: 1; width: 40px; height: 40px; cursor: pointer; border-radius: 50%; }
+.tryora__x:hover { background: var(--t-soft); }
+.tryora__h {
+  font-family: var(--t-head); font-weight: var(--t-head-weight); text-transform: var(--t-head-case);
+  font-size: var(--t-head-size); line-height: 1.1; margin: 0 0 16px; color: var(--t-fg); letter-spacing: -0.01em;
+}
+.tryora__h3 { font-family: var(--t-head); font-weight: var(--t-head-weight); text-transform: var(--t-head-case); font-size: 17px; margin: 18px 0 4px; }
+.tryora__body { display: grid; grid-template-columns: 1.45fr 1fr; gap: 24px; align-items: start; }
+.tryora__visual { min-width: 0; }
+.tryora__side { display: flex; flex-direction: column; gap: 10px; min-width: 0; border-left: 1px solid var(--t-line); padding-left: 24px; }
+
+.tryora__img { width: 100%; display: block; border-radius: calc(var(--t-radius) / 2); aspect-ratio: 4 / 3; object-fit: cover; background: var(--t-soft); }
+.tryora__img--product { object-fit: contain; }
+.tryora__mock { display: inline-block; margin-top: 6px; font-size: 11px; padding: 2px 8px; border-radius: 99px; background: #ffe9a8; color: #5a4300; }
+.tryora__drop {
+  width: 100%; aspect-ratio: 4 / 3; border: 1.5px dashed var(--t-line); border-radius: calc(var(--t-radius) / 2);
+  background: var(--t-soft); color: var(--t-fg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; font: inherit;
+}
+.tryora__drop span:last-child { color: var(--t-muted); font-size: 13px; }
+.tryora__cam { color: var(--t-link); }
+
+.tryora__btn {
+  font: inherit; font-weight: 600; width: 100%; min-height: 46px; padding: 10px 16px; cursor: pointer;
+  border-radius: var(--t-btn-radius); border: 1.5px solid var(--t-accent);
+  background: var(--t-accent); color: var(--t-accent-fg);
+}
+.tryora__btn:hover:not(:disabled) { filter: brightness(1.08); }
+.tryora__btn:disabled { opacity: .45; cursor: not-allowed; }
+.tryora__btn--ghost { background: transparent; color: var(--t-fg); border-color: var(--t-fg); }
+.tryora[data-tryora-style="noir"] .tryora__btn--ghost { border-color: #4a5058; }
+.tryora__btn--sm { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+.tryora__link { font: inherit; font-size: 13px; color: var(--t-link); text-decoration: underline; background: none; border: 0; padding: 0; cursor: pointer; align-self: flex-start; }
+.tryora__links { font-size: 13px; margin: 0; color: var(--t-muted); display: flex; gap: 8px; align-items: center; justify-content: center; }
+.tryora__small { font-size: 12.5px; color: var(--t-muted); margin: 0; }
+.tryora__strong { font-size: 13px; font-weight: 700; margin: 4px 0 0; }
+.tryora__label { margin: 8px 0 0; font-size: 14px; }
+.tryora__count { color: var(--t-muted); font-size: 12px; margin-left: 4px; }
+.tryora__check { display: flex; gap: 8px; align-items: center; margin: 0; font-size: 14px; }
+.tryora__note { margin: 0; padding: 10px 12px; background: var(--t-soft); border-radius: 8px; font-size: 13px; text-align: center; }
+.tryora__notice { margin: 0; padding: 10px 12px; border-radius: 8px; background: #fff3e6; color: #6b3a00; font-size: 13px; }
+.tryora[data-tryora-style="noir"] .tryora__notice { background: #3a2a1a; color: #ffd7b0; }
+.tryora__dot { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--t-fg); color: var(--t-bg); flex: none; }
+.tryora[data-tryora-style="hearth"] .tryora__dot { background: var(--t-accent); color: #fff; }
+.tryora__ring { display: inline-block; width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--t-muted); flex: none; }
+.tryora__spin { display: inline-block; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--t-line); border-top-color: var(--t-link); animation: tryora-spin .9s linear infinite; }
+@keyframes tryora-spin { to { transform: rotate(360deg); } }
+
+.tryora__stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.tryora__stage { display: flex; gap: 10px; align-items: center; font-size: 14px; }
+.tryora__stage--now .tryora__ring { border-color: var(--t-link); border-top-color: transparent; animation: tryora-spin .9s linear infinite; }
+.tryora__stage--now { font-weight: 600; }
+.tryora__stage--todo { color: var(--t-muted); }
+
+/* Swatches: ring/border = selected; tick = already viewed; greyed = sold out. */
+.tryora__swrow { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-top: 6px; }
+.tryora__swrow--scroll { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+.tryora__swrow--scroll .tryora__s { flex: 0 0 64px; scroll-snap-align: start; }
+.tryora__s { position: relative; border: 0; background: none; padding: 0; color: var(--t-fg); font: inherit; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 3px; min-width: 0; }
+.tryora__s:disabled { cursor: not-allowed; }
+.tryora__chip {
+  display: grid; place-items: center; width: 100%; aspect-ratio: 1; border-radius: var(--t-sw-radius);
+  background: var(--t-soft) center / cover; outline: 1px solid rgba(0,0,0,.08); outline-offset: -1px;
+  font-size: 12px; color: var(--t-muted); text-transform: uppercase;
+}
+.tryora__s.is-selected .tryora__chip { outline: 2.5px solid var(--t-fg); outline-offset: 2px; }
+.tryora[data-tryora-style="studio"] .tryora__s.is-selected .tryora__chip { outline-color: var(--t-accent); }
+.tryora[data-tryora-style="hearth"] .tryora__s.is-selected .tryora__chip { outline-color: var(--t-accent); }
+.tryora__s.is-soldout .tryora__chip { filter: grayscale(1) opacity(.45); background-image: linear-gradient(to top right, transparent calc(50% - 1px), rgba(0,0,0,.35) 50%, transparent calc(50% + 1px)); }
+.tryora__sname { font-size: 11.5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tryora[data-tryora-style="studio"] .tryora__sname { text-transform: uppercase; font-size: 10.5px; font-weight: 700; }
+.tryora__viewed, .tryora__sold { font-size: 10.5px; color: var(--t-muted); display: inline-flex; gap: 2px; align-items: center; white-space: nowrap; }
+.tryora__lock { color: var(--t-muted); }
+.tryora__more { border: 1px solid var(--t-line); background: var(--t-bg); color: var(--t-fg); border-radius: var(--t-sw-radius); aspect-ratio: 1; font: inherit; font-size: 12px; line-height: 1.2; cursor: pointer; }
+.tryora__swhint { display: flex; justify-content: space-between; align-items: center; margin: 2px 0 0; font-size: 12px; color: var(--t-muted); }
+
+.tryora__panel {
+  position: absolute; top: 64px; right: 24px; width: min(420px, calc(100% - 48px)); max-height: calc(100% - 88px); overflow: auto;
+  background: var(--t-bg); border: 1px solid var(--t-line); border-radius: var(--t-radius); padding: 14px 16px 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.18); display: flex; flex-direction: column; gap: 8px; z-index: 2;
+}
+.tryora__ptop { display: flex; justify-content: space-between; align-items: center; font-family: var(--t-head); text-transform: var(--t-head-case); font-size: 18px; }
+.tryora__grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.tryora__chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.tryora__gchip { padding: 4px 10px; border-radius: 99px; background: var(--t-soft); font-size: 12px; }
+.tryora__gchip:first-child { background: var(--t-fg); color: var(--t-bg); }
+
+.tryora__field { display: grid; gap: 4px; font-size: 13px; }
+.tryora__field input { font: inherit; padding: 10px 12px; border: 1px solid var(--t-line); border-radius: 8px; background: var(--t-bg); color: var(--t-fg); }
+.tryora__field input[aria-invalid="true"] { border-color: #c23b22; }
+.tryora__opt { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; color: var(--t-muted); }
+.tryora__opt input { margin-top: 2px; }
+
+.tryora__voucher { border: 1px solid var(--t-line); border-radius: 10px; padding: 12px; display: grid; gap: 6px; margin-top: 6px; }
+.tryora__code { font-weight: 800; letter-spacing: .06em; }
+.tryora__row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.tryora button:focus-visible, .tryora a:focus-visible, .tryora input:focus-visible { outline: 3px solid var(--t-link); outline-offset: 2px; }
+
+@media (max-width: 749px) {
+  .tryora { place-items: end stretch; }
+  .tryora__dialog { width: 100vw; max-height: 100dvh; height: 100dvh; border-radius: 0; padding: 14px 16px 24px; }
+  .tryora__body { grid-template-columns: 1fr; gap: 14px; }
+  .tryora__side { border-left: 0; padding-left: 0; }
+  .tryora__h { --t-head-size: 24px; }
+  .tryora__panel--sheet { position: fixed; inset: auto 0 0 0; top: auto; width: 100%; max-height: 80dvh; border-radius: 18px 18px 0 0; }
+  .tryora__panel--sheet .tryora__grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .tryora__panel:not(.tryora__panel--sheet) { left: 16px; right: 16px; width: auto; }
+}
+@media (prefers-reduced-motion: reduce) { .tryora__spin, .tryora__stage--now .tryora__ring { animation: none; } }
+
+/* Launchers */
+.tryora-launch { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 600; padding: 10px 18px; border: 0; cursor: pointer; line-height: 1.2; }
+.tryora-launch--overlay { position: absolute; right: 16px; bottom: 16px; z-index: 5; box-shadow: 0 4px 16px rgba(0,0,0,.18); }
+.tryora-launch--floating { position: fixed; bottom: 16px; z-index: 2147482000; box-shadow: 0 6px 20px rgba(0,0,0,.22); }
+.tryora-launch--inline { margin: 12px 0; width: 100%; justify-content: center; }
+.tryora-launch--atelier:not(.button) { background: none; }
+.tryora-launch.button { width: auto; }
+.tryora-launch--inline.button { width: 100%; }
+.tryora__h3--first { margin-top: 0; }
