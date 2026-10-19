@@ -72,7 +72,7 @@ async function seed({ request }: ActionFunctionArgs) {
           tags: ["tryora-test"],
           descriptionHtml: "<p>Test product for checking Tryora's colour swatches. Safe to delete.</p>",
           productOptions: [
-            { name: "Colour", values: COLOURS.map(([name, color]) => ({ name, swatch: { color } })) },
+            { name: "Colour", values: COLOURS.map(([name]) => ({ name })) },
           ],
           files: imageUrl ? [{ originalSource: imageUrl, contentType: "IMAGE", alt: "Form Sofa" }] : [],
           variants: COLOURS.map(([name]) => ({
