@@ -120,3 +120,24 @@ describe("popup flow", () => {
     expect(r.state.photo?.id).toBe("room-1");
   });
 });
+
+import { photoNote } from "../src/flow.js";
+import { defaultPlacement } from "../src/provider.js";
+
+describe("product-agnostic copy", () => {
+  it("shows the existing-item note only when an item was detected", () => {
+    expect(photoNote({ status: "ok", detected: "existing_item" }, "bed")).toBe("Existing bed detected – we'll replace it");
+    expect(photoNote({ status: "ok", detected: "empty_space" }, "bed")).toBe("Empty space – we'll place it here");
+    expect(photoNote({ status: "ok", detected: "wall" }, "wallpaper")).toBe("Wall detected");
+    expect(photoNote({ status: "ok" }, "sofa")).toBeNull(); // unsure: no note
+    expect(photoNote({ status: "checking" }, "sofa")).toBeNull();
+  });
+
+  it("picks a sensible default placement from the product type", () => {
+    expect(defaultPlacement("Sofa")).toBe("replace");
+    expect(defaultPlacement("Wool rug")).toBe("floor_cover");
+    expect(defaultPlacement("Wallpaper")).toBe("wall_cover");
+    expect(defaultPlacement("Ceiling pendant")).toBe("light");
+    expect(defaultPlacement("Ottoman")).toBe("replace");
+  });
+});

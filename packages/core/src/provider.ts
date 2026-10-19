@@ -3,6 +3,31 @@
  * model test without touching the rest of the app. Real providers sit behind a feature flag.
  */
 
+/** How a product goes into a room photo. Chosen per product, with a default from the product type. */
+export type Placement =
+  | "replace" // swap an existing item: sofa, bed, chair, table, cabinet
+  | "place" // put into an empty area
+  | "floor_cover" // rug, flooring
+  | "wall_cover" // wallpaper, paint, panelling
+  | "wall_hang" // art, mirror
+  | "light"; // pendant, lamp
+
+export const DEFAULT_PLACEMENT: Record<string, Placement> = {
+  sofa: "replace", bed: "replace", chair: "replace", armchair: "replace", table: "replace", cabinet: "replace",
+  sideboard: "replace", wardrobe: "replace", rug: "floor_cover", flooring: "floor_cover", carpet: "floor_cover",
+  wallpaper: "wall_cover", paint: "wall_cover", panelling: "wall_cover", art: "wall_hang", print: "wall_hang",
+  mirror: "wall_hang", pendant: "light", lamp: "light", light: "light",
+};
+
+/** Default placement for a product type, falling back to "replace". */
+export function defaultPlacement(productType: string): Placement {
+  const key = productType.trim().toLowerCase();
+  const exact = DEFAULT_PLACEMENT[key];
+  if (exact) return exact;
+  const hit = Object.keys(DEFAULT_PLACEMENT).find((k) => key.includes(k));
+  return (hit && DEFAULT_PLACEMENT[hit]) || "replace";
+}
+
 export interface ProviderCapabilities {
   name: string;
   /** Whether the provider can guarantee no retention of inputs/outputs under our configuration/contract. */
@@ -14,7 +39,8 @@ export interface ProviderCapabilities {
 export interface RoomAnalysis {
   outcome: "accepted" | "needs_correction" | "unsupported";
   reason?: "wrong_angle" | "dark_or_blurred" | "area_cut_off" | "unclear_target";
-  detected?: "existing_item" | "empty_space";
+  /** What the check found for this placement type. Omitted when the check is unsure: the UI then shows no note. */
+  detected?: "existing_item" | "empty_space" | "wall" | "floor_area";
   /** Uncertain findings must be phrased as uncertainty in the UI. */
   confidence: number;
   costMicros: number;
@@ -26,8 +52,10 @@ export interface GenerateRequest {
   productReferences: Uint8Array[];
   swatch?: Uint8Array;
   productDescription: string;
+  /** Shopper-facing noun for the product type, e.g. "sofa", "rug", "wallpaper". */
+  itemNoun: string;
   optionValue: string;
-  placement: "replace" | "place";
+  placement: Placement;
 }
 
 export interface GenerateResult {

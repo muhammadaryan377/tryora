@@ -18,7 +18,7 @@ export type Step =
 
 export type PhotoCheck =
   | { status: "checking" }
-  | { status: "ok"; detected: "existing_item" | "empty_space" }
+  | { status: "ok"; detected?: "existing_item" | "empty_space" | "wall" | "floor_area" }
   | { status: "needsCorrection"; reason: "wrong_angle" | "dark_or_blurred" | "area_cut_off" | "unclear_target" }
   | { status: "fileRejected"; reason: "unsupported_format" | "too_large" | "too_small" | "unreadable" };
 
@@ -104,6 +104,17 @@ export function canGenerate(state: FlowState): boolean {
     !!state.selectedOption &&
     state.generation === null
   );
+}
+
+/** Photo-check note for step 2. Returns null when nothing should be shown (including when the check is unsure). */
+export function photoNote(check: PhotoCheck | undefined, itemNoun: string): string | null {
+  if (!check || check.status !== "ok" || !check.detected) return null;
+  switch (check.detected) {
+    case "existing_item": return `Existing ${itemNoun} detected – we'll replace it`;
+    case "empty_space": return "Empty space – we'll place it here";
+    case "wall": return "Wall detected";
+    case "floor_area": return "Floor area detected";
+  }
 }
 
 export interface Transition {
