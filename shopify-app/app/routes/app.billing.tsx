@@ -25,9 +25,10 @@ const GRANT_LABEL: Record<string, string> = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const shopId = session.shop;
   await tryora.grantTrial(shopId);
+  const usage = await usageOverview(admin, shopId);
 
   const monthStart = new Date();
   monthStart.setUTCDate(1);
@@ -64,6 +65,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       endsAt: trial.started && trial.endsAt ? new Date(trial.endsAt).toISOString() : null,
     },
     deliveredThisMonth,
+    usage,
     grants: grants.map((g) => ({
       id: g.id,
       label: GRANT_LABEL[g.bucket ?? ""] ?? "Credits added",
@@ -73,6 +75,54 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     })),
   };
 };
+
+/** Last 30 days of delivered previews (one credit each), by day and by product. */
+async function usageOverview(admin: { graphql: (q: string, o?: any) => Promise<Response> }, shopId: string) {
+  const since = new Date();
+  since.setUTCHours(0, 0, 0, 0);
+  since.setUTCDate(since.getUTCDate() - 29);
+  const [delivered, notCharged] = await Promise.all([
+    prisma.previewJob.findMany({
+      where: { shopId, state: "DELIVERED", deliveredAt: { gte: since } },
+      select: { deliveredAt: true, productId: true, refundedAt: true },
+    }),
+    prisma.previewJob.count({ where: { shopId, createdAt: { gte: since }, state: { in: ["FAILED", "REJECTED", "EXPIRED", "CANCELLED"] } } }),
+  ]);
+  const days: { date: string; count: number }[] = [];
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(since.getTime() + i * 86_400_000);
+    days.push({ date: d.toISOString().slice(0, 10), count: 0 });
+  }
+  const byDay = new Map(days.map((d) => [d.date, d]));
+  const byProduct = new Map<string, number>();
+  let refunded = 0;
+  for (const j of delivered) {
+    const key = j.deliveredAt!.toISOString().slice(0, 10);
+    const day = byDay.get(key);
+    if (day) day.count++;
+    byProduct.set(j.productId, (byProduct.get(j.productId) ?? 0) + 1);
+    if (j.refundedAt) refunded++;
+  }
+  const top = [...byProduct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  let titles: Record<string, string> = {};
+  if (top.length) {
+    try {
+      const res = await admin.graphql(`#graphql
+        query T($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title } } }`, { variables: { ids: top.map(([id]) => id) } });
+      const json: any = await res.json();
+      titles = Object.fromEntries((json.data?.nodes ?? []).filter(Boolean).map((n: any) => [n.id, n.title]));
+    } catch {
+      /* titles are a nicety */
+    }
+  }
+  return {
+    days,
+    total: delivered.length,
+    refunded,
+    notCharged,
+    products: top.map(([id, count]) => ({ id, title: titles[id] ?? "Removed product", count })),
+  };
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -181,6 +231,40 @@ export default function Billing() {
             we reject, don't use a credit. Monthly credits are used before top-ups.
           </s-text>
         </s-paragraph>
+      </s-section>
+
+      <s-section heading="Usage – last 30 days">
+        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(150px, 1fr))" gap="base">
+          <s-box padding="base" background="subdued" borderRadius="base">
+            <s-text color="subdued">Credits used</s-text>
+            <s-heading>{d.usage.total - d.usage.refunded}</s-heading>
+          </s-box>
+          <s-box padding="base" background="subdued" borderRadius="base">
+            <s-text color="subdued">Returned for reported issues</s-text>
+            <s-heading>{d.usage.refunded}</s-heading>
+          </s-box>
+          <s-box padding="base" background="subdued" borderRadius="base">
+            <s-text color="subdued">Attempts not charged</s-text>
+            <s-heading>{d.usage.notCharged}</s-heading>
+          </s-box>
+        </s-grid>
+        <UsageBars days={d.usage.days} />
+        {d.usage.products.length > 0 && (
+          <s-table>
+            <s-table-header-row>
+              <s-table-header listSlot="primary">Product</s-table-header>
+              <s-table-header>Previews</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
+              {d.usage.products.map((p) => (
+                <s-table-row key={p.id}>
+                  <s-table-cell>{p.title}</s-table-cell>
+                  <s-table-cell>{p.count}</s-table-cell>
+                </s-table-row>
+              ))}
+            </s-table-body>
+          </s-table>
+        )}
       </s-section>
 
       <s-section heading={d.paid && currentPlan ? `Your plan: ${currentPlan.name}` : "Choose a plan"}>
@@ -294,6 +378,35 @@ export default function Billing() {
         </s-paragraph>
       </s-section>
     </s-page>
+  );
+}
+
+/** Simple daily bar chart. Plain elements, no chart library. */
+function UsageBars({ days }: { days: { date: string; count: number }[] }) {
+  const max = Math.max(1, ...days.map((d) => d.count));
+  const label = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return (
+    <figure style={{ margin: "16px 0 8px" }} aria-label="Previews per day, last 30 days">
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 96, borderBottom: "1px solid #d4d4d4" }}>
+        {days.map((d) => (
+          <div
+            key={d.date}
+            title={`${label(d.date)}: ${d.count} preview${d.count === 1 ? "" : "s"}`}
+            style={{
+              flex: 1,
+              height: d.count ? `${Math.max(4, (d.count / max) * 100)}%` : 2,
+              background: d.count ? "#303030" : "#e3e3e3",
+              borderRadius: "3px 3px 0 0",
+            }}
+          />
+        ))}
+      </div>
+      <figcaption style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#616161", marginTop: 4 }}>
+        <span>{label(days[0]!.date)}</span>
+        <span>Busiest day: {max === 1 && !days.some((d) => d.count) ? 0 : max}</span>
+        <span>{label(days[days.length - 1]!.date)}</span>
+      </figcaption>
+    </figure>
   );
 }
 

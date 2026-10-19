@@ -58,9 +58,10 @@ async function loadShop(db: Db, shopId: string): Promise<ShopSnapshot> {
         leadCapture: shop.leadCapture as ShopSettings["leadCapture"],
         paidPlanActive: shop.paidPlanActive,
         quota: {
-          enabled: policy?.enabled ?? false,
+          // No saved policy yet: the recommended default (10 previews per shopper per day).
+          enabled: policy ? policy.enabled : true,
           perProduct: policy?.perProduct ?? undefined,
-          storeWide: policy?.storeWide ?? undefined,
+          storeWide: policy ? (policy.storeWide ?? undefined) : 10,
           window:
             policy?.windowType === "manual" && policy.resetEpoch
               ? { type: "manual", resetEpoch: policy.resetEpoch }

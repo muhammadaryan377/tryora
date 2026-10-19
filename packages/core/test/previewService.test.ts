@@ -44,6 +44,11 @@ async function deliver(svc: PreviewService, i: CreatePreviewInput) {
   return svc.acknowledgeDelivery(job.id, ready.job.deliveryToken!);
 }
 
+async function limitsOff(svc: PreviewService) {
+  const s = await svc.ensureSettings(SHOP);
+  await svc.updateSettings({ ...s, quota: { ...s.quota, enabled: false } });
+}
+
 async function expectCode(p: Promise<unknown>, code: string) {
   await expect(p).rejects.toSatisfy((e: unknown) => e instanceof TryoraError && e.code === code);
 }
@@ -195,6 +200,7 @@ describe("credits", () => {
 describe("trial", () => {
   it("ends after ten delivered previews, without converting to a paid plan", async () => {
     const { svc } = setup();
+    await limitsOff(svc);
     await svc.grantTrial(SHOP);
     for (let i = 0; i < TRIAL_CREDITS; i++) await deliver(svc, input({ optionValue: `opt-${i}` }));
     const status = await svc.trialStatus(SHOP);
@@ -233,8 +239,17 @@ describe("shopper limits", () => {
     return s;
   }
 
+  it("defaults to 10 previews per shopper per day, which the merchant can change", async () => {
+    const { svc } = setup();
+    await svc.grantPeriodCredits(SHOP, "p1", 100, new Date(Date.now() + 30 * 86_400_000));
+    for (let i = 0; i < 10; i++) await deliver(svc, input({ optionValue: `opt-${i}` }));
+    await expectCode(svc.createPreview(input()), "QUOTA_STORE");
+    await deliver(svc, input({ visitorId: "another-shopper" }));
+  });
+
   it("limits off means no shopper quota, only the merchant's credits apply", async () => {
     const { svc } = setup();
+    await limitsOff(svc);
     await svc.grantTrial(SHOP);
     for (let i = 0; i < TRIAL_CREDITS; i++) await deliver(svc, input({ optionValue: `opt-${i}` }));
     await expectCode(svc.createPreview(input()), "PLAN_INACTIVE");

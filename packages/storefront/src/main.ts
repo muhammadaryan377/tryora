@@ -207,7 +207,7 @@ class Tryora {
         } catch (e: any) {
           if (this.state.photo?.id !== c.photoId) return;
           if (e?.code === "RATE_LIMITED") {
-            this.fileProblem = "You've tried a lot of photos. Please wait a little while and try again.";
+            this.fileProblem = "We're very busy right now. Please try again in a few minutes.";
             return this.dispatch({ type: "REMOVE_PHOTO" });
           }
           // If the check service is down we don't block the shopper; the generation step checks again.

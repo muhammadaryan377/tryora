@@ -46,7 +46,7 @@ model Shop {
   paidPlanActive   Boolean  @default(false)
   storefrontEnabled Boolean @default(false)
   swatchAutoFill   Boolean  @default(false) // merchant approved filling missing swatches from variant photos and colour names
-  dailyPreviewCap  Int?     @default(30) // store-wide new previews per day; null = no daily cap
+  dailyPreviewCap  Int?     // unused (daily store cap was removed by owner decision, 19 Oct 2026)
   abuseAlertAt     DateTime? // last time unusual activity paused previews
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt

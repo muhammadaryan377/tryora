@@ -328,18 +328,9 @@ export async function captureLead(
     await prisma.leadDelivery.update({ where: { id: lead.id }, data: { status: "failed", lastError: String(e).slice(0, 200) } });
   }
 
-  await prisma.consentRecord.create({
-    data: {
-      shopId: input.shopId,
-      subjectRef: customerRef ?? createHash("sha256").update(input.email.toLowerCase()).digest("hex"),
-      wording: input.wording,
-      wordingVersion: createHash("sha256").update(input.wording).digest("hex").slice(0, 12),
-      action: input.marketing ? "granted" : "not_granted",
-    },
-  });
+  // Nothing about the shopper is kept by Tryora (owner decision): consent is recorded by Shopify on the customer.
   await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
   // The shopper's preview never waits on Shopify: a failed customer save is logged for the merchant, not shown to them.
-  // (Saving customers needs the write_customers permission, which the owner still has to approve.)
   return { ok: true };
 }
 
