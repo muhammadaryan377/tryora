@@ -28,6 +28,23 @@ export function defaultPlacement(productType: string): Placement {
   return (hit && DEFAULT_PLACEMENT[hit]) || "replace";
 }
 
+/**
+ * Why a room photo can't be used. Checked before any credit is reserved, so a rejected photo never costs
+ * the merchant a credit.
+ */
+export type PhotoProblem =
+  | "wrong_angle"
+  | "dark_or_blurred"
+  | "area_cut_off"
+  | "unclear_target"
+  | "not_a_room" // e.g. a field, a car, a screenshot, a pet close-up
+  | "wrong_setting" // outdoor photo for an indoor product, or the reverse
+  | "no_suitable_surface" // e.g. wallpaper but no wall visible, rug but no floor visible
+  | "not_allowed"; // people as the main subject, unsafe or inappropriate content
+
+/** Where a product is meant to be used. Garden furniture is "outdoor"; most products are "indoor". */
+export type Setting = "indoor" | "outdoor" | "either";
+
 export interface ProviderCapabilities {
   name: string;
   /** Whether the provider can guarantee no retention of inputs/outputs under our configuration/contract. */
@@ -38,7 +55,7 @@ export interface ProviderCapabilities {
 
 export interface RoomAnalysis {
   outcome: "accepted" | "needs_correction" | "unsupported";
-  reason?: "wrong_angle" | "dark_or_blurred" | "area_cut_off" | "unclear_target";
+  reason?: PhotoProblem;
   /** What the check found for this placement type. Omitted when the check is unsure: the UI then shows no note. */
   detected?: "existing_item" | "empty_space" | "wall" | "floor_area";
   /** Uncertain findings must be phrased as uncertainty in the UI. */

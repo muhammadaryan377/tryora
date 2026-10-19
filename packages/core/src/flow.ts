@@ -8,6 +8,8 @@
  * Image bytes live only in browser memory, referenced here by opaque handles.
  */
 
+import type { PhotoProblem } from "./provider.js";
+
 export type Step =
   | "opening" // product reference, colour choice, photo guidance, take/upload
   | "photoReady" // photo selected; checking or checked; pick colour; Generate image
@@ -19,7 +21,7 @@ export type Step =
 export type PhotoCheck =
   | { status: "checking" }
   | { status: "ok"; detected?: "existing_item" | "empty_space" | "wall" | "floor_area" }
-  | { status: "needsCorrection"; reason: "wrong_angle" | "dark_or_blurred" | "area_cut_off" | "unclear_target" }
+  | { status: "needsCorrection"; reason: PhotoProblem }
   | { status: "fileRejected"; reason: "unsupported_format" | "too_large" | "too_small" | "unreadable" };
 
 export type GenerationStage = "waiting" | "uploading" | "checking_photo" | "preparing" | "generating" | "checking_result";
@@ -114,6 +116,32 @@ export function photoNote(check: PhotoCheck | undefined, itemNoun: string): stri
     case "empty_space": return "Empty space – we'll place it here";
     case "wall": return "Wall detected";
     case "floor_area": return "Floor area detected";
+  }
+}
+
+/** Shopper-facing message for a photo that can't be used. The shopper keeps the popup and can try another photo. */
+export function photoProblemMessage(reason: PhotoProblem, itemNoun: string, setting: "indoor" | "outdoor" | "either" = "indoor"): string {
+  switch (reason) {
+    case "not_a_room":
+      return setting === "outdoor"
+        ? `This doesn't look like an outdoor space. Try a photo of the patio, deck or garden where the ${itemNoun} will go.`
+        : `This doesn't look like a room. Try a photo of the space where the ${itemNoun} will go.`;
+    case "wrong_setting":
+      return setting === "outdoor"
+        ? `This ${itemNoun} is made for outdoor spaces. Try a photo of your garden, patio or terrace.`
+        : `This ${itemNoun} is made for indoor spaces. Try a photo taken inside your home.`;
+    case "no_suitable_surface":
+      return `We can't see where the ${itemNoun} would go. Make sure the wall or floor area is clearly in the photo.`;
+    case "wrong_angle":
+      return "Try taking the photo straight on, at roughly the same angle as the product photo.";
+    case "dark_or_blurred":
+      return "This photo is a little dark or blurry. Try again in better light and hold your phone steady.";
+    case "area_cut_off":
+      return `Part of the space is cut off. Step back so the whole area for the ${itemNoun} is in the photo.`;
+    case "unclear_target":
+      return `We're not sure where the ${itemNoun} should go. Try a photo with the space more clearly in view.`;
+    case "not_allowed":
+      return "We can't use this photo. Please upload a photo of your room without people as the main subject.";
   }
 }
 

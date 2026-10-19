@@ -141,3 +141,24 @@ describe("product-agnostic copy", () => {
     expect(defaultPlacement("Ottoman")).toBe("replace");
   });
 });
+
+import { photoProblemMessage } from "../src/flow.js";
+
+describe("photos that don't make sense", () => {
+  it("a grass field for a sofa is blocked before any credit is used", () => {
+    const r = run(
+      initialFlow({ leadMode: "off", defaultOption: "Oat" }),
+      { type: "PHOTO_SELECTED", photoId: "field" },
+      { type: "PHOTO_CHECKED", check: { status: "needsCorrection", reason: "not_a_room" } },
+      { type: "GENERATE_PRESSED" },
+    );
+    expect(r.state.step).toBe("photoReady");
+    expect(r.commands).not.toContain("CREATE_PREVIEW");
+    expect(photoProblemMessage("not_a_room", "sofa")).toContain("doesn't look like a room");
+  });
+
+  it("garden furniture asks for an outdoor photo instead", () => {
+    expect(photoProblemMessage("wrong_setting", "bench", "outdoor")).toContain("outdoor spaces");
+    expect(photoProblemMessage("not_a_room", "bench", "outdoor")).toContain("patio");
+  });
+});
