@@ -184,3 +184,6 @@ html.tryora-open { overflow: hidden; }
 .tryora__s.is-text .tryora__chip { aspect-ratio: auto; min-height: 36px; padding: 6px 8px; border-radius: 8px; font-size: 12px; text-transform: none; color: var(--t-fg); background: var(--t-bg); outline: 1px solid var(--t-line); line-height: 1.15; text-align: center; }
 .tryora__s.is-text.is-soldout .tryora__chip { filter: none; color: var(--t-muted); background: var(--t-soft); text-decoration: line-through; }
 .tryora__swrow--scroll .tryora__s.is-text { flex: 0 0 auto; }
+.tryora__s.is-text.is-selected .tryora__chip { outline: 2px solid var(--t-fg); outline-offset: 1px; font-weight: 600; }
+.tryora[data-tryora-style="hearth"] .tryora__s.is-text.is-selected .tryora__chip,
+.tryora[data-tryora-style="studio"] .tryora__s.is-text.is-selected .tryora__chip { outline-color: var(--t-accent); }
