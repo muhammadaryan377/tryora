@@ -43,6 +43,9 @@ interface Config {
 }
 
 const PROXY = "/apps/tryora";
+/** Option value used for products with a single style (no colour choice). Never shown to shoppers. */
+const SINGLE = "__single__";
+const shown = (v: string | null | undefined) => (v && v !== SINGLE ? v : "");
 const COMPACT_DESKTOP = 12;
 const ISSUE_CATEGORIES: [string, string][] = [
   ["wrong_product", "It's not the right product"],
@@ -147,7 +150,7 @@ class Tryora {
 
   constructor(private readonly cfg: Config) {
     const firstAvailable = cfg.swatches.find((s) => s.available)?.value ?? null;
-    this.state = initialFlow({ leadMode: cfg.lead.mode, defaultOption: preselected(cfg) ?? firstAvailable });
+    this.state = initialFlow({ leadMode: cfg.lead.mode, defaultOption: cfg.swatches.length ? (preselected(cfg) ?? firstAvailable) : SINGLE });
     if (!cfg.available) this.state = reduce(this.state, { type: "PREVIEWS_UNAVAILABLE" }).state;
   }
 
@@ -417,7 +420,7 @@ class Tryora {
     if (!r) return;
     const a = document.createElement("a");
     a.href = r.imageHandle;
-    a.download = `${this.cfg.product} - ${r.option} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
+    a.download = `${[this.cfg.product, shown(r.option)].filter(Boolean).join(" - ")} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -450,7 +453,7 @@ class Tryora {
       opening: `See this {item} in your room`,
       photoReady: s.photo ? "Your photo is ready" : "Add your room photo",
       emailStep: "Your room photo is ready",
-      generating: s.generation?.option ? `Creating your ${s.generation.option} image` : "Creating your image",
+      generating: shown(s.generation?.option) ? `Creating your ${shown(s.generation?.option)} image` : "Creating your image",
       result: "Your room, with {product}",
       unavailable: "Previews are unavailable",
     };
@@ -479,9 +482,9 @@ class Tryora {
     const c = this.cfg;
     if (s.step === "result" && s.shownOption) {
       const r = s.results[s.shownOption]!;
-      return `<img class="tryora__img" src="${r.imageHandle}" alt="${esc(`${c.product} in ${r.option}, shown in your room`)}">
+      return `<img class="tryora__img" src="${r.imageHandle}" alt="${esc(`${c.product}${shown(r.option) ? ` in ${shown(r.option)}` : ""}, shown in your room`)}">
         ${c.mock ? `<span class="tryora__mock">Development preview (not AI)</span>` : ""}
-        <p class="tryora__label"><strong>${esc(c.product)}</strong> · ${esc(r.option)}</p>
+        <p class="tryora__label"><strong>${esc(c.product)}</strong>${shown(r.option) ? ` · ${esc(shown(r.option))}` : ""}</p>
         <p class="tryora__small">AI-generated visualisation for illustration only. Colour, scale, positioning and product details may differ. Check dimensions and product information before ordering.</p>
         <p class="tryora__strong">Download before leaving this page.</p>`;
     }
@@ -551,7 +554,7 @@ class Tryora {
         return `
           <h3 class="tryora__h3 tryora__h3--first">Enter your email to create your preview</h3>
           ${c.offer ? `<p class="tryora__small">We'll also send you your offer.</p>` : ""}
-          <p class="tryora__label"><strong>${esc(c.product)}</strong> · ${esc(s.selectedOption ?? "")}</p>
+          <p class="tryora__label"><strong>${esc(c.product)}</strong>${shown(s.selectedOption) ? ` · ${esc(shown(s.selectedOption))}` : ""}</p>
           <label class="tryora__field"><span>Email address</span>
             <input name="email" type="email" autocomplete="email" value="${esc(this.email)}" data-autofocus ${this.emailError ? 'aria-invalid="true"' : ""}></label>
           ${this.emailError ? `<p class="tryora__notice" role="alert">${esc(this.emailError)}</p>` : ""}
@@ -573,7 +576,7 @@ class Tryora {
         const list = STAGES.map((st, i) => {
           const idx = i + 1;
           const cls = idx < at ? "done" : idx === at ? "now" : "todo";
-          return `<li class="tryora__stage tryora__stage--${cls}">${cls === "done" ? `<span class="tryora__dot">${TICK}</span>` : `<span class="tryora__ring"></span>`} ${esc(st.label(g.option))}</li>`;
+          return `<li class="tryora__stage tryora__stage--${cls}">${cls === "done" ? `<span class="tryora__dot">${TICK}</span>` : `<span class="tryora__ring"></span>`} ${esc(st.label(shown(g.option)))}</li>`;
         }).join("");
         return `
           <ol class="tryora__stages" aria-live="polite">${list}</ol>
@@ -713,7 +716,8 @@ function buildLauncher(cfg: Config, type: "overlay" | "floating" | "inline", ope
 
 function mediaContainer(): HTMLElement | null {
   return document.querySelector<HTMLElement>(
-    "[data-tryora-media], media-gallery, .product__media-wrapper, .product-media, .product__media, .product-single__media, .product-gallery",
+    // The main (first) product photo, so the button sits on the photo shoppers see first.
+    "[data-tryora-media], .product__media-item, .product-media-container, .product__media, .product-single__media, .product-gallery__image, media-gallery, .product-media",
   );
 }
 

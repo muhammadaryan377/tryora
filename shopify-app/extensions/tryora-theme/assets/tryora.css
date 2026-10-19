@@ -177,3 +177,6 @@ html.tryora-open { overflow: hidden; }
 .tryora-launch.button { width: auto; }
 .tryora-launch--inline.button { width: 100%; }
 .tryora__h3--first { margin-top: 0; }
+/* Some themes (e.g. Dawn) hide empty divs; the backdrop and colour chips are intentionally empty. */
+.tryora .tryora__backdrop, .tryora .tryora__chip { display: block; }
+.tryora .tryora__chip { display: grid; }
