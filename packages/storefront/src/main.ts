@@ -714,11 +714,23 @@ function buildLauncher(cfg: Config, type: "overlay" | "floating" | "inline", ope
   return btn;
 }
 
+/** The main (first) product photo, so the button sits on the photo shoppers see first. Selectors are tried in priority order. */
 function mediaContainer(): HTMLElement | null {
-  return document.querySelector<HTMLElement>(
-    // The main (first) product photo, so the button sits on the photo shoppers see first.
-    "[data-tryora-media], .product__media-item, .product-media-container, .product__media, .product-single__media, .product-gallery__image, media-gallery, .product-media",
-  );
+  const selectors = [
+    "[data-tryora-media]",
+    ".product__media-item", // Dawn and most Shopify themes
+    ".product-media-container",
+    ".product-single__media",
+    ".product-gallery__image",
+    ".product__media",
+    "media-gallery",
+    ".product-media",
+  ];
+  for (const sel of selectors) {
+    const el = [...document.querySelectorAll<HTMLElement>(sel)].find((e) => e.offsetHeight > 120);
+    if (el) return el;
+  }
+  return null;
 }
 
 function variantPicker(): HTMLElement | null {
