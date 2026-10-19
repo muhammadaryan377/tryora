@@ -586,8 +586,12 @@ class Tryora {
       }
       case "result":
         return `
-          <button class="tryora__btn" data-act="another" data-autofocus>Try another colour</button>
-          <button class="tryora__btn tryora__btn--ghost" data-act="download">Download image</button>
+          ${
+            c.swatches.length > 1
+              ? `<button class="tryora__btn" data-act="another" data-autofocus>Try another colour</button>
+          <button class="tryora__btn tryora__btn--ghost" data-act="download">Download image</button>`
+              : `<button class="tryora__btn" data-act="download" data-autofocus>Download image</button>`
+          }
           <p class="tryora__links"><button class="tryora__link" data-act="new-room">Use a different room</button> | <button class="tryora__link" data-act="issue">Report an issue</button></p>
           ${notice}
           ${this.voucher()}`;
