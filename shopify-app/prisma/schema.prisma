@@ -41,6 +41,7 @@ model Shop {
   timezone         String?
   settingsVersion  Int      @default(1)
   leadCapture      String   @default("required") // off | required | skippable
+  leadSettings     Json     @default("{}")      // opt-in checkbox on/off and wording, customer tag
   paidPlanActive   Boolean  @default(false)
   storefrontEnabled Boolean @default(false)
   createdAt        DateTime @default(now())
