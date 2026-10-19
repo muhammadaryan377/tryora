@@ -25,3 +25,8 @@ redirect_urls = [ "https://tryoracore-production.up.railway.app/auth/callback" ]
 
 [build]
 automatically_update_urls_on_dev = true
+
+[app_proxy]
+url = "https://tryoracore-production.up.railway.app/proxy"
+subpath = "tryora"
+prefix = "apps"

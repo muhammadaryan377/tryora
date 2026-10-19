@@ -9,7 +9,8 @@ export type ReasonCode =
   | "NOT_FOUND"
   | "BAD_TOKEN"
   | "ALREADY_REFUNDED"
-  | "NOT_DELIVERED";
+  | "NOT_DELIVERED"
+  | "BAD_EMAIL"; // shopper typed an email that is not valid
 
 export class TryoraError extends Error {
   constructor(
