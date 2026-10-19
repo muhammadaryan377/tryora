@@ -650,11 +650,12 @@ class Tryora {
     const viewed = isViewed(s, x.value);
     const fill = x.image ? `background-image:url('${esc(x.image)}')` : x.colour ? `background:${esc(x.colour)}` : "";
     const disabled = locked || (!x.available && !viewed);
-    return `<button class="tryora__s ${selected ? "is-selected" : ""} ${!x.available ? "is-soldout" : ""}"
+    const text = !x.image && !x.colour;
+    return `<button class="tryora__s ${selected ? "is-selected" : ""} ${!x.available ? "is-soldout" : ""} ${text ? "is-text" : ""}"
         data-act="swatch" data-value="${esc(x.value)}" role="radio" aria-checked="${selected}"
         ${disabled ? "disabled" : ""} aria-label="${esc(x.value)}${viewed ? ", viewed" : ""}${!x.available ? ", sold out" : ""}">
-        <span class="tryora__chip" style="${fill}">${!x.image && !x.colour ? esc(x.value.slice(0, 2)) : ""}</span>
-        <span class="tryora__sname">${esc(x.value)}</span>
+        <span class="tryora__chip" style="${fill}">${text ? esc(x.value) : ""}</span>
+        ${text ? "" : `<span class="tryora__sname">${esc(x.value)}</span>`}
         ${viewed ? `<span class="tryora__viewed">${TICK} Viewed</span>` : !x.available ? `<span class="tryora__sold">Sold out</span>` : ""}
         ${locked && !selected ? `<span class="tryora__lock" aria-hidden="true">${LOCK}</span>` : ""}
       </button>`;

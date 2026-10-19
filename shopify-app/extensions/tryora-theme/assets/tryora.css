@@ -180,3 +180,7 @@ html.tryora-open { overflow: hidden; }
 /* Some themes (e.g. Dawn) hide empty divs; the backdrop and colour chips are intentionally empty. */
 .tryora .tryora__backdrop, .tryora .tryora__chip { display: block; }
 .tryora .tryora__chip { display: grid; }
+/* Colours with no swatch colour or photo in Shopify: shown as name labels. */
+.tryora__s.is-text .tryora__chip { aspect-ratio: auto; min-height: 36px; padding: 6px 8px; border-radius: 8px; font-size: 12px; text-transform: none; color: var(--t-fg); background: var(--t-bg); outline: 1px solid var(--t-line); line-height: 1.15; text-align: center; }
+.tryora__s.is-text.is-soldout .tryora__chip { filter: none; color: var(--t-muted); background: var(--t-soft); text-decoration: line-through; }
+.tryora__swrow--scroll .tryora__s.is-text { flex: 0 0 auto; }

@@ -45,7 +45,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
         id title productType
         featuredMedia { preview { image { url } } }
         options { name optionValues { name swatch { color image { image { url } } } } }
-        variants(first: 250) { nodes { availableForSale selectedOptions { name value } } }
+        variants(first: 250) { nodes { availableForSale image { url(transform: { maxWidth: 160, maxHeight: 160 }) } selectedOptions { name value } } }
       }
     }`,
     { variables: { id: gid } },
@@ -62,7 +62,9 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     );
     return {
       value: v.name,
-      image: v.swatch?.image?.image?.url ?? null,
+      // Swatch image set in Shopify, else that colour's own variant photo. With neither (and no swatch colour),
+      // the popup shows the colour name as a label rather than guessing a colour.
+      image: v.swatch?.image?.image?.url ?? variants.find((n: any) => n.image?.url)?.image.url ?? null,
       colour: v.swatch?.color ?? null,
       available: variants.some((n: any) => n.availableForSale),
       group: null, // colour groups come from merchant settings (not built yet), so no chips show
