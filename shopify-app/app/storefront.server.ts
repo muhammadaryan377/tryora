@@ -72,6 +72,10 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     };
   });
   const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
+  // The popup only asks for its settings when the app embed is on in the theme, so this marks setup step 3 done.
+  if (shopRow && !shopRow.storefrontEnabled) {
+    await prisma.shop.update({ where: { id: shopId }, data: { storefrontEnabled: true } }).catch(() => {});
+  }
   // Fill gaps with the merchant's own colours, or name-based guesses if they approved guessing.
   const resolved = resolveSwatches(
     swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),

@@ -43,6 +43,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     paid: shop?.paidPlanActive ?? false,
     abuseAlert: shop?.abuseAlertAt && Date.now() - shop.abuseAlertAt.getTime() < 86_400_000 ? shop.abuseAlertAt.toISOString() : null,
     leadCapture: shop?.leadCapture ?? "required",
+    leadTiming: shop?.leadTiming ?? "before",
     checklist: {
       products: productsReady,
       style: !!appearance,
@@ -189,9 +190,11 @@ export default function Dashboard() {
       </s-section>
       <s-section slot="aside" heading="Lead capture">
         <s-paragraph>
-          Email before first preview:{" "}
+          Shoppers' email:{" "}
           <s-text type="strong">
-            {d.leadCapture === "required" ? "Required" : d.leadCapture === "skippable" ? "Optional" : "Off"}
+            {d.leadCapture === "off"
+              ? "Not asked"
+              : `${d.leadCapture === "required" ? "Required" : "Optional"}, ${d.leadTiming === "after" ? "after" : "before"} the first image`}
           </s-text>
         </s-paragraph>
         <s-link href="/app/leads">Change</s-link>
