@@ -25,8 +25,13 @@ export interface Tx {
   putQuotaUsage(usage: QuotaUsage): void;
 }
 
+/** Every transaction works on one shop: named directly, or found from a job id. */
+export type TxScope = { shopId: ShopId } | { jobId: JobId };
+
 export interface Store {
-  transaction<T>(fn: (tx: Tx) => T | Promise<T>): Promise<T>;
+  transaction<T>(scope: TxScope, fn: (tx: Tx) => T | Promise<T>): Promise<T>;
+  /** Shops that currently hold at least one reserved credit (for the expiry sweep). */
+  shopsWithHeldJobs(): Promise<ShopId[]>;
 }
 
 export class DuplicateReferenceError extends Error {
@@ -57,7 +62,11 @@ export class InMemoryStore implements Store {
   private data: Data = { settings: new Map(), ledger: [], jobs: new Map(), quota: new Map() };
   private queue: Promise<unknown> = Promise.resolve();
 
-  transaction<T>(fn: (tx: Tx) => T | Promise<T>): Promise<T> {
+  async shopsWithHeldJobs(): Promise<ShopId[]> {
+    return [...new Set([...this.data.jobs.values()].map((j) => j.shopId))];
+  }
+
+  transaction<T>(_scope: TxScope, fn: (tx: Tx) => T | Promise<T>): Promise<T> {
     const run = async () => {
       const working = cloneData(this.data);
       const result = await fn(this.makeTx(working));
@@ -98,4 +107,116 @@ export class InMemoryStore implements Store {
       putQuotaUsage: (u) => void d.quota.set(u.jobId, structuredClone(u)),
     };
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Database-backed store
+// ---------------------------------------------------------------------------------------------
+
+/** Everything the engine needs for one shop, loaded at the start of a transaction. */
+export interface ShopSnapshot {
+  settings?: ShopSettings;
+  ledger: LedgerEntry[];
+  jobs: PreviewJob[];
+  quota: QuotaUsage[];
+}
+
+/** What a transaction changed. Ledger entries are append-only; jobs and quota rows are upserted. */
+export interface ShopChanges {
+  settings?: ShopSettings;
+  newLedger: LedgerEntry[];
+  newJobs: PreviewJob[];
+  updatedJobs: PreviewJob[];
+  quota: QuotaUsage[];
+}
+
+/**
+ * A database plugs in here (the Shopify app supplies a Prisma version). `withShop` must run `fn` inside one
+ * database transaction that holds an exclusive per-shop lock, so two requests for the same shop can't
+ * interleave. Unique constraints in the database are a second line of defence.
+ */
+export interface SnapshotBackend {
+  shopIdForJob(jobId: JobId): Promise<ShopId | undefined>;
+  shopsWithHeldJobs(): Promise<ShopId[]>;
+  withShop<T>(shopId: ShopId, fn: (io: { load(): Promise<ShopSnapshot>; save(c: ShopChanges): Promise<void> }) => Promise<T>): Promise<T>;
+}
+
+/**
+ * Runs the engine's synchronous transaction logic against a per-shop snapshot, then writes only the changes.
+ * Same rules as InMemoryStore: duplicate references and idempotency keys are rejected.
+ */
+export class SnapshotStore implements Store {
+  constructor(private readonly backend: SnapshotBackend) {}
+
+  shopsWithHeldJobs(): Promise<ShopId[]> {
+    return this.backend.shopsWithHeldJobs();
+  }
+
+  async transaction<T>(scope: TxScope, fn: (tx: Tx) => T | Promise<T>): Promise<T> {
+    const shopId = "shopId" in scope ? scope.shopId : await this.backend.shopIdForJob(scope.jobId);
+    if (!shopId) {
+      // Unknown job: run against an empty snapshot so callers get their normal NOT_FOUND handling.
+      return fn(snapshotTx({ ledger: [], jobs: [], quota: [] }, newChanges()));
+    }
+    return this.backend.withShop(shopId, async (io) => {
+      const snap = await io.load();
+      const changes = newChanges();
+      const result = await fn(snapshotTx(snap, changes));
+      await io.save(changes);
+      return result;
+    });
+  }
+}
+
+function newChanges(): ShopChanges {
+  return { newLedger: [], newJobs: [], updatedJobs: [], quota: [] };
+}
+
+function snapshotTx(snap: ShopSnapshot, changes: ShopChanges): Tx {
+  const ledger = snap.ledger.map((e) => structuredClone(e));
+  const jobs = new Map(snap.jobs.map((j) => [j.id, structuredClone(j)]));
+  const quota = new Map(snap.quota.map((u) => [u.jobId, structuredClone(u)]));
+  let settings = snap.settings ? structuredClone(snap.settings) : undefined;
+  const upsertChange = <K extends { id?: string; jobId?: string }>(list: K[], item: K, key: (x: K) => string) => {
+    const i = list.findIndex((x) => key(x) === key(item));
+    if (i >= 0) list[i] = item;
+    else list.push(item);
+  };
+  return {
+    getSettings: () => structuredClone(settings),
+    putSettings: (s) => {
+      settings = structuredClone(s);
+      changes.settings = structuredClone(s);
+    },
+    ledger: () => ledger.map((e) => structuredClone(e)),
+    appendLedger: (entry) => {
+      if (ledger.some((e) => e.reference === entry.reference)) {
+        throw new DuplicateReferenceError(`ledger reference ${entry.reference}`);
+      }
+      ledger.push(structuredClone(entry));
+      changes.newLedger.push(structuredClone(entry));
+    },
+    findLedgerByReference: (_shopId, reference) => structuredClone(ledger.find((e) => e.reference === reference)),
+    getJob: (id) => structuredClone(jobs.get(id)),
+    findJobByIdempotencyKey: (_shopId, key) => structuredClone([...jobs.values()].find((j) => j.idempotencyKey === key)),
+    insertJob: (job) => {
+      if ([...jobs.values()].some((j) => j.idempotencyKey === job.idempotencyKey)) {
+        throw new DuplicateReferenceError(`idempotency key ${job.idempotencyKey}`);
+      }
+      jobs.set(job.id, structuredClone(job));
+      changes.newJobs.push(structuredClone(job));
+    },
+    updateJob: (job) => {
+      jobs.set(job.id, structuredClone(job));
+      const fresh = changes.newJobs.findIndex((j) => j.id === job.id);
+      if (fresh >= 0) changes.newJobs[fresh] = structuredClone(job);
+      else upsertChange(changes.updatedJobs, structuredClone(job), (j) => j.id);
+    },
+    listJobs: () => [...jobs.values()].map((j) => structuredClone(j)),
+    quotaUsages: () => [...quota.values()].map((u) => structuredClone(u)),
+    putQuotaUsage: (u) => {
+      quota.set(u.jobId, structuredClone(u));
+      upsertChange(changes.quota, structuredClone(u), (x) => x.jobId);
+    },
+  };
 }

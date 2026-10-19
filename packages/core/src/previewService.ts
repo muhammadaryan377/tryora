@@ -65,16 +65,16 @@ export class PreviewService {
   // ---------- Credits and entitlements ----------
 
   async ensureSettings(shopId: ShopId): Promise<ShopSettings> {
-    return this.store.transaction((tx) => this.settingsIn(tx, shopId));
+    return this.store.transaction({ shopId }, (tx) => this.settingsIn(tx, shopId));
   }
 
   async updateSettings(settings: ShopSettings): Promise<void> {
-    await this.store.transaction((tx) => tx.putSettings(settings));
+    await this.store.transaction({ shopId: settings.shopId }, (tx) => tx.putSettings(settings));
   }
 
   /** Grants the one-off free trial. Calling again for the same shop has no effect (no trial restart). */
   async grantTrial(shopId: ShopId): Promise<LedgerEntry> {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ shopId }, (tx) => {
       const now = this.clock.now();
       return this.grantOnce(tx, {
         shopId,
@@ -88,7 +88,7 @@ export class PreviewService {
 
   /** Monthly plan allowance. Idempotent per billing period, so a replayed billing webhook grants nothing extra. */
   async grantPeriodCredits(shopId: ShopId, periodId: string, quantity: number, periodEndsAt: Date) {
-    return this.store.transaction((tx) =>
+    return this.store.transaction({ shopId }, (tx) =>
       this.grantOnce(tx, {
         shopId,
         reference: `grant:period:${periodId}`,
@@ -101,7 +101,7 @@ export class PreviewService {
 
   /** Paid top-up. Rolls over while subscribed. Idempotent per Shopify charge id. Paid plans only. */
   async grantTopUp(shopId: ShopId, chargeId: string, quantity: number) {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ shopId }, (tx) => {
       const settings = this.settingsIn(tx, shopId);
       if (!settings.paidPlanActive) throw new TryoraError("PLAN_INACTIVE", "Top-ups are for paid plans");
       return this.grantOnce(tx, { shopId, reference: `grant:topup:${chargeId}`, bucket: "topup", quantity });
@@ -109,11 +109,11 @@ export class PreviewService {
   }
 
   async balance(shopId: ShopId): Promise<ShopBalance> {
-    return this.store.transaction((tx) => shopBalance(tx.ledger(shopId), this.clock.now()));
+    return this.store.transaction({ shopId }, (tx) => shopBalance(tx.ledger(shopId), this.clock.now()));
   }
 
   async trialStatus(shopId: ShopId) {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ shopId }, (tx) => {
       const entries = tx.ledger(shopId);
       const grant = entries.find((e) => e.reference === "grant:trial");
       if (!grant) return { started: false, active: false, delivered: 0 } as const;
@@ -131,7 +131,7 @@ export class PreviewService {
   // ---------- Jobs ----------
 
   async createPreview(input: CreatePreviewInput): Promise<CreatePreviewResult> {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ shopId: input.shopId }, (tx) => {
       const existing = tx.findJobByIdempotencyKey(input.shopId, input.idempotencyKey);
       if (existing) return { job: existing, deduplicated: true };
 
@@ -210,12 +210,12 @@ export class PreviewService {
   ): Promise<TransitionResult> {
     if (to === "DELIVERED") throw new TryoraError("INVALID_TRANSITION", "Use acknowledgeDelivery");
     if (to === "READY_TO_DELIVER") throw new TryoraError("INVALID_TRANSITION", "Use markReadyToDeliver");
-    return this.store.transaction((tx) => this.transitionIn(tx, jobId, to, patch));
+    return this.store.transaction({ jobId }, (tx) => this.transitionIn(tx, jobId, to, patch));
   }
 
   /** The result passed checks and is held in transient memory. Issues a short-lived delivery token. */
   async markReadyToDeliver(jobId: JobId, costMicros?: number): Promise<TransitionResult> {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ jobId }, (tx) => {
       const r = this.transitionIn(tx, jobId, "READY_TO_DELIVER", costMicros !== undefined ? { costMicros } : {});
       if (r.ignored) return r;
       const job = { ...r.job };
@@ -231,7 +231,7 @@ export class PreviewService {
    * Retrying with the same token after success is safe and returns the delivered job.
    */
   async acknowledgeDelivery(jobId: JobId, token: string): Promise<PreviewJob> {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ jobId }, (tx) => {
       const job = tx.getJob(jobId);
       if (!job) throw new TryoraError("NOT_FOUND");
       if (!job.deliveryToken || job.deliveryToken !== token) throw new TryoraError("BAD_TOKEN");
@@ -266,7 +266,7 @@ export class PreviewService {
    * the shopper's allowance once. Reporting alone, or a change of mind, does not refund.
    */
   async refundConfirmedIssue(jobId: JobId, issueCategory: string): Promise<PreviewJob> {
-    return this.store.transaction((tx) => {
+    return this.store.transaction({ jobId }, (tx) => {
       const job = tx.getJob(jobId);
       if (!job) throw new TryoraError("NOT_FOUND");
       if (job.state !== "DELIVERED") throw new TryoraError("NOT_DELIVERED");
@@ -293,24 +293,28 @@ export class PreviewService {
 
   /** Expires jobs whose reservation has been held too long without delivery, releasing their credit. */
   async expireStale(maxHeldMs: number): Promise<number> {
-    return this.store.transaction((tx) => {
-      const now = this.clock.now().getTime();
-      let count = 0;
-      for (const job of tx.listJobs()) {
-        if (!RESERVATION_HELD.has(job.state)) continue;
-        const tokenExpired =
-          job.state === "READY_TO_DELIVER" && job.deliveryTokenExpiresAt && job.deliveryTokenExpiresAt.getTime() < now;
-        if (tokenExpired || now - job.updatedAt.getTime() > maxHeldMs) {
-          this.transitionIn(tx, job.id, "EXPIRED", { reasonCode: "NOT_DELIVERED_IN_TIME" });
-          count++;
+    let count = 0;
+    for (const shopId of await this.store.shopsWithHeldJobs()) {
+      count += await this.store.transaction({ shopId }, (tx) => {
+        const now = this.clock.now().getTime();
+        let n = 0;
+        for (const job of tx.listJobs(shopId)) {
+          if (!RESERVATION_HELD.has(job.state)) continue;
+          const tokenExpired =
+            job.state === "READY_TO_DELIVER" && job.deliveryTokenExpiresAt && job.deliveryTokenExpiresAt.getTime() < now;
+          if (tokenExpired || now - job.updatedAt.getTime() > maxHeldMs) {
+            this.transitionIn(tx, job.id, "EXPIRED", { reasonCode: "NOT_DELIVERED_IN_TIME" });
+            n++;
+          }
         }
-      }
-      return count;
-    });
+        return n;
+      });
+    }
+    return count;
   }
 
   async getJob(jobId: JobId): Promise<PreviewJob | undefined> {
-    return this.store.transaction((tx) => tx.getJob(jobId));
+    return this.store.transaction({ jobId }, (tx) => tx.getJob(jobId));
   }
 
   // ---------- internals ----------
