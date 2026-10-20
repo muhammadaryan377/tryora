@@ -2,6 +2,7 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { Form, useActionData, useNavigation } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { salesReport, type SalesReport } from "../attribution.server";
 
 /**
  * TEMPORARY development helper (remove before launch): creates a test sofa with 25 colours on the
@@ -26,6 +27,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async (args: ActionFunctionArgs) => {
   try {
+    const form = await args.request.clone().formData();
+    if (form.get("intent") === "sales") {
+      const { admin, session } = await authenticate.admin(args.request);
+      if (session.shop !== TEST_STORE) throw new Response("Not found", { status: 404 });
+      return { ok: true as const, sales: await salesReport(admin, session.shop, true) };
+    }
     return await seed(args);
   } catch (e: any) {
     if (e instanceof Response) throw e;
@@ -128,7 +135,12 @@ export default function DevSeed() {
   const nav = useNavigation();
   return (
     <s-page heading="Test product (development only)">
-      {result?.ok && (
+      {result?.ok && "sales" in result && (
+        <s-banner tone="info" heading="Sales report (raw numbers)">
+          <s-paragraph>{JSON.stringify(result.sales as SalesReport | null)}</s-paragraph>
+        </s-banner>
+      )}
+      {result?.ok && "handle" in result && (
         <s-banner tone="success" heading="Test sofa created">
           <s-paragraph>
             Handle: {result.handle}. {result.mediaReady ? "Tryora is on for it." : "Photo still processing – set it up in Products."}
@@ -140,6 +152,13 @@ export default function DevSeed() {
           <s-paragraph>{result.errors.join(" · ")}</s-paragraph>
         </s-banner>
       )}
+      <s-section>
+        <s-paragraph>Recalculates "Sales from Tryora" now and shows the raw numbers, even below the 3× / 3-order threshold.</s-paragraph>
+        <Form method="post">
+          <input type="hidden" name="intent" value="sales" />
+          <s-button type="submit">Check sales report</s-button>
+        </Form>
+      </s-section>
       <s-section>
         <s-paragraph>Creates "Form Sofa (Tryora test)" with 25 colours (2 sold out) and turns Tryora on for it.</s-paragraph>
         <Form method="post">
