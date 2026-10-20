@@ -1,6 +1,11 @@
 // GENERATED from packages/core/src by scripts/sync-core.mjs. Do not edit here.
 /** Reason codes returned to callers. Shopper-facing copy is chosen by the popup, never from these strings. */
 export type ReasonCode =
+  | "BAD_PHOTO"
+  | "BAD_REQUEST"
+  | "RESULT_REJECTED"
+  | "PROVIDER_TIMEOUT"
+  | "PROVIDER_UNAVAILABLE"
   | "CREDITS_EXHAUSTED" // merchant has no available credits: shopper sees "New previews are temporarily unavailable"
   | "QUOTA_PRODUCT" // merchant-enabled per-product shopper limit reached
   | "QUOTA_STORE" // merchant-enabled store-wide shopper limit reached

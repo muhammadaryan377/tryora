@@ -35,6 +35,33 @@ function setup() {
   return { clock, svc };
 }
 
+describe("reservation deadlines", () => {
+  it("expires a reservation based on creation even when progress updates refresh updatedAt", async () => {
+    const { clock, svc } = setup();
+    await svc.grantTrial(SHOP);
+    const { job } = await svc.createPreview(input({ workerId: "worker_process" }));
+    expect(job.id).toMatch(/^worker_process__/);
+    clock.advanceHours(9 / 60);
+    await svc.transition(job.id, "GENERATING");
+    clock.advanceHours(1 / 60);
+    expect(await svc.expireStale(10 * 60_000)).toBe(1);
+    expect((await svc.balance(SHOP)).availableTotal).toBe(10);
+  });
+  it("rejects acknowledgement exactly at token expiry and releases once", async () => {
+    const { clock, svc } = setup();
+    await svc.grantTrial(SHOP);
+    const { job } = await svc.createPreview(input());
+    await svc.transition(job.id, "GENERATING");
+    await svc.transition(job.id, "CHECKING_RESULT");
+    const ready = await svc.markReadyToDeliver(job.id);
+    clock.advanceHours(5 / 60);
+    await expectCode(svc.acknowledgeDelivery(job.id, ready.job.deliveryToken!), "BAD_TOKEN");
+    expect(await svc.expireStale(10 * 60_000)).toBe(1);
+    expect(await svc.expireStale(10 * 60_000)).toBe(0);
+    expect((await svc.balance(SHOP)).availableTotal).toBe(10);
+  });
+});
+
 /** Runs a job through to a delivered, acknowledged result. */
 async function deliver(svc: PreviewService, i: CreatePreviewInput) {
   const { job } = await svc.createPreview(i);

@@ -4,6 +4,7 @@ node_modules/
 !.env.example
 dist/
 coverage/
+/.test-postgres/
 tools/model-test/output/
 *.log
 tools/model-test/inputs/

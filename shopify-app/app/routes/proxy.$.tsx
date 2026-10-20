@@ -43,7 +43,10 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return json(await storefrontConfig(admin, session.shop, productId));
   }
   const poll = path.match(/^preview\/([\w-]+)$/);
-  if (poll) return json(pollPreview(session.shop, poll[1]!));
+  if (poll) {
+    try { return json(await pollPreview(session.shop, poll[1]!)); }
+    catch { return json({ error: "TEMPORARILY_UNAVAILABLE" }, 503); }
+  }
   return json({ error: "NOT_FOUND" }, 404);
 };
 
@@ -61,7 +64,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         guardPhotoCheck(shopId, field("visitor"));
         const photo = await photoFrom(form);
         if (!photo) return json({ ok: false, reason: "dark_or_blurred" });
-        return json(await checkPhoto(photo));
+        return json(await checkPhoto(photo, shopId, field("product")));
       }
       case "preview": {
         await guardPreview(shopId, field("visitor"));
@@ -69,6 +72,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         if (!photo) return json({ error: "BAD_PHOTO" }, 400);
         return json(
           await startPreview({
+            admin,
             shopId,
             productId: field("product"),
             optionValue: field("option"),

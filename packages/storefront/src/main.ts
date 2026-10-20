@@ -17,6 +17,7 @@ import {
 } from "../../core/src/flow.js";
 import { launchersToRender, type LauncherSettings } from "../../core/src/launcher.js";
 import type { PhotoProblem } from "../../core/src/provider.js";
+import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 
 interface Swatch {
   value: string;
@@ -88,7 +89,7 @@ function visitorId(): string {
 async function post(path: string, data: Record<string, string | Blob>) {
   const form = new FormData();
   for (const [k, v] of Object.entries(data)) form.append(k, v);
-  const res = await fetch(`${PROXY}/${path}`, { method: "POST", body: form, credentials: "same-origin" });
+  const res = await fetch(`${PROXY}/${path}`, { method: "POST", body: form, credentials: "same-origin", signal: AbortSignal.timeout(40_000) });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(body.error ?? "REQUEST_FAILED"), { code: body.error ?? "REQUEST_FAILED" });
   return body;
@@ -157,7 +158,7 @@ async function tagBasket(productId: string) {
 
 // ---------- the popup ----------
 
-class Tryora {
+export class Tryora {
   private state: FlowState;
   private root: HTMLElement | null = null;
   private lastFocus: Element | null = null;
@@ -220,7 +221,7 @@ class Tryora {
         const photo = this.photos.get(c.photoId);
         if (!photo) return;
         try {
-          const r = await post("check", { photo: photo.blob, visitor: visitorId() });
+          const r = await post("check", { photo: photo.blob, visitor: visitorId(), product: this.cfg.productId });
           if (this.state.photo?.id !== c.photoId) return;
           this.dispatch({
             type: "PHOTO_CHECKED",
@@ -232,8 +233,8 @@ class Tryora {
             this.fileProblem = "We're very busy right now. Please try again in a few minutes.";
             return this.dispatch({ type: "REMOVE_PHOTO" });
           }
-          // If the check service is down we don't block the shopper; the generation step checks again.
-          this.dispatch({ type: "PHOTO_CHECKED", check: { status: "ok" } });
+          this.fileProblem = "We couldn't check your photo. Please try uploading it again.";
+          this.dispatch({ type: "REMOVE_PHOTO" });
         }
         return;
       }
@@ -268,14 +269,15 @@ class Tryora {
     this.dispatch({ type: "JOB_STAGE", stage: "checking_photo" });
     let jobId: string;
     try {
-      const r = await post("preview", {
+      const fields = {
         photo: photo.blob,
         product: this.cfg.productId,
         option,
         visitor: visitorId(),
         key: crypto.randomUUID(),
         leadDone: leadSatisfied(this.state) ? "1" : "0",
-      });
+      };
+      const r = await createWithRetry(() => post("preview", fields));
       jobId = r.jobId;
     } catch (e: any) {
       const code = e?.code;
@@ -295,9 +297,11 @@ class Tryora {
     for (;;) {
       await new Promise((r) => setTimeout(r, 1200));
       if (this.state.photo?.id !== photoId) return; // shopper changed room
+      if (Date.now() - started > 10 * 60_000) return this.dispatch({ type: "JOB_FAILED", reason: "connection_lost" });
       let r: any;
       try {
-        const res = await fetch(`${PROXY}/preview/${jobId}`, { credentials: "same-origin" });
+        const res = await fetch(`${PROXY}/preview/${jobId}`, { credentials: "same-origin", signal: AbortSignal.timeout(15_000) });
+        if (!res.ok) throw new Error("Polling unavailable");
         r = await res.json();
       } catch {
         continue;
@@ -307,14 +311,21 @@ class Tryora {
         slow = true;
         this.dispatch({ type: "JOB_SLOW" });
       }
-      if (r.stage === "failed" || r.stage === "expired") return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+      if (r.stage === "failed" || r.stage === "expired") return this.dispatch({ type: "JOB_FAILED", reason: r.error === "RESULT_REJECTED" ? "result_rejected" : "generation_failed" });
       if (r.stage === "ready") {
-        const blob = await (await fetch(r.image)).blob();
-        const url = URL.createObjectURL(blob);
+        let url: string | undefined;
+        try {
+          const blob = await (await fetch(r.image)).blob();
+          url = URL.createObjectURL(blob);
+          await decodePreview(url);
+        } catch {
+          if (url) URL.revokeObjectURL(url);
+          return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+        }
         this.images.set(jobId, url);
         this.dispatch({ type: "JOB_DELIVERED", result: { option, imageHandle: url, jobId } });
         // Only once the image is on screen is the credit used.
-        void post("ack", { job: jobId, token: r.token }).catch(() => {});
+        void acknowledgeWithRetry(() => post("ack", { job: jobId, token: r.token }), r.expiresAt ?? Date.now() + 5 * 60_000);
         void tagBasket(this.cfg.productId);
         return;
       }

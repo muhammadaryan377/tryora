@@ -5,8 +5,9 @@
   "description": "Tryora: AI room previews for Shopify furniture stores",
   "workspaces": ["packages/*", "tools/*"],
   "scripts": {
-    "test": "npm run test --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present"
+    "test": "npm run test --workspaces --if-present && npm --prefix shopify-app test",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm --prefix shopify-app run typecheck",
+    "build": "npm run build --workspaces --if-present && npm --prefix shopify-app run build"
   },
   "engines": { "node": ">=20" }
 }

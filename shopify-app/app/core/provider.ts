@@ -62,6 +62,21 @@ export interface RoomAnalysis {
   /** Uncertain findings must be phrased as uncertainty in the UI. */
   confidence: number;
   costMicros: number;
+  providerRequestId?: string;
+  model?: string;
+}
+
+export interface RoomContext {
+  placement: Placement;
+  setting: Setting;
+  itemNoun: string;
+}
+
+export interface ResultAnalysis {
+  outcome: "accepted" | "rejected";
+  costMicros: number;
+  providerRequestId?: string;
+  model?: string;
 }
 
 export interface GenerateRequest {
@@ -86,8 +101,10 @@ export interface GenerateResult {
 
 export interface ImageProvider {
   capabilities(): ProviderCapabilities;
-  analyseRoom(roomImage: Uint8Array, referenceAngle: string): Promise<RoomAnalysis>;
+  analyseRoom(roomImage: Uint8Array, referenceAngle: string, context?: RoomContext, signal?: AbortSignal): Promise<RoomAnalysis>;
   generate(req: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult>;
+  /** Check product/colour fidelity, placement and room preservation before delivery. */
+  checkResult(req: GenerateRequest, result: GenerateResult, signal?: AbortSignal): Promise<ResultAnalysis>;
 }
 
 /**
@@ -106,14 +123,24 @@ export class MockImageProvider implements ImageProvider {
     return { outcome: "accepted", detected: "existing_item", confidence: 0.9, costMicros: 0 };
   }
 
+  async checkResult(): Promise<ResultAnalysis> {
+    // Mock mode deliberately returns the unchanged room, and is labelled as such in the UI.
+    return { outcome: "accepted", costMicros: 0 };
+  }
+
   async generate(req: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {
+    signal?.throwIfAborted();
     const wait = req.optionValue === "SLOW" ? this.delayMs * 10 : this.delayMs;
     await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(resolve, wait);
-      signal?.addEventListener("abort", () => {
+      const abort = () => {
         clearTimeout(t);
         reject(new Error("aborted"));
-      });
+      };
+      const t = setTimeout(() => {
+        signal?.removeEventListener("abort", abort);
+        resolve();
+      }, wait);
+      signal?.addEventListener("abort", abort, { once: true });
     });
     if (req.optionValue === "FAIL") throw new Error("Mock provider failure");
     // Returns the room image unchanged: the UI labels mock results "Development preview (not AI)".
