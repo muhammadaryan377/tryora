@@ -71,7 +71,7 @@ export type FlowEvent =
   | { type: "JOB_STAGE"; stage: GenerationStage }
   | { type: "JOB_SLOW" }
   | { type: "JOB_DELIVERED"; result: Omit<GeneratedResult, "roomPhotoId"> }
-  | { type: "JOB_FAILED"; reason: "generation_failed" | "result_rejected" | "quota_reached" | "previews_paused" }
+  | { type: "JOB_FAILED"; reason: "generation_failed" | "result_rejected" | "quota_reached" | "previews_paused" | "connection_lost" }
   | { type: "TRY_ANOTHER_COLOUR" }
   | { type: "USE_DIFFERENT_ROOM" }
   | { type: "SHOW_RESULT"; option: string }

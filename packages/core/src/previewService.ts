@@ -17,6 +17,8 @@ export const TRIAL_DAYS = 14;
 export const DELIVERY_TOKEN_TTL_MS = 5 * 60_000;
 
 export interface CreatePreviewInput {
+  /** Server-controlled worker routing prefix; never accepted from the shopper. */
+  workerId?: string;
   shopId: ShopId;
   idempotencyKey: string;
   visitorId: string;
@@ -160,7 +162,7 @@ export class PreviewService {
       }
 
       const job: PreviewJob = {
-        id: randomUUID(),
+        id: input.workerId ? `${input.workerId}__${randomUUID()}` : randomUUID(),
         shopId: input.shopId,
         idempotencyKey: input.idempotencyKey,
         visitorId: input.visitorId,
@@ -239,7 +241,7 @@ export class PreviewService {
       if (job.state === "DELIVERED") return job;
       if (job.state !== "READY_TO_DELIVER") throw new TryoraError("INVALID_TRANSITION", `Job is ${job.state}`);
       const now = this.clock.now();
-      if (job.deliveryTokenExpiresAt && job.deliveryTokenExpiresAt.getTime() < now.getTime()) {
+      if (job.deliveryTokenExpiresAt && job.deliveryTokenExpiresAt.getTime() <= now.getTime()) {
         throw new TryoraError("BAD_TOKEN", "Delivery token expired");
       }
       const reserve = tx.findLedgerByReference(job.shopId, `reserve:${job.id}`);
@@ -302,8 +304,8 @@ export class PreviewService {
         for (const job of tx.listJobs(shopId)) {
           if (!RESERVATION_HELD.has(job.state)) continue;
           const tokenExpired =
-            job.state === "READY_TO_DELIVER" && job.deliveryTokenExpiresAt && job.deliveryTokenExpiresAt.getTime() < now;
-          if (tokenExpired || now - job.updatedAt.getTime() > maxHeldMs) {
+            job.state === "READY_TO_DELIVER" && job.deliveryTokenExpiresAt && job.deliveryTokenExpiresAt.getTime() <= now;
+          if (tokenExpired || now - job.createdAt.getTime() >= maxHeldMs) {
             this.transitionIn(tx, job.id, "EXPIRED", { reasonCode: "NOT_DELIVERED_IN_TIME" });
             n++;
           }

@@ -64,6 +64,7 @@ model Shop {
   consents      ConsentRecord[]
   issues        IssueReport[]
   events        Event[]
+  providerUsage ProviderUsage[]
 }
 
 model QuotaPolicy {
@@ -290,4 +291,21 @@ model Event {
   createdAt  DateTime @default(now())
 
   @@index([shopId, name, createdAt])
+}
+
+/// Costs and request metadata only. Never images, prompts, email addresses or raw provider errors.
+model ProviderUsage {
+  id                String   @id @default(uuid())
+  shopId            String
+  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  jobId             String?
+  stage             String
+  outcome           String
+  costMicros        Int?
+  providerRequestId String?
+  model             String?
+  createdAt         DateTime @default(now())
+
+  @@index([shopId, createdAt])
+  @@index([jobId])
 }
