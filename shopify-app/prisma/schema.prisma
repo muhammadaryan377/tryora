@@ -45,7 +45,7 @@ model Shop {
   leadTiming       String   @default("before") // before | after the first image
   paidPlanActive   Boolean  @default(false)
   storefrontEnabled Boolean @default(false)
-  autoEnableProducts Boolean @default(true) // all eligible furniture on by default; merchant can choose selected products
+  autoEnableProducts Boolean @default(false) // existing shops opt in; new installs are enabled when Shop is created
   swatchAutoFill   Boolean  @default(false) // merchant approved filling missing swatches from variant photos and colour names
   dailyPreviewCap  Int?     // unused (daily store cap was removed by owner decision, 19 Oct 2026)
   abuseAlertAt     DateTime? // last time unusual activity paused previews
