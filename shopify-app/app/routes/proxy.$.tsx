@@ -64,7 +64,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         guardPhotoCheck(shopId, field("visitor"));
         const photo = await photoFrom(form);
         if (!photo) return json({ ok: false, reason: "dark_or_blurred" });
-        return json(await checkPhoto(photo, shopId, field("product")));
+        return json(await checkPhoto(admin, photo, shopId, field("product")));
       }
       case "preview": {
         await guardPreview(shopId, field("visitor"));
