@@ -17,9 +17,14 @@ function getFurnitureCategory(noun: string): FurnitureCategory {
 
 const PRODUCT_STYLING: Record<FurnitureCategory, string> = {
   bed: `Preserve the headboard, bed frame, footboard, upholstery and visible proportions.
+When replacing a bed, remove the WHOLE original bed ensemble: original headboard, frame,
+footboard, mattress appearance and old pillows, duvet, blankets and throws. Do not keep the
+old bed's silhouette or bedding colours and simply recolour or restyle them.
 Transfer bedding, duvet, bedsheets, pillows, cushions, throws and blankets styled directly on
-that selected bed, including their colours, textures and layering. Do not transfer bedside tables,
-lamps or other bedroom furniture. Do not invent bedding hidden from view.`,
+that selected bed in IMAGE 2, including their visible colours, textures, folds and layering.
+Do not transfer bedside tables, lamps or other bedroom furniture. Do not invent bedding hidden
+from view. Preserve unrelated personal objects such as a toy on the bed when practical by
+placing them naturally back on the replacement, not by keeping the original bedding.`,
   sofa: `Preserve sofa upholstery, silhouette, legs, arms, backrest, stitching and seat proportions.
 Transfer cushions and throws styled directly on the selected sofa when visible.
 Do not transfer surrounding tables, lamps or other seating from the product photograph.`,
@@ -73,14 +78,29 @@ export function buildFurnitureReplacementPrompt(req: GenerateRequest): string {
     selectedVariant: req.optionValue.slice(0, 200),
   });
 
+  const targetScope = req.placement === "replace"
+    ? `A matching item already present in IMAGE 1 is the REMOVE target, never a shape or
+material reference. Replace its entire visible structure with the distinct object from IMAGE 2
+in the same physical footprint. Do not retain the original furniture's headboard, arms, legs,
+upholstery, pattern, frame, or attached soft furnishings where these differ from IMAGE 2.
+Removing the original target includes its attached styling, but NOT unrelated surrounding
+furniture or the customer's personal possessions.
+An output that merely changes lighting, colour, fabric texture, pillows, or small details of
+the old furniture while keeping the old item's design is a FAILED replacement.`
+    : `Follow the specified placement rule. Do not remove an unrelated existing item.`;
+
   return `You are Tryora, a photorealistic furniture visualization and image-editing system.
 Edit IMAGE 1, the customer's original room photograph and environmental source of truth.
 IMAGE 2 is the selected Shopify product appearance reference, never a room template.
 The selected product category is: ${category}.
 Create one realistic edited photograph integrating that exact selected product into IMAGE 1.
+This is a concrete PRODUCT REPLACEMENT task, not a room redesign or a cosmetic restyling.
+The output must show the distinctive selected product from IMAGE 2, visibly different from
+the old product in IMAGE 1 whenever their shapes, finishes or styling differ.
 
 PLACEMENT LOGIC:
 ${PLACEMENT_RULES[req.placement]}
+${targetScope}
 Preserve the original camera angle, framing, perspective and room composition. Keep scale
 realistic relative to surrounding objects; visible proportions are references, not measured dimensions.
 Avoid collisions, floating objects and blocked doorways. Do not add duplicate furniture or unrelated
@@ -100,7 +120,10 @@ CUSTOMER ROOM PRESERVATION:
 Preserve walls, wallpaper, windows, curtains, doors, ceiling, floors, unrelated furniture,
 lamps, personal belongings and existing decoration except the explicitly targeted item or surface.
 Keep surrounding objects in their existing positions and preserve existing household clutter.
-Change only the target and necessary contact shadows, local occlusions or mounting contact area.
+Room-preservation constraints apply OUTSIDE the target item; do not interpret them as a reason
+to preserve the old furniture or its old bedding. Change only the whole target ensemble and
+necessary contact shadows, local occlusions or mounting contact area. Reconstruct any newly
+visible wall or floor where the old item was removed, without changing other objects.
 Preserve natural lighting, light direction, colour temperature, exposure and depth. Make only minor
 local lighting and shadow adjustments necessary to integrate the product physically.
 The result must remain a REAL photograph of this customer's lived-in home. Preserve a British home's
@@ -119,5 +142,10 @@ ${productData}
 
 FINAL TASK:
 Apply only the category styling and placement rules above to IMAGE 1 using the selected product in
-IMAGE 2. Preserve the customer's original home as faithfully as possible. Return only the edited image.`;
+IMAGE 2. Check that the ORIGINAL target item is gone and the new item's recognizable shape,
+material and visible styling match IMAGE 2. In particular, a replacement bed must show the
+selected bed's headboard, upholstered frame, footboard and visible bedding rather than keeping
+the old bed with a superficial change. Everything outside the replacement footprint should
+still look like the customer's original home.
+Return only the edited photograph: no before/after split, collage, explanation or text.`;
 }
