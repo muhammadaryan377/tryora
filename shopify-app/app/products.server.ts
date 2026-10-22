@@ -187,7 +187,7 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
     prisma.shop.findUnique({ where: { id: shopId } }),
   ]);
   const swatchAutoFill = shop?.swatchAutoFill ?? false;
-  const autoEnabled = shop?.autoEnableProducts ?? true;
+  const autoEnabled = shop?.autoEnableProducts ?? false;
   const byId = new Map(configs.map((c) => [c.productId, c]));
   return products.map((p) => {
     const c = byId.get(p.id);
