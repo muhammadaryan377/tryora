@@ -45,6 +45,7 @@ model Shop {
   leadTiming       String   @default("before") // before | after the first image
   paidPlanActive   Boolean  @default(false)
   storefrontEnabled Boolean @default(false)
+  autoEnableProducts Boolean @default(false) // existing shops opt in; new installs are enabled when Shop is created
   swatchAutoFill   Boolean  @default(false) // merchant approved filling missing swatches from variant photos and colour names
   dailyPreviewCap  Int?     // unused (daily store cap was removed by owner decision, 19 Oct 2026)
   abuseAlertAt     DateTime? // last time unusual activity paused previews
@@ -103,6 +104,7 @@ model ProductPreviewConfig {
   shop               Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   productId          String   // Shopify product GID
   enabled            Boolean  @default(false)
+  autoConfigured     Boolean  @default(false) // created on first storefront visit; manual saves take precedence
   visualOptionName   String?  // the one previewable option, e.g. "Colour"; null for single-style products
   visualOptionType   String?  // colour | design | configuration
   itemNoun           String?  // shopper-facing word, e.g. "sofa", "rug"; defaults from the Shopify product type
