@@ -5,7 +5,8 @@ import type { AdminGraphql } from "./preview-product.server";
 export function autoFurnitureCategory(productType: string, title: string): string | null {
   const name = `${productType} ${title}`.toLowerCase();
   if (/\b(gift cards?|mattresses?|mattress toppers?|pillowcases?|bedding|bedsheets?|duvets?|blankets?|throws?|cushions?|pillows?|covers?|spare parts?|fittings?)\b/.test(name)) return null;
-  if (/\b(beds?|bedframes?|bed frames?|divans?|headboards?)\b/.test(name)) return "bed";
+  if (/\b(sofas?|couches?|settees?|loveseats?|sectionals?)\b/.test(productType.toLowerCase())) return "sofa";
+  if (/\b(beds?|bedframes?|bed frames?|divans?)\b/.test(name)) return "bed";
   if (/\b(sofas?|couches?|settees?|loveseats?|sectionals?)\b/.test(name)) return "sofa";
   if (/\b(chairs?|armchairs?|recliners?|stools?|benches?)\b/.test(name)) return "chair";
   if (/\b(tables?|desks?)\b/.test(name)) return "table";
