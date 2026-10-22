@@ -10,7 +10,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const rows = await productRows(session.shop, await listShopProducts(admin));
   const shop = await prisma.shop.findUnique({ where: { id: session.shop } });
-  return { rows, autoEnabled: shop?.autoEnableProducts ?? true };
+  return { rows, autoEnabled: shop?.autoEnableProducts ?? false };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
