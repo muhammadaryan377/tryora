@@ -57,6 +57,25 @@ describe("category-aware universal furniture prompt", () => {
     expect(buildFurnitureReplacementPrompt(request({ placement }))).toContain(rule);
   });
 
+  it("demands a new product rather than cosmetic restyling of the old bed", () => {
+    const prompt = buildFurnitureReplacementPrompt(request({ itemNoun: "bed", placement: "replace" }));
+    for (const rule of [
+      "WHOLE original bed ensemble",
+      "old bed's silhouette or bedding colours",
+      "distinct object from IMAGE 2",
+      "FAILED replacement",
+      "Room-preservation constraints apply OUTSIDE the target item",
+      "original target item is gone",
+      "selected bed's headboard, upholstered frame, footboard",
+    ]) expect(prompt).toContain(rule);
+  });
+
+  it("does not insert replacement-only guidance into placement modes", () => {
+    const prompt = buildFurnitureReplacementPrompt(request({ itemNoun: "sofa", placement: "place" }));
+    expect(prompt).toContain("Do not remove an unrelated existing item.");
+    expect(prompt).not.toContain("A matching item already present in IMAGE 1 is the REMOVE target");
+  });
+
   it("permits replacement fallback only in visible adequate space without guessing", () => {
     const prompt = buildFurnitureReplacementPrompt(request());
     expect(prompt).toContain("If no matching item exists, place the product only");
