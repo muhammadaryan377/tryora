@@ -16,6 +16,7 @@ import {
   type Setting,
 } from "./core/index";
 import { defaultNoun } from "./products.server";
+import { ensureAutoProductConfig } from "./auto-products.server";
 import { abortable, downloadReference, normaliseImage } from "./preview-images.server";
 import { PREVIEW_PRODUCT_QUERY, resolvePreviewProduct, type AdminGraphql } from "./preview-product.server";
 import { remoteJob, workerId } from "./preview-worker.server";
@@ -43,7 +44,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
   ensureSweep();
   await cleanupStalePreviews();
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
-  const config = await prisma.productPreviewConfig.findUnique({ where: { shopId_productId: { shopId, productId: gid } } });
+  const config = await ensureAutoProductConfig(admin, shopId, gid);
   if (!config?.enabled || config.readiness !== "ready") return { enabled: false as const };
 
   const res = await admin.graphql(
@@ -165,13 +166,12 @@ function requireProvider() {
   if ((!capabilities.zeroRetentionConfirmed && !acknowledgedOpenAI) || !capabilities.supportsCancel) throw new TryoraError("PROVIDER_UNAVAILABLE");
 }
 
-async function configuredProduct(shopId: string, productId: string) {
+async function configuredProduct(admin: AdminGraphql, shopId: string, productId: string) {
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
-  const config = await prisma.productPreviewConfig.findUnique({
-    where: { shopId_productId: { shopId, productId: gid } }, include: { choices: true },
-  });
+  const config = await ensureAutoProductConfig(admin, shopId, gid);
   if (!config?.enabled || config.readiness !== "ready") throw new TryoraError("NOT_FOUND");
-  return config;
+  const choices = await prisma.visualChoice.findMany({ where: { configId: config.id } });
+  return { ...config, choices };
 }
 
 type UsageMetadata = { costMicros?: number; providerRequestId?: string; model?: string };
@@ -193,9 +193,9 @@ async function measured<T extends UsageMetadata>(shopId: string, jobId: string |
   }
 }
 
-export async function checkPhoto(image: Uint8Array, shopId: string, productId: string) {
+export async function checkPhoto(admin: AdminGraphql, image: Uint8Array, shopId: string, productId: string) {
   requireProvider();
-  const config = await configuredProduct(shopId, productId);
+  const config = await configuredProduct(admin, shopId, productId);
   let clean: Uint8Array;
   try { clean = await normaliseImage(image); }
   catch { return { ok: false as const, reason: "dark_or_blurred" as const }; }
@@ -275,7 +275,7 @@ export async function startPreview(input: {
   ensureSweep();
   await cleanupStalePreviews();
   if (!input.idempotencyKey || input.idempotencyKey.length > 128) throw new TryoraError("BAD_REQUEST");
-  const config = await configuredProduct(input.shopId, input.productId);
+  const config = await configuredProduct(input.admin, input.shopId, input.productId);
   const product = await resolvePreviewProduct(input.admin, config, input.optionValue);
   const room = await normaliseImage(input.room);
   const analysisSignal = AbortSignal.timeout(30_000);
