@@ -5,6 +5,7 @@ import { PreviewService, InMemoryStore } from "../app/core/index";
 const fixture = vi.hoisted(() => ({ service: null as any, config: null as any, usages: [] as any[], events: new Map<string, unknown>(), leadUpdates: [] as any[] }));
 vi.mock("../app/db.server", () => ({ default: {
   productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
+  visualChoice: { findMany: vi.fn(async () => fixture.config.choices ?? []) },
   providerUsage: { create: vi.fn(async ({ data }) => { fixture.usages.push(data); return data; }) },
   event: { upsert: vi.fn(async ({ where, create }) => { fixture.events.set(where.id, create); }), create: vi.fn(async () => ({})) },
   shop: { findUnique: vi.fn(async () => ({ leadSettings: {}, storefrontEnabled: true })) },
@@ -191,7 +192,7 @@ describe("preview lifecycle", () => {
 
   it("checks photo context and records analysis costs without a preview job", async () => {
     const spy = vi.spyOn(provider, "analyseRoom").mockResolvedValue({ outcome: "accepted", confidence: .5, detected: "wall", costMicros: 2 });
-    expect(await checkPhoto(photo, shopId, productId)).toEqual({ ok: true, detected: undefined });
+    expect(await checkPhoto(admin, photo, shopId, productId)).toEqual({ ok: true, detected: undefined });
     expect(spy).toHaveBeenCalledWith(expect.any(Uint8Array), "diagonal", expect.objectContaining({ setting: "outdoor" }), expect.any(AbortSignal));
     expect(fixture.usages[0]).toMatchObject({ stage: "photo_check", costMicros: 2 });
   });

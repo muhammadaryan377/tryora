@@ -1,13 +1,30 @@
-import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { Form, redirect, useLoaderData } from "react-router";
+import { useState } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { listShopProducts, productRows } from "../products.server";
+import prisma from "../db.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const rows = await productRows(session.shop, await listShopProducts(admin));
-  return { rows };
+  const shop = await prisma.shop.findUnique({ where: { id: session.shop } });
+  return { rows, autoEnabled: shop?.autoEnableProducts ?? false };
+};
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const form = await request.formData();
+  if (form.get("intent") !== "product-mode") return new Response("Invalid action", { status: 400 });
+  const mode = String(form.get("mode") ?? "");
+  if (mode !== "all" && mode !== "selected") return new Response("Invalid mode", { status: 400 });
+  await prisma.shop.upsert({
+    where: { id: session.shop },
+    create: { id: session.shop, autoEnableProducts: mode === "all" },
+    update: { autoEnableProducts: mode === "all" },
+  });
+  return redirect("/app/products");
 };
 
 const STATUS: Record<string, { tone: "success" | "caution" | "neutral"; label: string }> = {
@@ -17,11 +34,30 @@ const STATUS: Record<string, { tone: "success" | "caution" | "neutral"; label: s
 };
 
 export default function Products() {
-  const { rows } = useLoaderData<typeof loader>();
+  const { rows, autoEnabled } = useLoaderData<typeof loader>();
+  const [mode, setMode] = useState(autoEnabled ? "all" : "selected");
   const live = rows.filter((r) => r.readiness === "ready").length;
 
   return (
     <s-page heading="Products">
+      <s-section heading="Where Tryora appears">
+        <s-paragraph>
+          All eligible furniture products can show Tryora automatically, including newly added products.
+          Active products need a Shopify photo. Gift cards, bedding accessories and other products are excluded.
+          You can still turn off or customise any individual product below.
+        </s-paragraph>
+        <Form method="post">
+          <input type="hidden" name="intent" value="product-mode" />
+          <input type="hidden" name="mode" value={mode} />
+          <s-stack gap="base">
+            <s-select label="Product availability mode" value={mode} onChange={(e: any) => setMode(e.currentTarget.value)}>
+              <s-option value="all">All eligible furniture products (automatic)</s-option>
+              <s-option value="selected">Only products enabled manually</s-option>
+            </s-select>
+            <s-button type="submit" variant="primary">Save product mode</s-button>
+          </s-stack>
+        </Form>
+      </s-section>
       <s-section>
         <s-paragraph>
           Choose which products shoppers can see in their room. {live} of {rows.length} products are live.

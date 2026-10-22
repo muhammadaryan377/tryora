@@ -36,7 +36,7 @@ const backend: SnapshotBackend = {
     return prisma.$transaction(
       async (db) => {
         await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${shopId}))`;
-        await db.shop.upsert({ where: { id: shopId }, create: { id: shopId }, update: {} });
+        await db.shop.upsert({ where: { id: shopId }, create: { id: shopId, autoEnableProducts: true }, update: {} });
         return fn({ load: () => loadShop(db, shopId), save: (c) => saveShop(db, shopId, c) });
       },
       { timeout: 15_000 },
