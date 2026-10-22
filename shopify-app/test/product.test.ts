@@ -30,3 +30,19 @@ describe("product reference resolution", () => {
     await expect(resolvePreviewProduct({ graphql }, config, "Blue")).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });
+
+describe("selection-specific reference safety", () => {
+  it("refuses a generic product photo when a colour has no variant or approved photo", async () => {
+    const p = product("Blue");
+    (p.variants.nodes[0] as any).image = null;
+    const graphql = vi.fn().mockResolvedValueOnce(Response.json({ data: { product: p } })).mockResolvedValueOnce(Response.json(media));
+    await expect(resolvePreviewProduct({ graphql }, config, "Blue")).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+  it("uses a merchant-approved choice image when the variant has no photo", async () => {
+    const p = product("Blue");
+    (p.variants.nodes[0] as any).image = null;
+    const graphql = vi.fn().mockResolvedValueOnce(Response.json({ data: { product: p } })).mockResolvedValueOnce(Response.json(media));
+    const result = await resolvePreviewProduct({ graphql }, { ...config, choices: [{ optionValue: "Blue", available: true, approvedMediaIds: ["media"] }] }, "Blue");
+    expect(result.urls[0]).toBe("https://cdn.shopify.com/product.jpg");
+  });
+});
