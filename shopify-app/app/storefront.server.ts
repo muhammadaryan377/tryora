@@ -3,7 +3,6 @@ import prisma from "./db.server";
 import { tryora } from "./tryora.server";
 import {
   DEFAULT_WORDING,
-  MockImageProvider,
   TRIAL_CREDITS,
   TryoraError,
   defaultLauncher,
@@ -20,16 +19,17 @@ import { defaultNoun } from "./products.server";
 import { abortable, downloadReference, normaliseImage } from "./preview-images.server";
 import { PREVIEW_PRODUCT_QUERY, resolvePreviewProduct, type AdminGraphql } from "./preview-product.server";
 import { remoteJob, workerId } from "./preview-worker.server";
+import { createImageProvider } from "./image-provider.server";
 
 /**
  * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
  * Image bytes are handled in process memory and never written to disk or the database here.
  * Delivery, failure and expiry clear the result and abort outstanding work. Providers must honour
- * cancellation and confirm zero retention before being enabled. Job/cost metadata is persisted.
+ * cancellation; OpenAI additionally requires an explicit data-policy acknowledgement.
+ * Job/cost metadata is persisted; zero retention is not claimed for OpenAI.
  */
 
-// Swapped for a real provider once the owner adds an API key and approves the model.
-export const provider: ImageProvider = new MockImageProvider(1500);
+export const provider: ImageProvider = createImageProvider();
 
 export interface Swatch {
   value: string;
@@ -161,7 +161,8 @@ function cachedPhotoColours(raw: unknown): Record<string, string> {
 
 function requireProvider() {
   const capabilities = provider.capabilities();
-  if (!capabilities.zeroRetentionConfirmed || !capabilities.supportsCancel) throw new TryoraError("PROVIDER_UNAVAILABLE");
+  const acknowledgedOpenAI = capabilities.name === "openai" && process.env.OPENAI_IMAGE_PRIVACY_ACKNOWLEDGED === "true";
+  if ((!capabilities.zeroRetentionConfirmed && !acknowledgedOpenAI) || !capabilities.supportsCancel) throw new TryoraError("PROVIDER_UNAVAILABLE");
 }
 
 async function configuredProduct(shopId: string, productId: string) {

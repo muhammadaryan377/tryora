@@ -68,7 +68,11 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
   } while (after && !ids.every((id) => media.some((m) => m.id === id)));
   if (ids.some((id) => !media.some((m: any) => m?.id === id && m.image?.url))) throw new TryoraError("NOT_FOUND");
   // Exact variant photo first, then merchant-approved product references.
-  const urls = [...new Set<string>([eligible.find((v) => v.image?.url)?.image?.url, ...ids.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
+  const variantUrl = eligible.find((v) => v.image?.url)?.image?.url;
+  // A generic product reference may show another colour. Multi-option products require
+  // a matching variant image or a merchant-approved reference for this exact choice.
+  if (values.length > 1 && !variantUrl && !approved.length) throw new TryoraError("NOT_FOUND");
+  const urls = [...new Set<string>([variantUrl, ...ids.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
   return {
     urls, optionValue,
     referenceVersion: choice?.referenceVersion ?? ids.join(","),
