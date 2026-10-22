@@ -65,7 +65,7 @@ describe("category-aware universal furniture prompt", () => {
       "distinct object from IMAGE 2",
       "FAILED replacement",
       "Room-preservation constraints apply OUTSIDE the target item",
-      "original target item is gone",
+      "ORIGINAL target item is gone",
       "selected bed's headboard, upholstered frame, footboard",
     ]) expect(prompt).toContain(rule);
   });
