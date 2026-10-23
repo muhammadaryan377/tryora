@@ -22,7 +22,7 @@ export const PREVIEW_MEDIA_QUERY = `#graphql
     } }
   }`;
 
-export async function resolvePreviewProduct(admin: AdminGraphql, config: ProductPreviewConfig & { choices: VisualChoice[] }, requested: string) {
+export async function resolvePreviewProduct(admin: AdminGraphql, config: ProductPreviewConfig & { choices: VisualChoice[] }, requested: string, requestedVariantId?: string) {
   let product: any;
   const variants: any[] = [];
   let after: string | null = null;
@@ -52,12 +52,23 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
   const eligibleIds = (choice?.variantIds ?? []) as string[];
   const eligible = eligibleIds.length ? matching.filter((v) => eligibleIds.includes(v.id)) : matching;
   if (!eligible.length) throw new TryoraError("NOT_FOUND");
+  // The client may request a Shopify variant for the colour + product-page size.
+  // Never trust that ID without checking the selected option, stock, frozen context
+  // and merchant-approved variant IDs above.
+  const selected = requestedVariantId
+    ? eligible.find((v) => v.id === requestedVariantId)
+    : eligible.find((v) => v.image?.url) ?? eligible[0];
+  if (!selected) throw new TryoraError("BAD_REQUEST");
+  const variantUrl: string | undefined = selected.image?.url;
   const approved = (choice?.approvedMediaIds ?? []) as string[];
-  const ids = [...new Set([...approved, config.referenceMediaId].filter((id): id is string => !!id))].slice(0, 4);
-  if (!ids.length) throw new TryoraError("NOT_FOUND");
+  // Never send a generic product reference for a multi-colour product: it may depict
+  // the wrong colour. Only explicit images approved for this option are safe fallbacks.
+  const ids = [...new Set((values.length > 1 ? approved : [...approved, config.referenceMediaId])
+    .filter((id): id is string => !!id))].slice(0, 4);
+  if (!variantUrl && !ids.length) throw new TryoraError("NOT_FOUND");
   const media: any[] = [];
   after = null;
-  do {
+  while (ids.length) {
     const mediaRes = await admin.graphql(PREVIEW_MEDIA_QUERY, { variables: { id: config.productId, after } });
     const mediaJson = await mediaRes.json();
     if (!mediaRes.ok || mediaJson.errors?.length || !mediaJson.data?.product) throw new TryoraError("PROVIDER_UNAVAILABLE");
@@ -65,17 +76,13 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
     media.push(...page.nodes.filter((m: any) => ids.includes(m?.id)));
     if (page.pageInfo.hasNextPage && (!page.pageInfo.endCursor || page.pageInfo.endCursor === after)) throw new TryoraError("PROVIDER_UNAVAILABLE");
     after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-  } while (after && !ids.every((id) => media.some((m) => m.id === id)));
+    if (!after || ids.every((id) => media.some((m) => m.id === id))) break;
+  }
   if (ids.some((id) => !media.some((m: any) => m?.id === id && m.image?.url))) throw new TryoraError("NOT_FOUND");
-  // Exact variant photo first, then merchant-approved product references.
-  const variantUrl = eligible.find((v) => v.image?.url)?.image?.url;
-  // A generic product reference may show another colour. Multi-option products require
-  // a matching variant image or a merchant-approved reference for this exact choice.
-  if (values.length > 1 && !variantUrl && !approved.length) throw new TryoraError("NOT_FOUND");
   const urls = [...new Set<string>([variantUrl, ...ids.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
   return {
-    urls, optionValue,
-    referenceVersion: choice?.referenceVersion ?? ids.join(","),
+    urls, optionValue, variantId: selected.id as string,
+    referenceVersion: `${choice?.referenceVersion ?? ids.join(",")}:${selected.id}`,
     referenceAngle: choice?.angle ?? config.referenceAngle ?? "front",
     itemNoun: config.itemNoun || defaultNoun(product.productType, product.title),
     description: `${product.title}\n${product.description ?? ""}`.slice(0, 8000),
