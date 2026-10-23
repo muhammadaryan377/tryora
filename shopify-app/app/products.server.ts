@@ -3,6 +3,7 @@ import prisma from "./db.server";
 import { defaultPlacement, resolveSwatches, type Placement, type ResolvedSwatch } from "./core/index";
 import { photoColour } from "./photoColour.server";
 import { autoFurnitureCategory, isAutoEligibleProduct } from "./auto-products.server";
+import { previewOptionStatus } from "./preview-option-status";
 
 export interface ShopProduct {
   id: string;
@@ -24,6 +25,7 @@ export interface ProductRow extends ShopProduct {
   placement: Placement;
   setting: "indoor" | "outdoor" | "either";
   visualOptionName: string | null;
+  previewOptionStatus: ReturnType<typeof previewOptionStatus>;
   referenceMediaId: string | null;
   swatchColours: Record<string, string>;
   /** Store-wide approval to fill missing swatches from variant photos and colour names. */
@@ -207,6 +209,7 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
       placement: (c?.placement as Placement) ?? defaultPlacement(p.productType || p.title),
       setting: (c?.setting as ProductRow["setting"]) ?? "indoor",
       visualOptionName,
+      previewOptionStatus: previewOptionStatus(p.options, visualOptionName, c),
       referenceMediaId: referenceMediaId ?? p.media[0]?.id ?? null,
       swatchColours,
       swatchAutoFill,

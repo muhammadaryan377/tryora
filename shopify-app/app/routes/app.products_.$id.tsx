@@ -105,6 +105,11 @@ export default function ProductSetup() {
   return (
     <s-page heading={row.title}>
       <s-link slot="breadcrumb-actions" href="/app/products">Products</s-link>
+      {row.previewOptionStatus.warning && (
+        <s-section heading="Preview mapping needs review">
+          <s-paragraph>{row.previewOptionStatus.warning}</s-paragraph>
+        </s-section>
+      )}
       <Form method="post">
         {/* Values are mirrored into plain inputs so the form posts reliably. */}
         {enabled && <input type="hidden" name="enabled" value="on" />}
@@ -145,7 +150,10 @@ export default function ProductSetup() {
             onChange={(e: any) => setOption(val(e))}
             details="Usually colour or fabric. Other options, like size, stay fixed."
           >
-            <s-option value="__none">None – single style</s-option>
+            <s-option value="__none">No selector – use product reference</s-option>
+            {row.previewOptionStatus.state === "stale" && (
+              <s-option value={row.visualOptionName!}>Unavailable saved option: {row.visualOptionName}</s-option>
+            )}
             {row.options.map((o) => (
               <s-option key={o.name} value={o.name}>
                 {o.name} ({o.values.length} choices)
