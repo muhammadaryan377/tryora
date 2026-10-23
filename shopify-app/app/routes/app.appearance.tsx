@@ -80,7 +80,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
   const existing = await prisma.appearance.findFirst({ where: { shopId, scope: "store", scopeId: null } });
-  const data = { template, tokens: tokens as object, launchers: launcher as object, copy: {} };
+  const data = { template, tokens: tokens as object, launchers: launcher as object,
+    copy: ((existing?.copy as object) ?? {}) };
   if (existing) await prisma.appearance.update({ where: { id: existing.id }, data });
   else await prisma.appearance.create({ data: { shopId, scope: "store", ...data } });
   return { ok: true as const, errors: [] as string[] };

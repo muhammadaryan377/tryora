@@ -10,7 +10,13 @@ import {
   startPreview,
   storefrontConfig,
 } from "../storefront.server";
-import { guardPhotoCheck, guardPreview } from "../guard.server";
+import { guardAssistant, guardPhotoCheck, guardPreview } from "../guard.server";
+import {
+  answerRoomAssistant,
+  assistantStorefrontConfig,
+  normaliseAssistantHistory,
+  requireAssistantEnabled,
+} from "../room-assistant.server";
 
 /**
  * Storefront API behind the Shopify app proxy: the store's /apps/tryora/<path> arrives here as /proxy/<path>.
@@ -41,6 +47,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (path === "config") {
     const productId = url.searchParams.get("product") ?? "";
     return json(await storefrontConfig(admin, session.shop, productId));
+  }
+  if (path === "assistant/config") {
+    return json(await assistantStorefrontConfig(session.shop, {
+      pageType: url.searchParams.get("pageType") ?? "",
+      productId: url.searchParams.get("product") || undefined,
+      productHandle: url.searchParams.get("productHandle") || undefined,
+      collectionId: url.searchParams.get("collection") || undefined,
+      collectionHandle: url.searchParams.get("collectionHandle") || undefined,
+    }));
   }
   const poll = path.match(/^preview\/([\w-]+)$/);
   if (poll) {
@@ -101,10 +116,29 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
       case "issue":
         return json(await reportIssue(shopId, field("job"), field("category")));
+      case "assistant/message": {
+        guardAssistant(shopId, field("visitor"));
+        await requireAssistantEnabled(shopId);
+        let history: unknown;
+        try { history = JSON.parse(field("history")); }
+        catch { return json({ error: "BAD_REQUEST" }, 400); }
+        const photo = form.has("photo") ? await photoFrom(form) : undefined;
+        if (form.has("photo") && !photo) return json({ error: "BAD_PHOTO" }, 400);
+        return json(await answerRoomAssistant({
+          admin,
+          shopId,
+          history: normaliseAssistantHistory(history),
+          currentProductId: field("product") || undefined,
+          roomPhoto: photo ?? undefined,
+        }));
+      }
       default:
         return json({ error: "NOT_FOUND" }, 404);
     }
   } catch (e) {
-    return json({ error: errorCode(e) }, 400);
+    const code = errorCode(e);
+    const status = code === "RATE_LIMITED" ? 429 :
+      code === "PROVIDER_UNAVAILABLE" || code === "PROVIDER_TIMEOUT" ? 503 : 400;
+    return json({ error: code }, status);
   }
 };
