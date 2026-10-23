@@ -5,6 +5,7 @@ import { photoColour } from "./photoColour.server";
 import { autoFurnitureCategory, isAutoEligibleProduct } from "./auto-products.server";
 import { previewOptionStatus } from "./preview-option-status";
 import { discoverNativeOptions } from "./core/native-option-discovery";
+import { effectiveSetting, providerSettingsEnabled, providerSummary } from "./customization/provider-config.server";
 
 export interface ShopProduct {
   id: string;
@@ -27,6 +28,7 @@ export interface ProductRow extends ShopProduct {
   setting: "indoor" | "outdoor" | "either";
   visualOptionName: string | null;
   previewOptionStatus: ReturnType<typeof previewOptionStatus>;
+  customizationProvider: ReturnType<typeof providerSummary>;
   referenceMediaId: string | null;
   swatchColours: Record<string, string>;
   /** Store-wide approval to fill missing swatches from variant photos and colour names. */
@@ -191,6 +193,9 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
   ]);
   const swatchAutoFill = shop?.swatchAutoFill ?? false;
   const autoEnabled = shop?.autoEnableProducts ?? false;
+  const providerRows = providerSettingsEnabled() ? (await prisma.customizationConfig.findMany({
+    where: { shopId }, select: { shopId: true, productId: true, providerId: true, active: true, revision: true },
+  })).map((r) => ({ ...r, mapping: null })) : [];
   const byId = new Map(configs.map((c) => [c.productId, c]));
   return products.map((p) => {
     const c = byId.get(p.id);
@@ -202,16 +207,20 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
     const resolvedSwatches = swatchesFor(p, visualOptionName, swatchColours, swatchAutoFill, (c?.photoColours as PhotoCache) ?? {});
     const r = readinessOf(enabled, referenceMediaId, p);
     const mappingStatus = previewOptionStatus(p.options, visualOptionName, c);
+    const provider = effectiveSetting(shopId, p.id, providerRows);
+    const customizationProvider = providerSummary(provider.providerId, provider.active);
+    const mappingBlocked = provider.providerId === "shopify_native" && !!mappingStatus.warning;
     return {
       ...p,
       enabled,
-      readiness: enabled && mappingStatus.warning ? "needs_attention" : r.readiness,
-      readinessReason: enabled && mappingStatus.warning ? "Review the preview option mapping." : r.reason,
+      readiness: enabled && (mappingBlocked || customizationProvider.blocked) ? "needs_attention" : r.readiness,
+      readinessReason: enabled && customizationProvider.blocked ? customizationProvider.status : enabled && mappingBlocked ? "Review the preview option mapping." : r.reason,
       itemNoun: c?.itemNoun ?? autoFurnitureCategory(p.productType, p.title) ?? defaultNoun(p.productType, p.title),
       placement: (c?.placement as Placement) ?? defaultPlacement(p.productType || p.title),
       setting: (c?.setting as ProductRow["setting"]) ?? "indoor",
       visualOptionName,
       previewOptionStatus: mappingStatus,
+      customizationProvider,
       referenceMediaId: referenceMediaId ?? p.media[0]?.id ?? null,
       swatchColours,
       swatchAutoFill,
