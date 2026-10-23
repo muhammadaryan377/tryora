@@ -7,6 +7,8 @@ import type { AdminGraphql } from "./preview-product.server";
 import { boundedOpenAIFetch } from "./openai-image-provider.server";
 import { normaliseImage } from "./preview-images.server";
 import { loadProviderSetting } from "./customization/provider-config.server";
+import { ensureAutoProductConfig } from "./auto-products.server";
+import { tryora } from "./tryora.server";
 import { providerAdapter, resolveConfiguredPreview } from "./customization/registry.server";
 import {
   adminQuery,
@@ -17,6 +19,8 @@ import {
   isRef,
   liveSearch,
   PRODUCT_COUNT_QUERY,
+  realOptions,
+  realVariantOptions,
   searchCatalogue,
   shopifySearchWords,
   snapshotFrom,
@@ -80,6 +84,8 @@ export interface ShopperPreferences {
   sizes: string[];
   furniture: string[];
   roomDimensions: string;
+  /** What the shopper told us about their room in words ("grey walls, small window"). Shopper-stated, not verified. */
+  roomNotes: string;
 }
 
 export interface ShownRecommendation { productRef: string; variantRef: string | null }
@@ -115,7 +121,12 @@ export interface AssistantRecommendation {
   /** True only after Tryora's strict preview validation passed for this exact variant. */
   previewAvailable: boolean;
   previewStatus: PreviewStatus;
+  /** One shopper-facing explanation when previewAvailable is false; the model receives the same text. */
+  previewReason: string | null;
   optionValue: string | null;
+  /** Number of Shopify variants; more than one with real options means the card can offer an option selector. */
+  variantCount: number;
+  hasOptions: boolean;
   reason: string;
 }
 
@@ -135,6 +146,7 @@ export type AssistantEvent =
   | { type: "reset_text" }
   | { type: "recommendations"; items: AssistantRecommendation[] }
   | { type: "visualise"; item: AssistantRecommendation }
+  | { type: "selected"; item: AssistantRecommendation }
   | { type: "room"; room: RoomObservations }
   | { type: "preferences"; preferences: ShopperPreferences }
   | { type: "final"; reply: AssistantReply };
@@ -145,6 +157,7 @@ export interface AssistantReply {
   preferences: ShopperPreferences | null;
   recommendations: AssistantRecommendation[];
   visualise: AssistantRecommendation | null;
+  selected: AssistantRecommendation | null;
   model: string;
 }
 
@@ -165,7 +178,22 @@ async function storeSettings(shopId: string) {
 export async function assistantStorefrontConfig(shopId: string, page: AssistantPageContext) {
   const settings = await storeSettings(shopId);
   const visible = roomAssistantVisible(settings, page);
+  // Lead settings and credit availability are best-effort: a failure falls back to "server decides" and "available".
+  const [shop, balance] = visible ? await Promise.all([
+    Promise.resolve().then(() => prisma.shop.findUnique({ where: { id: shopId } })).catch(() => null),
+    Promise.resolve().then(() => tryora.balance(shopId)).catch(() => null),
+  ]) : [null, null];
+  const lead = { showOptIn: true, optInWording: "", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string };
+  const shopName = shopId.replace(".myshopify.com", "").replace(/-/g, " ");
   return {
+    // The merchant's email step for previews, exactly as the product-page popup applies it.
+    lead: {
+      mode: (shop?.leadCapture ?? "required") as "required" | "skippable" | "off",
+      timing: (shop?.leadTiming === "after" ? "after" : "before") as "before" | "after",
+      showOptIn: lead.showOptIn !== false,
+      optInWording: lead.optInWording || `Email me offers and updates from ${shopName}. I can unsubscribe at any time.`,
+    },
+    previewsAvailable: balance ? balance.availableTotal > 0 : true,
     enabled: visible && assistantProviderReady(),
     configured: settings.enabled,
     providerReady: assistantProviderReady(),
@@ -235,8 +263,14 @@ export function normalisePreferences(raw: unknown): ShopperPreferences | null {
     sizes: plainList(value.sizes, 4, 40),
     furniture: plainList(value.furniture, 4, 40),
     roomDimensions: plain(value.roomDimensions, 120),
+    roomNotes: plain(value.roomNotes, 240),
   };
   return Object.values(preferences).some((entry) => Array.isArray(entry) ? entry.length : entry !== null && entry !== "") ? preferences : null;
+}
+
+/** Older shopper messages beyond the verbatim history window, as short reminders (shopper statements, not facts). */
+export function normaliseEarlier(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.map((entry) => plain(entry, 160)).filter(Boolean).slice(-6) : [];
 }
 
 export function normaliseShownRecommendations(raw: unknown): ShownRecommendation[] {
@@ -359,11 +393,23 @@ export const ASSISTANT_TOOLS = [
   },
   {
     type: "function",
-    name: "request_visualisation",
-    description: "When the shopper asks to see a specific product in their room, offer an AI room preview of one exact variant. The server verifies preview eligibility; the shopper confirms on the card before anything is generated. You never generate or describe images yourself.",
+    name: "select_product",
+    description: "Remember the product (and exact variant, if known) the shopper chose or is talking about, e.g. 'I like the first one'. Returns its verified variants and AI preview status. Use productRef/variantRef from earlier results or the conversation context.",
     parameters: {
       type: "object",
-      properties: { productRef: { type: "string" }, variantRef: { type: "string" } },
+      properties: { productRef: { type: "string" }, variantRef: { type: ["string", "null"] } },
+      required: ["productRef", "variantRef"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
+    name: "request_visualisation",
+    description: "When the shopper asks to see a product in their room, offer an AI room preview of one exact variant. Use the selected product from the conversation context. For a product with a single variant, pass variantRef null. The server verifies preview eligibility; the shopper confirms on the card before anything is generated. You never generate or describe images yourself.",
+    parameters: {
+      type: "object",
+      properties: { productRef: { type: "string" }, variantRef: { type: ["string", "null"] } },
       required: ["productRef", "variantRef"],
       additionalProperties: false,
     },
@@ -405,8 +451,9 @@ export const ASSISTANT_TOOLS = [
         sizes: stringList("Requested sizes.", 4),
         furniture: stringList("Furniture types wanted.", 4),
         roomDimensions: { type: "string", description: "Dimensions the shopper gave, verbatim, or empty." },
+        roomNotes: { type: "string", description: "What the shopper said about their room (e.g. 'grey walls, oak floor'), or empty." },
       },
-      required: ["budgetMin", "budgetMax", "colours", "materials", "sizes", "furniture", "roomDimensions"],
+      required: ["budgetMin", "budgetMax", "colours", "materials", "sizes", "furniture", "roomDimensions", "roomNotes"],
       additionalProperties: false,
     },
     strict: true,
@@ -478,7 +525,8 @@ export function parseToolArguments(name: string, raw: string): any {
       };
     }
     case "request_visualisation":
-      if (!isRef(args.productRef) || !isRef(args.variantRef)) throw new ToolArgumentError("ref");
+    case "select_product":
+      if (!isRef(args.productRef) || (args.variantRef !== null && !isRef(args.variantRef))) throw new ToolArgumentError("ref");
       return { productRef: args.productRef, variantRef: args.variantRef };
     case "record_room_observations": {
       const room = normaliseRoomContext(args);
@@ -487,7 +535,7 @@ export function parseToolArguments(name: string, raw: string): any {
     }
     case "update_shopper_context":
       return normalisePreferences(args) ?? {
-        budgetMin: null, budgetMax: null, colours: [], materials: [], sizes: [], furniture: [], roomDimensions: "",
+        budgetMin: null, budgetMax: null, colours: [], materials: [], sizes: [], furniture: [], roomDimensions: "", roomNotes: "",
       };
     default:
       throw new ToolArgumentError("tool");
@@ -515,6 +563,9 @@ interface RequestContext {
   emit: (event: AssistantEvent) => void;
   recommendations: AssistantRecommendation[];
   visualise: AssistantRecommendation | null;
+  selected: AssistantRecommendation | null;
+  /** Products whose preview configuration was checked (and auto-configured, like the product page) this request. */
+  autoChecked: Set<string>;
   room: RoomObservations | null;
   preferences: ShopperPreferences | null;
   /** The product page the shopper is on, read fresh from Shopify (null if unknown or unverifiable). */
@@ -548,13 +599,14 @@ function summary(match: ProductMatch, ctx: RequestContext) {
     collections: product.collections.map((entry) => entry.title),
     price: priceText(product),
     currency: product.currencyCode,
-    options: Object.fromEntries(product.options.map((option) => [option.name, option.values.slice(0, 25)])),
+    options: Object.fromEntries(realOptions(product.options).map((option) => [option.name, option.values.slice(0, 25)])),
+    singleVariant: product.variantCount === 1,
     attributes: product.attributes,
     availability: product.variantsComplete
       ? (known ? `${known} of ${product.variantCount} variants available to buy` : "sold out")
       : "partial variant sample; call get_product_details for exact availability",
     matchingVariants: match.matchingVariants.slice(0, 5).map((variant) => ({
-      variantRef: variant.ref, options: variant.options, price: variant.price, available: variant.available,
+      variantRef: variant.ref, options: realVariantOptions(variant.options), price: variant.price, available: variant.available,
     })),
     notFoundOnProduct: match.unmatched,
     aiRoomPreview: previewLabel(ctx, product),
@@ -688,10 +740,11 @@ async function runDetails(ctx: RequestContext, args: { productRefs: string[]; co
       collections: product.collections.map((entry) => entry.title),
       currency: product.currencyCode,
       attributes: product.attributes,
-      options: Object.fromEntries(product.options.map((option) => [option.name, option.values])),
+      options: Object.fromEntries(realOptions(product.options).map((option) => [option.name, option.values])),
+      singleVariant: product.variantCount === 1,
       description: product.description.slice(0, 700),
       variants: filtered.slice(0, 60).map((variant) => ({
-        variantRef: variant.ref, options: variant.options, price: variant.price, compareAtPrice: variant.compareAtPrice, available: variant.available,
+        variantRef: variant.ref, options: realVariantOptions(variant.options), price: variant.price, compareAtPrice: variant.compareAtPrice, available: variant.available,
       })),
       variantsMatchingFilter: filtered.length,
       variantsTotal: product.variantCount,
@@ -738,7 +791,8 @@ const cardSummary = (item: AssistantRecommendation, index: number) => ({
   price: item.maxPrice ? `${item.price}–${item.maxPrice}` : item.price,
   currency: item.currencyCode,
   availableToBuy: item.purchaseAvailable,
-  aiRoomPreview: item.previewStatus,
+  aiRoomPreview: item.previewAvailable ? "available" : item.previewReason,
+  hasOptionsToChoose: item.hasOptions && !item.variantRef,
   image: item.imageSource === "variant" ? "photo of this exact option"
     : item.imageSource === "reference" ? "approved reference photo of this exact option"
       : item.imageSource === "product" ? "general product photo (the chosen option may look different; do not describe its colour from it)"
@@ -761,17 +815,29 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   };
 }
 
-async function runVisualise(ctx: RequestContext, args: { productRef: string; variantRef: string }) {
+async function runSelect(ctx: RequestContext, args: { productRef: string; variantRef: string | null }) {
+  const [item] = await verifiedRecommendations(ctx, [{ ...args, reason: "" }]);
+  if (!item) return { selected: false, reason: "This product or variant could not be verified." };
+  ctx.selected = item;
+  ctx.emit({ type: "selected", item });
+  const product = ctx.fresh.get(item.productRef);
+  return {
+    selected: true,
+    ...cardSummary(item, 0),
+    options: product ? Object.fromEntries(realOptions(product.options).map((option) => [option.name, option.values.slice(0, 25)])) : {},
+    note: item.hasOptions && !item.variantRef
+      ? "The shopper can choose fabric, colour and other options on the card. Ask which option only if they want a preview or a specific price."
+      : "Remembered as the shopper's selected product.",
+  };
+}
+
+async function runVisualise(ctx: RequestContext, args: { productRef: string; variantRef: string | null }) {
   const [item] = await verifiedRecommendations(ctx, [{ ...args, reason: "" }]);
   if (!item) return { offered: false, reason: "This exact product or variant could not be verified. Ask the shopper to choose from verified options." };
+  ctx.selected = item;
   if (!item.previewAvailable) {
-    return {
-      offered: false,
-      reason: item.previewStatus === "product_page"
-        ? "This product's options are configured on its product page; the shopper can preview it there."
-        : item.purchaseAvailable ? "AI room preview is not available for this variant." : "This variant is currently sold out, so it cannot be previewed.",
-      productUrl: item.url,
-    };
+    // The card shows the same reason; mention it once, briefly.
+    return { offered: false, reason: item.previewReason, productUrl: item.url, cardShown: false };
   }
   ctx.visualise = item;
   ctx.emit({ type: "visualise", item });
@@ -803,6 +869,7 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
     case "list_collections": return runCollections(ctx);
     case "recommend_products": ctx.emit({ type: "status", stage: "preparing_recommendations" }); return runRecommend(ctx, args);
     case "request_visualisation": ctx.emit({ type: "status", stage: "checking_preview" }); return runVisualise(ctx, args);
+    case "select_product": ctx.emit({ type: "status", stage: "checking_variants" }); return runSelect(ctx, args);
     case "record_room_observations":
       if (!ctx.hasPhoto) return { error: "No photo is attached to this message; use the room notes in the context instead." };
       ctx.room = args;
@@ -861,6 +928,17 @@ async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, 
 
 interface ModelRecommendation { productRef: string; variantRef: string | null; reason: string }
 
+/** One consistent explanation for a preview that can't be offered, shared by the card and the model. */
+export function previewReason(status: PreviewStatus, available: boolean): string | null {
+  switch (status) {
+    case "available": return null;
+    case "not_configured": return "AI room preview isn't offered for this product.";
+    case "choose_options": return "Choose the fabric, colour and size to check AI room preview.";
+    case "product_page": return "Choose this product's options on its product page to preview it.";
+    case "unavailable": return available ? "This exact option isn't approved for AI room preview." : "This option is sold out, so it can't be previewed.";
+  }
+}
+
 /**
  * Picks a card thumbnail without ever passing one option's image off as another's: the variant's own image first,
  * then the approved preview reference for that exact variant, then the product's featured image, labelled as such.
@@ -889,6 +967,15 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
   // Fresh price, stock and variant data before anything actionable is shown.
   try { await freshProducts(ctx, picks.map((pick) => pick.productRef), new ShopifyBudget(6)); }
   catch { /* Unverifiable recommendations are dropped below. */ }
+  // Same as opening the product page: with the merchant's auto-enable setting, eligible products get a preview
+  // configuration on first sight. Without the setting this only reads.
+  await Promise.all(picks.map(async (pick) => {
+    const product = ctx.fresh.get(pick.productRef);
+    if (!product || ctx.previewProducts.has(product.id) || ctx.autoChecked.has(product.id)) return;
+    ctx.autoChecked.add(product.id);
+    const config = await ensureAutoProductConfig(ctx.admin, ctx.shopId, product.id).catch(() => null);
+    if (config?.enabled && config.readiness === "ready" && config.shopId === ctx.shopId) ctx.previewProducts.add(product.id);
+  }));
   const ids = [...new Set(picks.map((pick) => ctx.fresh.get(pick.productRef)?.id).filter((id): id is string => !!id && ctx.previewProducts.has(id)))];
   const configs = ids.length ? await prisma.productPreviewConfig.findMany({
     where: { shopId: ctx.shopId, productId: { in: ids }, enabled: true, readiness: "ready" },
@@ -902,7 +989,9 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       logAssistant("recommendation_dropped", { shop: ctx.shopId, reason: "not_found_fresh" }, "info");
       return null;
     }
-    const variant = pick.variantRef ? product.variants.find((entry) => entry.ref === pick.variantRef) ?? null : null;
+    // A product with exactly one variant ("Default Title") needs no choice: use that variant.
+    const only = !pick.variantRef && product.variantsComplete && product.variants.length === 1 ? product.variants[0]! : null;
+    const variant = pick.variantRef ? product.variants.find((entry) => entry.ref === pick.variantRef) ?? null : only;
     if (pick.variantRef && !variant) {
       // Never substitute another variant, fabric, colour or size.
       logAssistant("recommendation_dropped", { shop: ctx.shopId, reason: "variant_not_found" }, "info");
@@ -921,11 +1010,14 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       price: variant ? variant.price : String(product.minPrice),
       maxPrice: variant || product.minPrice === product.maxPrice ? null : String(product.maxPrice),
       currencyCode: product.currencyCode,
-      options: variant?.options ?? {},
+      options: realVariantOptions(variant?.options ?? {}),
       purchaseAvailable: variant ? variant.available : product.variants.some((entry) => entry.available),
       previewAvailable: preview.status === "available",
       previewStatus: preview.status,
+      previewReason: previewReason(preview.status, variant ? variant.available : true),
       optionValue: preview.optionValue,
+      variantCount: product.variantCount,
+      hasOptions: product.variantCount > 1 && realOptions(product.options).length > 0,
       reason: pick.reason.trim().slice(0, 300),
     };
   }));
@@ -992,8 +1084,9 @@ const INSTRUCTIONS = `You are the furniture shopping assistant for exactly one S
 Grounding:
 - Use the tools before any factual claim about products, options, colours, sizes, materials, dimensions, prices, stock, AI room previews, delivery, returns, warranty, promotions or store policies. Never invent any of these.
 - A product exists only if a tool returned it. Recommend only productRef/variantRef values a tool returned; never alter or guess a ref, and never swap one variant for a similar one.
-- To show products, call recommend_products, then write your reply referring to the cards as option 1, 2, 3. The cards show verified price, stock and AI preview status, so do not restate stock or preview status in prose; mention a price only if a tool returned it.
-- Set variantRef only when that exact variant matches the request; otherwise null, and say the shopper can choose options on the product page.
+- To show products, call recommend_products, then write your reply referring to the cards as option 1, 2, 3. The cards show verified image, price, stock, options and AI preview status, so do not restate those in prose; mention a price only if a tool returned it.
+- Set variantRef only when that exact variant matches the request; otherwise null. Cards let the shopper choose fabric, colour and size themselves.
+- Products marked singleVariant have no options: never ask the shopper to choose a size, fabric or colour for them.
 - "Available to buy" and "AI room preview" are different things. A product without AI preview is still sold by the store.
 - If a tool says store data is temporarily unavailable, say so; never claim the store has no matching products in that case.
 - Never say the store has none of something unless count_products or search_products explicitly says the full catalogue was checked and nothing matched. Search results are capped at a few items: never infer totals or absence from them. Use count_products for "how many" and "do you have any" questions.
@@ -1001,20 +1094,24 @@ Grounding:
 - Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. Otherwise say the store has not published it and suggest contacting the store.
 - You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or the store's contact details.
 Conversation:
-- "The second one", "it" and similar refer to the numbered recommendations or the selected product in the conversation context. Use get_product_details to check another colour or size of it.
-- When the shopper states a budget, colours, materials, sizes or room dimensions, call update_shopper_context, and apply saved preferences to later searches.
+- "The second one", "it", "that bed" and similar refer to the numbered recommendations or the selected product in the conversation context. Do not ask which product they mean when the context establishes it.
+- When the shopper shows interest in one product ("I like the first one"), call select_product. Use get_product_details to check another colour or size of the selected product.
+- When the shopper states a budget, colours, materials, sizes, room dimensions or facts about their room, call update_shopper_context, and apply saved preferences to later searches.
 Room photos and visualisation:
 - When a photo is attached, first call record_room_observations with broad visible colours, walls, floor, style, lighting, furniture, layout and plausible placement areas. Do not identify people or infer sensitive traits.
 - Never claim an exact fit from a photo; ask for measurements when size matters.
-- When the shopper wants to see a product in their room, call request_visualisation with the exact productRef and variantRef. The shopper confirms on the card; you never generate images. Tryora places the item automatically: do not promise exact positions, moving existing furniture or custom colours that are not real variants.
-Style: concise, warm and practical, in plain text. Short paragraphs; "- " bullets are fine. At most about 120 words unless the shopper asks for detail.`;
+- When the shopper wants to see a product in their room ("show it in my room", "generate the preview"), call request_visualisation for the selected product without asking for confirmation. Only if several products are equally likely, ask one short question. The shopper confirms on the card; you never generate images. Tryora places the item automatically: do not promise exact positions, moving existing furniture or custom colours that are not real variants.
+- The chat handles room photos and any email the store needs for previews. Do not ask for an email, and mention a missing room photo at most once.
+Room match:
+- Explain fit with what is visible or stated: style, wall and floor colours, lighting, existing furniture. Never give match percentages or scores, and never estimate exact dimensions from a photo.
+Style: short, warm and natural, in plain text. With product cards, write one or two sentences (under about 50 words) that explain why they suit the shopper, without repeating card details. Otherwise at most about 100 words. No repeated greetings.`;
 
-function contextMessage(ctx: RequestContext, shown: ShownRecommendation[], room: RoomObservations | null, preferences: ShopperPreferences | null, selected: ShownRecommendation | null) {
+function contextMessage(ctx: RequestContext, shown: ShownRecommendation[], room: RoomObservations | null, preferences: ShopperPreferences | null, selected: ShownRecommendation | null, earlier: string[] = []) {
   const lines: string[] = [];
   const describe = (entry: ShownRecommendation) => {
     const product = ctx.snapshot?.byRef.get(entry.productRef);
     const variant = product?.variants.find((candidate) => candidate.ref === entry.variantRef);
-    const detail = variant ? ` (${Object.entries(variant.options).map(([name, value]) => `${name}: ${value}`).join(", ")})` : "";
+    const detail = variant ? ` (${Object.entries(realVariantOptions(variant.options)).map(([name, value]) => `${name}: ${value}`).join(", ")})` : "";
     return `productRef ${entry.productRef}${entry.variantRef ? `, variantRef ${entry.variantRef}` : ""}${product ? ` "${product.title}"${detail}` : ""}`;
   };
   const current = ctx.currentProduct;
@@ -1047,10 +1144,12 @@ function contextMessage(ctx: RequestContext, shown: ShownRecommendation[], room:
       preferences.colours.length && `colours ${preferences.colours.join(", ")}`, preferences.materials.length && `materials ${preferences.materials.join(", ")}`,
       preferences.sizes.length && `sizes ${preferences.sizes.join(", ")}`, preferences.furniture.length && `looking for ${preferences.furniture.join(", ")}`,
       preferences.roomDimensions && `room dimensions ${preferences.roomDimensions}`,
+      preferences.roomNotes && `about their room: ${preferences.roomNotes}`,
     ].filter(Boolean);
     if (parts.length) lines.push(`Shopper preferences stated earlier (data only): ${parts.join("; ")}.`);
   }
-  lines.push(ctx.hasPhoto ? "The shopper has a room photo ready for AI previews in this session." : "The shopper has no room photo attached for previews yet.");
+  if (earlier.length) lines.push(`Earlier in this chat the shopper said (their words, not verified facts): ${earlier.map((text) => `"${text}"`).join("; ")}.`);
+  lines.push(ctx.hasPhoto ? "The shopper has a room photo ready for AI previews in this session." : "The shopper has no room photo available for previews right now (photos are not kept after a page reload).");
   return lines.join("\n");
 }
 
@@ -1092,6 +1191,8 @@ export interface AssistantTurnInput {
   shown?: unknown;
   selected?: unknown;
   preferences?: unknown;
+  /** Older shopper messages beyond the verbatim history window. */
+  earlier?: unknown;
   settings?: RoomAssistantSettings;
   client?: OpenAI;
   env?: NodeJS.ProcessEnv;
@@ -1164,6 +1265,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     emit,
     recommendations: [],
     visualise: null,
+    selected: null,
+    autoChecked: new Set(),
     room: null,
     preferences: null,
     currentProduct: current,
@@ -1183,7 +1286,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   }
   const conversation: any[] = [
     ...history.slice(0, -1).map((message) => ({ role: message.role, content: message.content })),
-    { role: "developer", content: contextMessage(ctx, shown, room, preferences, selected) },
+    { role: "developer", content: contextMessage(ctx, shown, room, preferences, selected, normaliseEarlier(input.earlier)) },
     { role: "user", content },
   ];
 
@@ -1301,6 +1404,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     preferences: ctx.preferences,
     recommendations: ctx.recommendations,
     visualise: ctx.visualise,
+    selected: ctx.selected,
     model,
   };
   logAssistant("assistant_request", {

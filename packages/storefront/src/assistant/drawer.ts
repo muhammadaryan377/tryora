@@ -9,7 +9,10 @@ import { errorMessage, escapeHtml, formatText, money, STAGE_LABELS } from "./for
 import { runTurn, TurnError, type TurnEvent } from "./transport.js";
 import { generatePreview, PREVIEW_STAGES, PreviewError, previewErrorMessage } from "./preview.js";
 import { PhotoError, prepareRoomPhoto, type PreparedPhoto } from "./photo.js";
-import { historyFor, loadState, saveState, type ChatState, type Entry, type Recommendation } from "./session.js";
+import { earlierFor, historyFor, loadState, saveState, type ChatState, type Entry, type Recommendation } from "./session.js";
+import { cardForVariant, resolveVariant, selectionsFor, valuesFor, type ProductOptions } from "./options.js";
+import { PROXY } from "./transport.js";
+import { tagBasket } from "../attribution.js";
 
 export interface AssistantConfig {
   enabled: boolean;
@@ -19,6 +22,10 @@ export interface AssistantConfig {
   shop?: string;
   defaultView?: "side" | "fullscreen";
   transport?: "poll" | "sse";
+  /** The merchant's email step for previews, as the product popup applies it. Absent on older servers. */
+  lead?: { mode: "required" | "skippable" | "off"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
+  /** False when the store has no preview credits left. */
+  previewsAvailable?: boolean;
   launcher: { label: string; position: "bottom-left" | "bottom-right"; colour: string };
 }
 
@@ -35,6 +42,12 @@ export interface AssistantContext {
 
 type AssistantEntry = Extract<Entry, { kind: "assistant" }>;
 type PreviewEntry = Extract<Entry, { kind: "preview" }>;
+type LeadEntry = Extract<Entry, { kind: "lead" }>;
+
+interface CardOptionsState { productId: string; data: ProductOptions | null; selections: Record<string, string>; loading: boolean; error: string }
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const isDefaultTitle = (name: string, value: string) => name === "Title" && value === "Default Title";
 
 const ICONS = {
   spark: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.8l1.9 5.3 5.3 1.9-5.3 1.9L12 17.2l-1.9-5.3L4.8 10l5.3-1.9z" fill="currentColor"/><path d="M18.5 14.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z" fill="currentColor" opacity=".7"/></svg>`,
@@ -90,6 +103,11 @@ export class RoomAssistant {
   private menu: "none" | "more" | "attach" = "none";
   private lastFocus: HTMLElement | null = null;
   private lastAnnounced = "";
+  /** In-card option selectors, keyed by "<entry id>:<card index>". Memory only. */
+  private readonly cardOptions = new Map<string, CardOptionsState>();
+  private readonly optionsCache = new Map<string, ProductOptions>();
+  /** Typed email form values, memory only (never saved to session storage). */
+  private readonly leadDrafts = new Map<string, { email: string; firstName: string; marketing: boolean }>();
 
   constructor(private readonly config: AssistantConfig, private readonly context: AssistantContext = {}) {
     this.shop = config.shop || (typeof location !== "undefined" ? location.hostname : "store");
@@ -154,6 +172,7 @@ export class RoomAssistant {
     this.state.shown = [];
     this.state.selected = null;
     this.state.preferences = null;
+    this.cardOptions.clear();
     this.save();
     this.menu = "none";
     this.renderAll();
@@ -168,6 +187,10 @@ export class RoomAssistant {
     this.state.shown = [];
     this.state.selected = null;
     this.state.preferences = null;
+    this.state.lead = { done: false };
+    this.state.previewsDelivered = 0;
+    this.cardOptions.clear();
+    this.leadDrafts.clear();
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
     this.previewUrls.clear();
     this.save();
@@ -260,6 +283,8 @@ export class RoomAssistant {
     if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 6)));
     if (this.state.selected) form.set("selected", JSON.stringify(this.state.selected));
     if (this.state.preferences) form.set("preferences", JSON.stringify(this.state.preferences));
+    const earlier = earlierFor(this.state, userId);
+    if (earlier.length) form.set("earlier", JSON.stringify(earlier));
     if (photo) form.set("photo", photo, "room.jpg");
 
     try {
@@ -325,6 +350,11 @@ export class RoomAssistant {
         this.renderEntry(reply.id);
         this.save();
         return;
+      case "selected":
+        this.state.selected = { productRef: event.item.productRef, variantRef: event.item.variantRef ?? null };
+        this.save();
+        this.renderAll();
+        return;
       case "room":
         this.state.room = event.room;
         this.renderRoomChip();
@@ -340,6 +370,7 @@ export class RoomAssistant {
         reply.text = String(final.message ?? reply.text);
         if (Array.isArray(final.recommendations) && final.recommendations.length) reply.recommendations = final.recommendations;
         if (final.visualise) reply.visualise = final.visualise;
+        if (final.selected) this.state.selected = { productRef: final.selected.productRef, variantRef: final.selected.variantRef ?? null };
         if (final.room) this.state.room = final.room;
         if (final.preferences) this.state.preferences = final.preferences;
         reply.status = "done";
@@ -368,15 +399,18 @@ export class RoomAssistant {
 
   /** Starts an AI preview for one verified card. Needs a room photo; asks for one if missing. */
   async startPreview(item: Recommendation) {
-    if (!item.previewAvailable) return;
+    if (!item.previewAvailable || this.config.previewsAvailable === false) return;
+    // One job per card at a time: a double click never starts (or charges for) a second preview.
+    if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === item.id)) return;
     if (this.attachment && !this.roomPhoto) { this.roomPhoto = this.attachment; this.attachment = null; this.renderComposer(); }
     if (!this.roomPhoto) {
       this.pendingPreview = item;
       this.composerError = "";
-      this.addNotice(`Add a room photo to see the ${item.title} in your room.`);
+      this.addNotice("Add a room photo to create the preview. Photos aren't kept after the page reloads.");
       this.openPicker("upload");
       return;
     }
+    if (this.leadNeeded()) return this.openLeadForm(item, false);
     const entry: PreviewEntry = { id: uid(), kind: "preview", item, status: "generating", stage: "checking_photo", at: Date.now() };
     this.state.entries.push(entry);
     this.save();
@@ -391,28 +425,40 @@ export class RoomAssistant {
         visitor: storedVisitorId(),
         signal: controller.signal,
         onStage: (stage) => { entry.stage = stage; this.renderEntry(entry.id); },
+        leadDone: this.leadDoneFlag(),
       });
       if (controller.signal.aborted || !this.state.entries.includes(entry)) { URL.revokeObjectURL(url); return; }
       this.previewUrls.set(entry.id, url);
       entry.status = "ready";
       entry.stage = undefined;
       this.renderEntry(entry.id);
-      // The image is now on screen: acknowledge delivery, exactly as the product popup does.
+      // The image is now on screen: acknowledge delivery and tag the basket, exactly as the product popup does.
       acknowledge();
+      void tagBasket(item.productId);
+      this.state.previewsDelivered += 1;
       this.announce(`Your AI room preview of the ${item.title} is ready.`);
+      // "After" timing: the email is asked once, after the first preview, as on the product page.
+      const lead = this.config.lead;
+      if (lead && lead.mode !== "off" && lead.timing === "after" && !this.state.lead.done) this.openLeadForm(item, true);
     } catch (error) {
       if (controller.signal.aborted) return;
       const code = error instanceof PreviewError ? error.code : (error as any)?.code ?? "FAILED";
       entry.status = "failed";
       entry.stage = undefined;
       if (code === "LEAD_REQUIRED") {
-        entry.error = "This store asks for your email before creating previews. You can continue on the product page.";
-        entry.handoff = item.url.includes("#") ? item.url : `${item.url}#tryora`;
-      } else entry.error = previewErrorMessage(code);
+        // The store needs an email first: replace this attempt with the in-chat email step (never a repeated warning).
+        this.state.entries = this.state.entries.filter((candidate) => candidate !== entry);
+        this.state.lead.done = false;
+        this.openLeadForm(item, false);
+        return;
+      }
+      entry.error = previewErrorMessage(code);
       this.renderEntry(entry.id);
     } finally {
       this.previews.delete(entry.id);
       this.save();
+      // Re-enable the card's preview button (it shows "Creating preview…" while the job runs).
+      this.renderAll();
     }
   }
 
@@ -424,6 +470,11 @@ export class RoomAssistant {
   }
 
   private addNotice(text: string) {
+    // The same notice is never stacked: once shown recently, it is not added again.
+    if (this.state.entries.slice(-4).some((entry) => entry.kind === "notice" && entry.text === text)) {
+      this.scrollToEnd(true);
+      return;
+    }
     this.state.entries.push({ id: uid(), kind: "notice", text, at: Date.now() });
     this.save();
     this.renderAll();
@@ -535,6 +586,10 @@ export class RoomAssistant {
         return;
       }
       case "cancel-preview": return this.previews.get(id)?.abort();
+      case "options": return void this.toggleOptions(element.dataset.card ?? "");
+      case "opt": return this.chooseOption(element.dataset.card ?? "", element.dataset.attr ?? "", element.dataset.value ?? "");
+      case "lead-submit": return void this.submitLead(id);
+      case "lead-skip": return this.skipLead(id);
       case "another": {
         const item = this.findItem(id);
         const textarea = this.textarea();
@@ -641,7 +696,15 @@ export class RoomAssistant {
     root.addEventListener("click", (event) => this.onClick(event));
     root.addEventListener("change", (event) => void this.onChange(event));
     root.addEventListener("keydown", (event) => this.onKey(event));
-    root.addEventListener("input", (event) => { if ((event.target as HTMLElement).matches("textarea")) this.autosize(); });
+    root.addEventListener("input", (event) => {
+      const target = event.target as HTMLInputElement;
+      if (target.matches("textarea")) this.autosize();
+      if (target.name?.startsWith("ta-lead-") && target.dataset.entry) this.updateLeadDraft(target);
+    });
+    root.addEventListener("change", (event) => {
+      const target = event.target as HTMLInputElement;
+      if (target.name === "ta-lead-marketing" && target.dataset.entry) this.updateLeadDraft(target);
+    });
     // Image load and error events do not bubble; listen in the capture phase.
     root.addEventListener("load", (event) => {
       const thumb = (event.target as HTMLElement).closest?.(".tryora-assistant__thumb") as HTMLElement | null;
@@ -812,6 +875,7 @@ export class RoomAssistant {
       return `<div class="tryora-assistant__message tryora-assistant__message--user" data-entry="${id}">${photo}<div class="tryora-assistant__bubble"><p>${escapeHtml(entry.text)}</p></div></div>`;
     }
     if (entry.kind === "preview") return this.previewHtml(entry);
+    if (entry.kind === "lead") return this.leadHtml(entry);
     const streaming = entry.status === "streaming";
     const status = streaming ? `<p class="tryora-assistant__status" data-ta-status ${entry.text ? "hidden" : ""}><span class="tryora-assistant__dots" aria-hidden="true"><i></i><i></i><i></i></span>${escapeHtml(this.stageLabel(entry.stage))}</p>` : "";
     const error = entry.status === "error" || entry.status === "stopped"
@@ -820,7 +884,7 @@ export class RoomAssistant {
     const text = entry.text || streaming ? `<div class="tryora-assistant__bubble ${entry.text ? "" : "is-empty"}" aria-busy="${streaming}">${status}<div class="tryora-assistant__text" data-ta-text>${formatText(entry.text)}</div></div>` : "";
     return `<div class="tryora-assistant__message tryora-assistant__message--assistant" data-entry="${id}">
       ${text}${error}
-      ${entry.recommendations.length ? `<div class="tryora-assistant__cards">${entry.recommendations.map((item, index) => this.cardHtml(item, index)).join("")}</div>` : ""}
+      ${entry.recommendations.length ? `<div class="tryora-assistant__cards">${entry.recommendations.map((item, index) => this.cardHtml(item, index, entry.id)).join("")}</div>` : ""}
       ${entry.visualise ? this.visualiseHtml(entry.visualise) : ""}
     </div>`;
   }
@@ -851,31 +915,55 @@ export class RoomAssistant {
     </div>`;
   }
 
-  private cardHtml(item: Recommendation, index: number) {
-    const options = Object.entries(item.options).map(([name, value]) => `<span class="tryora-assistant__tag">${escapeHtml(name)}: ${escapeHtml(value)}</span>`).join("");
+  /** Applies store-wide conditions (no preview credits left) to a card at render time. */
+  private effective(item: Recommendation): Recommendation {
+    if (item.previewAvailable && this.config.previewsAvailable === false) {
+      return { ...item, previewAvailable: false, previewStatus: "unavailable", previewReason: "New AI previews are temporarily unavailable." };
+    }
+    return item;
+  }
+
+  private isSelected(item: Recommendation) {
+    const selected = this.state.selected;
+    return !!selected && selected.productRef === item.productRef && (selected.variantRef ?? null) === (item.variantRef ?? null);
+  }
+
+  private cardHtml(raw: Recommendation, index: number, entryId = "") {
+    const item = this.effective(raw);
+    const key = `${entryId}:${index}`;
+    const options = Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value))
+      .map(([name, value]) => `<span class="tryora-assistant__tag">${escapeHtml(name)}: ${escapeHtml(value)}</span>`).join("");
     const id = escapeHtml(item.id);
-    const generalPhoto = item.imageSource === "product" && !!item.variantRef;
+    // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
+    const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const unavailable = !item.previewAvailable && item.previewStatus !== "not_configured";
-    const reason = item.previewStatus === "choose_options" || item.previewStatus === "product_page"
-      ? "Choose options on the product page to preview this exact configuration."
-      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option can't be verified for an AI preview.";
-    return `<article class="tryora-assistant__card">
+    const choose = !!item.hasOptions && !item.variantRef && item.previewStatus === "choose_options";
+    const unavailable = !item.previewAvailable && !choose && item.previewStatus !== "not_configured";
+    const reason = item.previewReason ?? (item.previewStatus === "product_page"
+      ? "Choose this product's options on its product page to preview it."
+      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
+    const panel = this.cardOptions.get(key);
+    const optionsButton = item.hasOptions
+      ? `<button type="button" class="tryora-assistant__secondary" data-ta="options" data-card="${escapeHtml(key)}" aria-expanded="${!!panel}">${item.variantRef ? "Change options" : "Choose options"}</button>` : "";
+    return `<article class="tryora-assistant__card${this.isSelected(raw) ? " is-selected" : ""}" data-card="${escapeHtml(key)}">
       ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
-        <span class="tryora-assistant__eyebrow">Option ${index + 1}</span>
+        <span class="tryora-assistant__eyebrow">Option ${index + 1}${this.isSelected(raw) ? ` · Selected` : ""}</span>
         <h4>${escapeHtml(item.title)}</h4>
         ${options ? `<div class="tryora-assistant__tags">${options}</div>` : ""}
         ${this.priceHtml(item)}
         <div class="tryora-assistant__tags">${this.badgesHtml(item)}</div>
         ${item.reason ? `<p>${escapeHtml(item.reason)}</p>` : ""}
         ${generalPhoto ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
+        ${panel ? this.optionsPanelHtml(key, panel) : ""}
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" href="${escapeHtml(item.url)}">View product</a>
-          ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}">See it in my room</button>`
+          ${optionsButton}
+          ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : "See it in my room"}</button>`
             : unavailable ? `<button type="button" class="tryora-assistant__primary" disabled aria-describedby="ta-why-${id}">See it in my room</button>` : ""}
         </div>
         ${unavailable ? `<p class="tryora-assistant__image-note" id="ta-why-${id}">${escapeHtml(reason)}</p>` : ""}
+        ${choose && !panel ? `<p class="tryora-assistant__image-note">Choose options to check price, stock and AI room preview.</p>` : ""}
       </div>
     </article>`;
   }
@@ -891,7 +979,7 @@ export class RoomAssistant {
         <h4>${escapeHtml(item.title)}</h4>
         ${options ? `<p>${escapeHtml(options)}</p>` : ""}
         <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Tryora places the item automatically.</p>
-        <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}">Generate preview</button>
+        <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : this.roomPhoto ? "Generate preview" : "Add room photo and preview"}</button>
       </div>
     </div>`;
   }
@@ -926,6 +1014,219 @@ export class RoomAssistant {
       <div class="tryora-assistant__failed" role="${entry.status === "failed" ? "alert" : "status"}"><span>${escapeHtml(message)}</span>
       ${entry.handoff ? `<a class="tryora-assistant__chip-button" href="${escapeHtml(entry.handoff)}">Continue on product page</a>`
         : entry.status === "failed" ? `<button type="button" class="tryora-assistant__chip-button" data-ta="preview" data-id="${escapeHtml(entry.item.id)}">Try again</button>` : ""}</div></div>`;
+  }
+
+  // ---------- email step (the merchant's lead capture) ----------
+
+  /** True when the merchant's email step must be completed before the next preview, mirroring the popup's rules. */
+  private leadNeeded(): boolean {
+    const lead = this.config.lead;
+    if (this.state.lead.done || !lead || lead.mode === "off") return false;
+    // "After" timing lets the first preview through and asks afterwards, as on the product page.
+    return !(lead.timing === "after" && this.state.previewsDelivered === 0);
+  }
+
+  /** The leadDone flag the preview endpoint expects. Without lead settings the server decides (LEAD_REQUIRED). */
+  private leadDoneFlag(): "0" | "1" {
+    if (this.state.lead.done) return "1";
+    return this.config.lead && !this.leadNeeded() ? "1" : "0";
+  }
+
+  /** Shows the email step once; a second request reuses the open form instead of stacking warnings. */
+  private openLeadForm(item: Recommendation, after: boolean) {
+    const open = this.state.entries.find((entry): entry is LeadEntry => entry.kind === "lead" && (entry.status === "open" || entry.status === "sending"));
+    if (open) {
+      if (!after) { open.item = item; open.after = false; }
+    } else {
+      this.state.entries.push({ id: uid(), kind: "lead", item, status: "open", after, at: Date.now() });
+    }
+    this.save();
+    this.renderAll();
+    this.scrollToEnd(true);
+    this.root?.querySelector<HTMLInputElement>('.tryora-assistant__lead input[name="ta-lead-email"]')?.focus();
+  }
+
+  private updateLeadDraft(input: HTMLInputElement) {
+    const id = input.dataset.entry!;
+    const draft = this.leadDrafts.get(id) ?? { email: "", firstName: "", marketing: false };
+    if (input.name === "ta-lead-email") draft.email = input.value.slice(0, 254);
+    if (input.name === "ta-lead-first") draft.firstName = input.value.slice(0, 80);
+    if (input.name === "ta-lead-marketing") draft.marketing = input.checked;
+    this.leadDrafts.set(id, draft);
+  }
+
+  /** Sends the email through the existing lead endpoint (server-validated), then continues the pending preview. */
+  async submitLead(id: string) {
+    const entry = this.state.entries.find((candidate): candidate is LeadEntry => candidate.id === id && candidate.kind === "lead");
+    if (!entry || entry.status === "sending" || entry.status === "done") return;
+    const draft = this.leadDrafts.get(id) ?? { email: "", firstName: "", marketing: false };
+    if (!EMAIL.test(draft.email.trim())) {
+      entry.error = "Please enter a valid email address.";
+      this.renderEntry(id);
+      this.root?.querySelector<HTMLInputElement>(`[data-entry="${CSS.escape(id)}"] input[name="ta-lead-email"]`)?.focus();
+      return;
+    }
+    entry.status = "sending";
+    entry.error = undefined;
+    this.renderEntry(id);
+    const form = new FormData();
+    form.set("email", draft.email.trim());
+    form.set("firstName", draft.firstName.trim());
+    form.set("marketing", this.config.lead?.showOptIn && draft.marketing ? "1" : "0");
+    form.set("wording", this.config.lead?.showOptIn ? this.config.lead.optInWording : "");
+    form.set("product", entry.item.productId);
+    form.set("option", entry.item.optionValue ?? "");
+    try {
+      const response = await fetch(`${PROXY}/lead`, { method: "POST", body: form, credentials: "same-origin" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw Object.assign(new Error(body.error ?? "REQUEST_FAILED"), { code: body.error ?? "REQUEST_FAILED" });
+    } catch (error: any) {
+      entry.status = "open";
+      entry.error = error?.code === "BAD_EMAIL" ? "Please enter a valid email address." : "We couldn't save your email just now. Please try again.";
+      this.renderEntry(id);
+      return;
+    }
+    this.state.lead.done = true;
+    entry.status = "done";
+    this.leadDrafts.delete(id);
+    this.save();
+    this.renderEntry(id);
+    if (!entry.after) void this.startPreview(entry.item);
+  }
+
+  skipLead(id: string) {
+    const entry = this.state.entries.find((candidate): candidate is LeadEntry => candidate.id === id && candidate.kind === "lead");
+    if (!entry || entry.status !== "open") return;
+    // Before a preview only a "skippable" store allows skipping; after one, declining simply closes the prompt.
+    if (!entry.after && this.config.lead?.mode !== "skippable") return;
+    if (this.config.lead?.mode === "skippable" || !entry.after) this.state.lead.done = true;
+    entry.status = "skipped";
+    this.leadDrafts.delete(id);
+    this.save();
+    this.renderEntry(id);
+    if (!entry.after) void this.startPreview(entry.item);
+  }
+
+  private leadHtml(entry: LeadEntry) {
+    const id = escapeHtml(entry.id);
+    if (entry.status === "done" || entry.status === "skipped") {
+      const text = entry.status === "skipped" ? "No problem." : entry.after ? "Thanks, you're all set." : "Thanks! Creating your preview…";
+      return `<div class="tryora-assistant__notice" data-entry="${id}">${escapeHtml(text)}</div>`;
+    }
+    const lead = this.config.lead;
+    const draft = this.leadDrafts.get(entry.id) ?? { email: "", firstName: "", marketing: false };
+    const sending = entry.status === "sending";
+    const canSkip = entry.after || lead?.mode === "skippable";
+    return `<div class="tryora-assistant__lead" data-entry="${id}" role="group" aria-labelledby="ta-lead-${id}">
+      <h4 id="ta-lead-${id}">${entry.after ? "Enter your email to keep previewing" : "Enter your email to create your preview"}</h4>
+      <p>This store asks for an email for AI room previews. Your image is never emailed.</p>
+      <label class="tryora-assistant__field"><span>Email address</span>
+        <input type="email" name="ta-lead-email" data-entry="${id}" autocomplete="email" inputmode="email" required value="${escapeHtml(draft.email)}" ${entry.error ? 'aria-invalid="true"' : ""} ${sending ? "disabled" : ""}></label>
+      <label class="tryora-assistant__field"><span>First name (optional)</span>
+        <input name="ta-lead-first" data-entry="${id}" autocomplete="given-name" value="${escapeHtml(draft.firstName)}" ${sending ? "disabled" : ""}></label>
+      ${lead?.showOptIn ? `<label class="tryora-assistant__check"><input type="checkbox" name="ta-lead-marketing" data-entry="${id}" ${draft.marketing ? "checked" : ""} ${sending ? "disabled" : ""}> <span>${escapeHtml(lead.optInWording)}</span></label>` : ""}
+      ${entry.error ? `<p class="tryora-assistant__composer-error" role="alert">${escapeHtml(entry.error)}</p>` : ""}
+      <div class="tryora-assistant__card-actions">
+        <button type="button" class="tryora-assistant__primary" data-ta="lead-submit" data-id="${id}" ${sending ? "disabled" : ""}>${sending ? "Saving…" : entry.after ? "Submit" : "Continue"}</button>
+        ${canSkip ? `<button type="button" class="tryora-assistant__secondary" data-ta="lead-skip" data-id="${id}" ${sending ? "disabled" : ""}>${entry.after ? "No thanks" : "Skip"}</button>` : ""}
+        <a class="tryora-assistant__link" href="/policies/privacy-policy" target="_blank" rel="noopener">Privacy</a>
+      </div>
+    </div>`;
+  }
+
+  // ---------- in-card options (fabric, colour, size…) ----------
+
+  private generating(item: Recommendation) {
+    return this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === item.id);
+  }
+
+  private cardAt(key: string): { entry: AssistantEntry; index: number; item: Recommendation } | null {
+    const split = key.lastIndexOf(":");
+    const entryId = key.slice(0, split);
+    const index = Number(key.slice(split + 1));
+    const entry = this.state.entries.find((candidate): candidate is AssistantEntry => candidate.id === entryId && candidate.kind === "assistant");
+    const item = entry?.recommendations[index];
+    return entry && item ? { entry, index, item } : null;
+  }
+
+  /** Opens or closes a card's option selector, loading the product's real options once per product. */
+  async toggleOptions(key: string) {
+    const card = this.cardAt(key);
+    if (!card) return;
+    if (this.cardOptions.has(key)) {
+      this.cardOptions.delete(key);
+      return this.renderEntry(card.entry.id);
+    }
+    const cached = this.optionsCache.get(card.item.productId);
+    const panel: CardOptionsState = { productId: card.item.productId, data: cached ?? null, selections: cached ? selectionsFor(cached, card.item.variantRef) : {}, loading: !cached, error: "" };
+    this.cardOptions.set(key, panel);
+    this.renderEntry(card.entry.id);
+    if (cached) return;
+    try {
+      const response = await fetch(`${PROXY}/assistant/options?product=${encodeURIComponent(card.item.productId)}&visitor=${encodeURIComponent(storedVisitorId())}`, { credentials: "same-origin" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !Array.isArray(body.variants)) throw new Error(body.error ?? "REQUEST_FAILED");
+      this.optionsCache.set(card.item.productId, body as ProductOptions);
+      panel.data = body as ProductOptions;
+      panel.selections = selectionsFor(panel.data, card.item.variantRef);
+    } catch {
+      panel.error = "Options couldn't be loaded just now. Please try again.";
+    } finally {
+      panel.loading = false;
+      if (this.cardOptions.get(key) === panel) this.renderEntry(card.entry.id);
+    }
+  }
+
+  /** Applies one option choice; when the choices identify exactly one variant, the card becomes that variant. */
+  chooseOption(key: string, attribute: string, value: string) {
+    const panel = this.cardOptions.get(key);
+    const card = this.cardAt(key);
+    if (!panel?.data || !card) return;
+    const data = panel.data;
+    panel.selections = { ...panel.selections, [attribute]: value };
+    // Drop earlier choices that no variant combines with this one (e.g. a colour from another fabric family).
+    for (const other of data.attributes) {
+      if (other.name === attribute || panel.selections[other.name] === undefined) continue;
+      const compatible = data.variants.some((variant) => Object.entries(panel.selections).every(([name, chosen]) => variant.values[name] === chosen));
+      if (!compatible) delete panel.selections[other.name];
+    }
+    const variant = resolveVariant(data, panel.selections);
+    if (variant) {
+      const updated = cardForVariant(card.item, data, variant, this.config.previewsAvailable !== false);
+      const previous = card.item;
+      card.entry.recommendations[card.index] = updated;
+      this.state.shown = this.state.shown.map((ref) => ref.productRef === previous.productRef && ref.variantRef === previous.variantRef
+        ? { productRef: updated.productRef, variantRef: updated.variantRef } : ref);
+      this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef };
+      this.save();
+    }
+    this.renderAll();
+  }
+
+  private optionsPanelHtml(key: string, panel: CardOptionsState) {
+    const card = escapeHtml(key);
+    if (panel.loading) return `<div class="tryora-assistant__options" role="status"><span class="tryora-assistant__spinner" aria-hidden="true"></span> Loading options…</div>`;
+    if (panel.error || !panel.data) return `<div class="tryora-assistant__options"><p class="tryora-assistant__composer-error" role="alert">${escapeHtml(panel.error || "Options are unavailable.")}</p>
+      <button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${card}">Close</button></div>`;
+    const data = panel.data;
+    const groups = data.attributes.map((attribute) => {
+      const values = valuesFor(data, attribute, panel.selections);
+      const swatches = attribute.kind === "colour" || values.some((value) => value.colour || value.image);
+      const buttons = values.map((value) => {
+        const label = `${value.value}${value.soldOut ? " (sold out)" : ""}`;
+        const common = `type="button" data-ta="opt" data-card="${card}" data-attr="${escapeHtml(attribute.name)}" data-value="${escapeHtml(value.value)}" aria-pressed="${value.selected}" ${value.disabled ? "disabled" : ""}`;
+        if (!swatches) return `<button ${common} class="tryora-assistant__opt${value.soldOut ? " is-soldout" : ""}">${escapeHtml(label)}</button>`;
+        const colour = value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour) ? value.colour : null;
+        const dot = value.image ? `<img src="${escapeHtml(value.image)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
+        return `<button ${common} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}">
+          <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}">${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
+      }).join("");
+      return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
+        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}">${buttons}</div></fieldset>`;
+    }).join("");
+    const missing = data.attributes.filter((attribute) => panel.selections[attribute.name] === undefined).map((attribute) => attribute.name.toLowerCase());
+    const status = missing.length ? `Choose ${missing.join(", ")}.` : resolveVariant(data, panel.selections) ? "" : "That combination isn't available. Choose another option.";
+    return `<div class="tryora-assistant__options">${groups}${status ? `<p class="tryora-assistant__image-note" role="status">${escapeHtml(status)}</p>` : ""}</div>`;
   }
 
   // ---------- helpers ----------

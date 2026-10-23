@@ -115,6 +115,32 @@ Catalogue awareness, search (synonyms, BM25, constraints, live Shopify fallback)
 - what a search returns
 - one product's status, publication and variant availability
 
+## Customer journey fixes (branch fix/assistant-customer-journey)
+
+Root causes found for the real-store issues:
+
+| Symptom | Root cause | Fix |
+|---|---|---|
+| Every in-chat preview showed "this store asks for your email" | The chat always sent `leadDone=0`, while the merchant lead mode defaults to `required` | The chat now applies the merchant's lead mode and timing exactly as the product popup does. It shows one inline email form, submits through the existing `/lead` endpoint (server-validated, consent wording included), then resumes the pending preview. "After" timing allows the first preview, then asks. "Skippable" offers Skip. The email is never stored in the browser |
+| Preview disabled or "not offered" for beds whose product page offers it | Chat only read existing ready configurations; the product page auto-configures products on first view | Recommended products go through the same `ensureAutoProductConfig` step (only when the merchant's auto-enable setting is on), then strict validation |
+| "Choose options on the product page" for single-variant beds; AI asked about sizes or fabrics that don't exist | The model and cards saw Shopify's placeholder "Title: Default Title"; product-level cards never resolved a variant | Default Title is hidden everywhere. A product with exactly one variant resolves to it automatically, and preview eligibility is still verified server-side |
+| Repeated email and room-photo warnings | Each attempt added a new message | Notices are deduplicated, and a second email request reuses the open form. A double click never starts a second job |
+| Inconsistent preview messaging | Card and model used different texts | One server-side `previewReason` is shared by card and model |
+| Card's preview button stuck on "Creating preview…" after a preview | Only the preview message re-rendered | Cards re-render when a job ends |
+
+Also:
+- **Option selector on cards:** "Choose options" or "Change options" opens fabric family chips, circular colour swatches and size, headboard and storage chips. These are built from real Shopify variants (`/apps/tryora/assistant/options`). Composite values such as `Plush Velvet: Cream | Headboard: 50 inches | Storage: No Storage` are split for display only when every value shares one exact shape. A selection resolves to exactly one variant and updates price, stock, image and preview eligibility. Preview eligibility per variant comes from `storefrontConfig`, the product page's own model. Cloudlift and manual mappings point to the product page; no provider is enabled automatically.
+- **Memory:**
+  - `select_product` remembers "I like the first one".
+  - `request_visualisation` uses the selected product, including single-variant products with `variantRef: null`.
+  - Shopper-stated room facts are saved in preferences as `roomNotes`.
+  - Shopper messages older than the 12-turn window are sent as up to 6 short reminders, labelled as shopper statements, not facts.
+- **Store-wide signals:** the assistant config now includes the merchant's lead settings and whether preview credits remain. With no credits, preview buttons are disabled with a reason.
+- **Attribution:** in-chat previews tag the basket exactly like the popup.
+- **Shorter replies:** the model writes one or two sentences when cards are shown, explains room fit without scores, and never asks for an email.
+
+No database schema, API scope, billing or credit-rule changes. Query costs: the detail query with option swatches is 332; the product-page model used by the selector is the existing 761-cost query.
+
 ## Previews inside the conversation
 
 A *See it in my room* or *Generate preview* button appears only when the server's strict check passed for that exact variant. That check is the same `loadProviderSetting` → adapter → `resolveConfiguredPreview` chain that `startPreview` uses. Cloudlift and manual-mapping products show "choose options on the product page" instead.

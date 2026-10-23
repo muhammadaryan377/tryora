@@ -134,11 +134,12 @@ describe("recommendations with real product images", () => {
     const reply = await ask(fixtureAdmin(beds), client, "Show me available beds");
     expect(reply.recommendations.map((card) => [card.title, card.image, card.imageSource, card.price, card.currencyCode, card.purchaseAvailable])).toEqual([
       ["Chelsea Luxe Bed", `${CDN}/chelsea.jpg`, "product", "649", "GBP", true],
-      ["Thames Bed Frame", null, null, "399", "GBP", true],
-      ["Monaco Panelled Bed", `${CDN}/monaco.jpg`, "product", "1099", "GBP", true],
+      // Single-variant beds resolve their only variant automatically, so the price is that variant's exact price.
+      ["Thames Bed Frame", null, null, "399.00", "GBP", true],
+      ["Monaco Panelled Bed", "https://cdn.shopify.com/monaco-panelled-bed-8004-0.jpg", "variant", "1099.00", "GBP", true],
     ]);
     expect(reply.recommendations.every((card) => !card.previewAvailable)).toBe(true);
-    expect(toolOutputs(requests, "call-recommend_products")[0].shown.map((card: any) => card.image)).toEqual(["general product photo (the chosen option may look different; do not describe its colour from it)", "no image", "general product photo (the chosen option may look different; do not describe its colour from it)"]);
+    expect(toolOutputs(requests, "call-recommend_products")[0].shown.map((card: any) => card.image)).toEqual(["general product photo (the chosen option may look different; do not describe its colour from it)", "no image", "photo of this exact option"]);
   });
 
   it("matches the exact variant's own image and its approved preview reference", async () => {

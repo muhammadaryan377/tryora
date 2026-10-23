@@ -28,7 +28,11 @@ export interface Recommendation extends Money {
   purchaseAvailable: boolean;
   previewAvailable: boolean;
   previewStatus: "available" | "not_configured" | "unavailable" | "choose_options" | "product_page";
+  /** Server-provided explanation when previewAvailable is false (optional for older saved conversations). */
+  previewReason?: string | null;
   optionValue: string | null;
+  variantCount?: number;
+  hasOptions?: boolean;
   reason: string;
 }
 
@@ -52,6 +56,7 @@ export interface Preferences {
   sizes: string[];
   furniture: string[];
   roomDimensions: string;
+  roomNotes?: string;
 }
 
 export interface Ref { productRef: string; variantRef: string | null }
@@ -72,7 +77,9 @@ export type Entry =
     at: number;
   }
   | { id: string; kind: "preview"; item: Recommendation; status: "generating" | "ready" | "failed"; stage?: string; error?: string; handoff?: string; at: number }
-  | { id: string; kind: "notice"; text: string; at: number };
+  | { id: string; kind: "notice"; text: string; at: number }
+  /** The merchant's email step for previews. The email itself is never stored here. */
+  | { id: string; kind: "lead"; item: Recommendation; status: "open" | "sending" | "done" | "skipped"; after: boolean; error?: string; at: number };
 
 export interface ChatState {
   v: 2;
@@ -85,6 +92,10 @@ export interface ChatState {
   shown: Ref[];
   selected: Ref | null;
   ui: { open: boolean; view: "side" | "fullscreen" };
+  /** Whether this session already completed (or skipped, where allowed) the merchant's email step. */
+  lead: { done: boolean };
+  /** Previews delivered in this session; "after" email timing allows the first one before asking. */
+  previewsDelivered: number;
 }
 
 export const IDLE_MS = 4 * 60 * 60_000;
@@ -96,7 +107,7 @@ const LEGACY_KEY = "tryora_assistant_context";
 export const sessionKey = (shop: string) => `tryora_assistant_v2:${shop}`;
 
 export function emptyState(shop: string, view: "side" | "fullscreen" = "side", now = Date.now()): ChatState {
-  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, preferences: null, shown: [], selected: null, ui: { open: false, view } };
+  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, preferences: null, shown: [], selected: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
 }
 
 function storage(): Storage | null {
@@ -122,8 +133,15 @@ export function loadState(shop: string, view: "side" | "fullscreen" = "side", no
     parsed.entries = parsed.entries.map((entry) =>
       entry.kind === "assistant" && entry.status === "streaming" ? { ...entry, status: "stopped" as const, stage: undefined } :
         entry.kind === "preview" && entry.status === "generating" ? { ...entry, status: "failed" as const, error: "The preview was interrupted when the page changed. No credit was used." } :
-          entry);
-    return { ...emptyState(shop, view, now), ...parsed, ui: { open: !!parsed.ui?.open, view: parsed.ui?.view === "fullscreen" ? "fullscreen" : "side" } };
+          entry.kind === "lead" && entry.status === "sending" ? { ...entry, status: "open" as const } :
+            entry);
+    return {
+      ...emptyState(shop, view, now),
+      ...parsed,
+      ui: { open: !!parsed.ui?.open, view: parsed.ui?.view === "fullscreen" ? "fullscreen" : "side" },
+      lead: { done: parsed.lead?.done === true },
+      previewsDelivered: Number.isInteger(parsed.previewsDelivered) && parsed.previewsDelivered > 0 ? parsed.previewsDelivered : 0,
+    };
   } catch {
     return emptyState(shop, view, now);
   }
@@ -152,6 +170,19 @@ export function saveState(state: ChatState, now = Date.now()) {
 /** Whether the drawer was open when the shopper left the previous page in this tab. */
 export function wasOpen(shop: string): boolean {
   return loadState(shop).ui.open;
+}
+
+/**
+ * Shopper messages older than the verbatim history window, as short reminders (up to 6, 160 characters each), so
+ * long conversations keep early preferences without resending every turn.
+ */
+export function earlierFor(state: ChatState, upTo?: string): string[] {
+  const recent = new Set(historyFor(state, upTo).filter((message) => message.role === "user").map((message) => message.content));
+  const end = upTo ? state.entries.findIndex((entry) => entry.id === upTo) : state.entries.length;
+  return state.entries.slice(0, end < 0 ? undefined : end)
+    .filter((entry): entry is Extract<Entry, { kind: "user" }> => entry.kind === "user" && !recent.has(entry.text.slice(0, 800)))
+    .map((entry) => entry.text.slice(0, 160))
+    .slice(-6);
 }
 
 /** The bounded text history sent with a message: the last 12 completed user/assistant turns. */

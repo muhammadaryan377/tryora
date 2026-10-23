@@ -25,9 +25,25 @@ vi.mock("../app/db.server", () => ({
     customizationConfig: { findMany: vi.fn(async () => []) },
   },
 }));
+// The product page's verified preview model for Aria (normally storefrontConfig against the database).
+vi.mock("../app/storefront.server", () => ({
+  storefrontConfig: vi.fn(async (_admin: unknown, _shop: string, productId: string) => {
+    if (productId !== "gid://shopify/Product/1") return { enabled: false };
+    const variants = (globalThis as any).__ariaVariants as { id: string; selectedOptions: { name: string; value: string }[]; availableForSale: boolean }[];
+    return {
+      enabled: true, available: true, providerId: "shopify_native", singleVariants: [],
+      lead: { mode: "required", timing: "before", showOptIn: true, optInWording: "Email me offers and updates from Demo Furniture." },
+      swatches: ["Cream", "Grey"].map((colour) => ({
+        value: colour, label: colour, group: null, colour: colour === "Cream" ? "#efe6d2" : "#8d8d8d", image: null, available: true,
+        variants: variants.filter((variant) => variant.availableForSale && variant.selectedOptions.some((option) => option.value === colour)).map((variant) => ({ id: variant.id, image: null, options: {} })),
+      })),
+    };
+  }),
+}));
 
 import { cancelAssistantTurn, readAssistantTurn, startAssistantTurn, streamAssistantTurn } from "../app/assistant/turn-routes.server";
 import { setAssistantClientForTests } from "../app/room-assistant.server";
+import { productOptionsForAssistant } from "../app/assistant/options.server";
 import { setAssistantLogSink } from "../app/assistant/log.server";
 import { fixtureAdmin, fixtureProduct, furnitureCatalogue, finalAnswer, toolCall } from "./fixtures/assistant-store";
 
@@ -60,6 +76,7 @@ state.configs = [{
   referenceMediaId: null, referenceAngle: "front", choices: [], updatedAt: new Date(),
 }];
 const admin = fixtureAdmin(products);
+(globalThis as any).__ariaVariants = aria.variants;
 
 /** A deterministic model: room notes → search → cards (or a preview offer) → a slowly streamed answer. */
 const GAP_MS = 250;
@@ -108,7 +125,7 @@ const model = {
 
 // ---------- harness server ----------
 
-const seen = { turnsWithPhoto: 0, previewStarts: [] as Record<string, string>[], acks: 0 };
+const seen = { turnsWithPhoto: 0, previewStarts: [] as Record<string, string>[], acks: 0, leads: [] as Record<string, string>[] };
 let previewImage: Buffer;
 
 function page(transport: "poll" | "sse") {
@@ -164,7 +181,9 @@ async function route(req: IncomingMessage): Promise<Response> {
   }
   if (path === "/apps/tryora/assistant/config") {
     const transport = (req.headers.referer ?? "").includes("/sse") ? "sse" : "poll";
-    return json({ enabled: true, configured: true, providerReady: true, greeting: "Hi, how can I help today?", shop: SHOP, defaultView: "side", transport, launcher: { label: "Room Assistant", position: "bottom-right", colour: "#6f7046" } });
+    const lead = (req.headers.referer ?? "").includes("lead=1")
+      ? { lead: { mode: "required", timing: "before", showOptIn: true, optInWording: "Email me offers and updates from Demo Furniture." }, previewsAvailable: true } : {};
+    return json({ enabled: true, configured: true, providerReady: true, greeting: "Hi, how can I help today?", shop: SHOP, defaultView: "side", transport, ...lead, launcher: { label: "Room Assistant", position: "bottom-right", colour: "#6f7046" } });
   }
   const request = await webRequest(req);
   try {
@@ -185,6 +204,14 @@ async function route(req: IncomingMessage): Promise<Response> {
     }
     if (path === "/apps/tryora/preview/job1") return json({ stage: "ready", image: `data:image/jpeg;base64,${previewImage.toString("base64")}`, token: "tok", expiresAt: Date.now() + 60_000 });
     if (path === "/apps/tryora/ack") { seen.acks += 1; return json({ ok: true }); }
+    if (path === "/apps/tryora/lead") {
+      const form = await request.formData();
+      const fields = Object.fromEntries([...form.entries()].map(([key, value]) => [key, String(value)]));
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email ?? "")) return json({ error: "BAD_EMAIL" }, 400);
+      seen.leads.push(fields);
+      return json({ ok: true });
+    }
+    if (path === "/apps/tryora/assistant/options") return json(await productOptionsForAssistant(admin, SHOP, url.searchParams.get("product") ?? ""));
   } catch (error: any) {
     if (process.env.TRYORA_E2E_DEBUG) console.error("harness", path, error);
     return json({ error: error?.code ?? "UNEXPECTED" }, 400);
@@ -342,6 +369,53 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     expect(start.photo).toMatch(/^blob:\d+$/);
     await expect.poll(() => seen.acks).toBe(1);
     await shot(page, "06-preview-in-chat");
+    await context.close();
+  }, 90_000);
+
+  it("desktop: in-card fabric/colour selection and the in-chat email step lead to a delivered preview", async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error: Error) => errors.push(error.message));
+    const startsBefore = seen.previewStarts.length;
+    await page.goto(`${origin}/?lead=1`);
+    await page.locator(".tryora-assistant-launch").click();
+    await page.locator(".tryora-assistant__panel").waitFor();
+    const room = await sharp({ create: { width: 1200, height: 900, channels: 3, background: "#e8e2d6" } }).jpeg().toBuffer();
+    await page.setInputFiles("[data-ta-file='upload']", { name: "bedroom.jpg", mimeType: "image/jpeg", buffer: room });
+    await page.locator("[data-ta-attachment] img").waitFor();
+    await page.fill("textarea", "Which bed would look best in this room?");
+    await page.click("[data-ta='send']");
+    await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
+    const ariaCard = page.locator(".tryora-assistant__card", { hasText: "Aria Upholstered Bed" });
+    await ariaCard.waitFor();
+    // Change the exact option on the card: real Shopify variants, swatches from the product page's model.
+    await ariaCard.locator("[data-ta='options']").click();
+    await ariaCard.locator(".tryora-assistant__swatch[data-value='Cream']").waitFor();
+    await settled(page);
+    await shot(page, "09-card-options");
+    await ariaCard.locator(".tryora-assistant__swatch[data-value='Cream']").click();
+    await expect.poll(() => ariaCard.locator(".tryora-assistant__tags").first().textContent()).toContain("Colour: Cream");
+    await ariaCard.locator("[data-ta='preview']").click();
+    // The store requires an email first: one inline form, then the preview continues.
+    const form = page.locator(".tryora-assistant__lead");
+    await form.waitFor();
+    await ariaCard.locator("[data-ta='preview']").click();
+    expect(await page.locator(".tryora-assistant__lead").count()).toBe(1);
+    expect(seen.previewStarts.length).toBe(startsBefore);
+    await form.locator("input[name='ta-lead-email']").fill("shopper@example.com");
+    await form.locator("input[name='ta-lead-marketing']").check();
+    await settled(page);
+    await shot(page, "10-email-step");
+    await form.locator("[data-ta='lead-submit']").click();
+    await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
+    expect(seen.leads).toEqual([expect.objectContaining({ email: "shopper@example.com", marketing: "1", product: aria.id, option: "Cream" })]);
+    const cream = aria.variants.find((variant) => variant.selectedOptions[0]!.value === "Cream")!;
+    expect(seen.previewStarts.at(-1)).toMatchObject({ product: aria.id, option: "Cream", variant: cream.id, leadDone: "1" });
+    await expect.poll(() => seen.acks).toBeGreaterThan(0);
+    await settled(page);
+    await shot(page, "11-preview-after-email");
+    expect(errors).toEqual([]);
     await context.close();
   }, 90_000);
 
