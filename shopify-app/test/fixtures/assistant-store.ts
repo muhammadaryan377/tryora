@@ -1,3 +1,5 @@
+import { requestedQueryCost, SHOPIFY_MAX_QUERY_COST } from "./query-cost";
+
 /**
  * A simulated Shopify Admin GraphQL endpoint for Room Assistant tests: realistic furniture catalogues, cursor
  * pagination, product search, variant paging, shop policies, optional latency and per-query call counts.
@@ -139,10 +141,13 @@ export interface FixtureShop {
   contactEmail?: string;
   policies?: { type: string; title: string; url: string; body: string }[];
   pages?: { title: string; handle: string; body: string; isPublished: boolean }[] | "denied";
+  scopes?: string[];
 }
 
 /** Shopify-like search: any OR'd word appearing in title, type, tags or option values. */
 function shopifySearch(products: FixtureProduct[], query: string, relevance: boolean) {
+  const handle = query.match(/handle:([a-z0-9-]+)/i)?.[1];
+  if (handle) return products.filter((product) => product.handle === handle);
   const words = query.replace(/^status:active( AND )?/, "").replace(/[()]/g, " ").split(/\s+OR\s+|\s+/).map((word) => word.trim().toLowerCase()).filter(Boolean);
   if (!words.length) return products;
   const scored = products.map((product) => {
@@ -153,14 +158,26 @@ function shopifySearch(products: FixtureProduct[], query: string, relevance: boo
   return scored.map((entry) => entry.product);
 }
 
-export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {}, options: { latencyMs?: number; throttleFirst?: boolean; fail?: (query: string) => boolean } = {}) {
+export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {}, options: { latencyMs?: number; throttleFirst?: boolean; fail?: (query: string) => boolean; failCode?: string } = {}) {
   const calls: Record<string, number> = {};
   let throttled = !options.throttleFirst;
   const graphql = async (query: string, init?: { variables?: Record<string, unknown> }) => {
     const name = query.match(/query (\w+)/)?.[1] ?? "unknown";
     calls[name] = (calls[name] ?? 0) + 1;
     if (options.latencyMs) await new Promise((resolve) => setTimeout(resolve, options.latencyMs));
-    if (options.fail?.(name)) return Response.json({ errors: [{ message: "Internal error" }] }, { status: 500 });
+    if (options.fail?.(name)) {
+      return options.failCode
+        ? Response.json({ errors: [{ message: "Failed", extensions: { code: options.failCode } }] })
+        : Response.json({ errors: [{ message: "Internal error" }] }, { status: 500 });
+    }
+    // Like Shopify, refuse any query whose requested cost exceeds the single-query limit before running it.
+    const cost = requestedQueryCost(query, init?.variables ?? {});
+    if (cost > SHOPIFY_MAX_QUERY_COST) {
+      return Response.json({
+        errors: [{ message: `Query cost is ${cost}, which exceeds the single query max cost limit (${SHOPIFY_MAX_QUERY_COST}).`, extensions: { code: "MAX_COST_EXCEEDED", cost, maxCost: SHOPIFY_MAX_QUERY_COST } }],
+        extensions: { cost: { requestedQueryCost: cost } },
+      });
+    }
     if (!throttled) {
       throttled = true;
       return Response.json({ errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }] });
@@ -169,13 +186,22 @@ export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {},
     const visible = products.filter((product) => product.status === "ACTIVE");
     if (name === "TryoraAssistantCatalogue") {
       const pool = shopifySearch(visible, String(vars.query ?? "status:active"), vars.sortKey === "RELEVANCE");
+      const size = Number(query.match(/products\(first: (\d+)/)?.[1] ?? 20);
+      const variantSize = Number(query.match(/variants\(first: (\d+)/)?.[1] ?? 20);
       const start = vars.after ? Number(vars.after) : 0;
-      const page = pool.slice(start, start + 20);
-      const next = start + 20 < pool.length ? String(start + 20) : null;
+      const page = pool.slice(start, start + size);
+      const next = start + size < pool.length ? String(start + size) : null;
       return Response.json({ data: { products: {
-        nodes: page.map((product) => productNode(product, product.variants.slice(0, 20), product.variants.length > 20, null)),
+        nodes: page.map((product) => productNode(product, product.variants.slice(0, variantSize), product.variants.length > variantSize, null)),
         pageInfo: { hasNextPage: !!next, endCursor: next },
       } } });
+    }
+    if (name === "TryoraAssistantCount") {
+      const pool = vars.query ? shopifySearch(visible, String(vars.query), false) : products;
+      return Response.json({ data: { productsCount: { count: pool.length, precision: "EXACT" } } });
+    }
+    if (name === "TryoraAssistantScopes") {
+      return Response.json({ data: { currentAppInstallation: { accessScopes: (shop.scopes ?? ["read_orders", "write_products"]).map((handle) => ({ handle })) } } });
     }
     if (name === "TryoraAssistantProductDetail") {
       const product = products.find((entry) => entry.id === vars.id);

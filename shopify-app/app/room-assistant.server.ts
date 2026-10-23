@@ -9,11 +9,16 @@ import { normaliseImage } from "./preview-images.server";
 import { loadProviderSetting } from "./customization/provider-config.server";
 import { providerAdapter, resolveConfiguredPreview } from "./customization/registry.server";
 import {
+  adminQuery,
+  countCatalogue,
   getCatalogue,
   getProductDetails,
   isRef,
   liveSearch,
+  PRODUCT_COUNT_QUERY,
   searchCatalogue,
+  shopifySearchWords,
+  snapshotFrom,
   ShopifyBudget,
   variantsMatching,
   type CacheState,
@@ -262,6 +267,22 @@ export const ASSISTANT_TOOLS = [
   },
   {
     type: "function",
+    name: "count_products",
+    description: "Count how many products this store sells that match a furniture type or keywords. Use it for every 'how many…' or 'do you sell/have any…' question. Search results are capped at a few items and never show the total.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Furniture type or keywords, e.g. 'bed' or 'corner sofa'." },
+        colour: nullableString("Colour filter, or null."),
+        material: nullableString("Material or fabric filter, or null."),
+      },
+      required: ["query", "colour", "material"],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
+    type: "function",
     name: "get_product_details",
     description: "Read fresh, exact details for up to three products: every variant with options, price and availability, plus materials and dimensions where the merchant provides them. Use before answering about a specific product, size or colour, or about an earlier recommendation.",
     parameters: {
@@ -425,6 +446,12 @@ export function parseToolArguments(name: string, raw: string): any {
         material: argNullableString(args.material, 60, "material"),
       };
     }
+    case "count_products":
+      return {
+        query: argString(args.query, 200, "query"),
+        colour: argNullableString(args.colour, 60, "colour"),
+        material: argNullableString(args.material, 60, "material"),
+      };
     case "search_store_info":
       return { query: argString(args.query, 200, "query") };
     case "list_collections":
@@ -478,6 +505,10 @@ interface RequestContext {
   visualise: AssistantRecommendation | null;
   room: RoomObservations | null;
   preferences: ShopperPreferences | null;
+  /** The product page the shopper is on, read fresh from Shopify (null if unknown or unverifiable). */
+  currentProduct: CatalogueProduct | null;
+  /** True only when a complete catalogue check proved that nothing matched. Gates any "the store has none" claim. */
+  zeroVerified: boolean;
 }
 
 const priceKey = (value: number | string) => Number(value).toFixed(2);
@@ -524,33 +555,96 @@ const STORE_UNAVAILABLE = {
   instruction: "Tell the shopper the store's product information is temporarily unavailable and to try again shortly. Do not say the store has no matching products.",
 };
 
-async function runSearch(ctx: RequestContext, query: ProductQuery) {
-  const pools: CatalogueSnapshot[] = [];
-  if (ctx.snapshot) pools.push(ctx.snapshot);
-  // Hybrid: when the cached index is cold or capped, Shopify's own search covers the rest of the catalogue.
-  if (!ctx.snapshot?.complete) {
-    try { pools.push(await liveSearch(ctx.admin, ctx.shopId, query, ctx.budget)); }
-    catch (error) {
-      // Without any catalogue data an empty result would be a false "no products" answer.
-      if (!ctx.snapshot) return STORE_UNAVAILABLE;
-    }
-  }
+function merged(pools: CatalogueSnapshot[], query: ProductQuery, currentProductId?: string) {
   const byRef = new Map<string, ProductMatch>();
   for (const pool of pools) {
-    for (const match of searchCatalogue(pool, query, ctx.currentProductId)) {
+    for (const match of searchCatalogue(pool, query, currentProductId)) {
       if (!byRef.has(match.product.ref) || byRef.get(match.product.ref)!.score < match.score) byRef.set(match.product.ref, match);
     }
   }
-  const matches = [...byRef.values()].sort((a, b) => b.score - a.score).slice(0, query.limit);
+  return [...byRef.values()].sort((a, b) => b.score - a.score).slice(0, query.limit);
+}
+
+async function runSearch(ctx: RequestContext, query: ProductQuery) {
+  const pools: CatalogueSnapshot[] = [];
+  if (ctx.snapshot) pools.push(ctx.snapshot);
+  let liveFailed = false;
+  // Hybrid: when the cached index is cold or capped, Shopify's own search covers the rest of the catalogue.
+  if (!ctx.snapshot?.complete) {
+    try { pools.push(await liveSearch(ctx.admin, ctx.shopId, query, ctx.budget)); }
+    catch { liveFailed = true; }
+  }
+  // The product page the shopper is on is verified store data, even when the catalogue is unavailable.
+  if (ctx.currentProduct) pools.push(snapshotFrom(ctx.shopId, [ctx.currentProduct], false));
+  if (!pools.length) return STORE_UNAVAILABLE;
+  const complete = !!ctx.snapshot?.complete;
+  const coverage =
+    complete ? "searched every product published to the online store"
+      : liveFailed && !ctx.snapshot ? "catalogue unavailable; only the product the shopper is viewing was checked"
+        : liveFailed ? "searched a partial index only; Shopify search was unavailable"
+          : ctx.snapshot ? "searched a partial index plus Shopify's own search"
+            : "searched with Shopify's own search only";
+  const matches = merged(pools, query, ctx.currentProductId);
   matches.forEach((match) => ctx.allowed.add(match.product.ref));
+  if (matches.length) {
+    return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete } };
+  }
+  // Nothing met every filter. Look for products of the right kind before anyone concludes the store has none.
+  const relaxed = merged(pools, { ...query, colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: null, availableOnly: false, limit: 6 }, ctx.currentProductId);
+  relaxed.forEach((match) => ctx.allowed.add(match.product.ref));
+  if (relaxed.length) {
+    return {
+      results: [],
+      relatedProducts: relaxed.map((match) => summary(match, ctx)),
+      catalogue: { coverage, complete },
+      note: "No product met every requested filter (colour, size, material, budget or in-stock), but these products of the requested kind exist. The store does sell them: say which filter was not met and offer them. Use get_product_details to confirm stock.",
+    };
+  }
+  if (complete && !liveFailed) {
+    ctx.zeroVerified = true;
+    return { results: [], catalogue: { coverage, complete }, note: "Every published product was checked and none matched. You may say the store does not currently list this." };
+  }
   return {
-    results: matches.map((match) => summary(match, ctx)),
-    catalogue: {
-      searchedAllPublishedProducts: !!ctx.snapshot?.complete,
-      indexedProducts: ctx.snapshot?.products.length ?? 0,
-    },
-    note: matches.length ? undefined : "No published product matched. Say so plainly and offer a broader search.",
+    results: [],
+    catalogue: { coverage, complete },
+    note: "Nothing matched, but the full catalogue could not be checked. Do not say the store has none. Say you couldn't find a match right now and suggest rephrasing, browsing collections or contacting the store.",
   };
+}
+
+async function runCount(ctx: RequestContext, args: { query: string; colour: string | null; material: string | null }) {
+  if (ctx.snapshot?.complete) {
+    const matches = countCatalogue(ctx.snapshot, args);
+    if (!matches.length) ctx.zeroVerified = true;
+    matches.slice(0, 5).forEach((product) => ctx.allowed.add(product.ref));
+    return {
+      verified: true,
+      count: matches.length,
+      basis: `Counted across all ${ctx.snapshot.products.length} products published to the online store.`,
+      examples: matches.slice(0, 5).map((product) => ({ productRef: product.ref, title: product.title })),
+      note: "Stock varies by variant; use get_product_details before saying a product is available to buy.",
+    };
+  }
+  const words = shopifySearchWords([args.query, args.colour, args.material].filter(Boolean).join(" "));
+  const search = words.length ? `status:active AND (${words.join(" OR ")})` : "status:active";
+  try {
+    const data = await adminQuery(ctx.admin, PRODUCT_COUNT_QUERY, { query: search }, "product_count", ctx.budget);
+    const count = Number(data.productsCount?.count);
+    if (!Number.isFinite(count)) throw new Error("count");
+    const precision = String(data.productsCount?.precision ?? "EXACT");
+    if (count === 0 && precision === "EXACT" && words.length) ctx.zeroVerified = true;
+    return {
+      verified: true,
+      count,
+      precision,
+      basis: `Shopify count of active products matching: ${words.join(", ") || "all"}. It can include products not shown on the online store.`,
+      note: precision === "EXACT" ? undefined : `At least ${count}.`,
+    };
+  } catch {
+    return {
+      verified: false,
+      instruction: "The count could not be verified right now. Say you couldn't check; do not state a number and do not say the store has none.",
+    };
+  }
 }
 
 function knownRef(ctx: RequestContext, ref: string) {
@@ -688,6 +782,7 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
   switch (name as ToolName) {
     case "search_products": ctx.emit({ type: "status", stage: "searching_products" }); return runSearch(ctx, args);
     case "get_product_details": ctx.emit({ type: "status", stage: "checking_variants" }); return runDetails(ctx, args);
+    case "count_products": ctx.emit({ type: "status", stage: "searching_products" }); return runCount(ctx, args);
     case "search_store_info": ctx.emit({ type: "status", stage: "reading_store_info" }); return runStoreInfo(ctx, args);
     case "list_collections": return runCollections(ctx);
     case "recommend_products": ctx.emit({ type: "status", stage: "preparing_recommendations" }); return runRecommend(ctx, args);
@@ -823,6 +918,28 @@ export function sanitiseMessage(text: string, allowedPrices: Set<string>, shoppe
   return { message: clean.trim().slice(0, MAX_MESSAGE_OUTPUT), removed };
 }
 
+const ABSENCE_NOUNS = String.raw`(?:beds?|sofas?|couch(?:es)?|settees?|products?|items?|furniture|chairs?|armchairs?|tables?|wardrobes?|rugs?|mattress(?:es)?|headboards?|ottomans?|stock)`;
+/**
+ * Statements that the store has none of something ("does not have any beds", "there are no sofas available").
+ * Narrowly scoped to product nouns so policy sentences such as "there is no delivery charge" are untouched.
+ */
+const ABSENCE_CLAIM = new RegExp(String.raw`\b(?:(?:does\s+not|doesn['’]t|do\s+not|don['’]t)\s+(?:currently\s+)?(?:have|sell|stock|carry|offer)\s+any|(?:has|have|sells?|stocks?|carr(?:y|ies)|offers?)\s+no|there\s+(?:are|is)\s+(?:no|not\s+any)|there\s+aren['’]t\s+any|(?:currently|unfortunately),?\s+no)\s+(?:[\w-]+\s+){0,3}?${ABSENCE_NOUNS}\b`, "i");
+
+/**
+ * Removes "the store has none" sentences when no complete catalogue check proved it. Such claims are what a failed
+ * or partial catalogue lookup produces, and they are exactly what must never reach a shopper unverified.
+ */
+export function guardAbsenceClaims(message: string, current: Pick<CatalogueProduct, "title"> | null) {
+  let replaced = 0;
+  const sentences = message.split(/(?<=[.!?])\s+/);
+  const kept = sentences.map((sentence) => {
+    if (!ABSENCE_CLAIM.test(sentence)) return sentence;
+    replaced += 1;
+    return replaced > 1 ? "" : `I couldn't verify the store's full range just now, so I can't say it has none.${current ? ` You're viewing the ${current.title}, which this store sells.` : ""}`;
+  }).filter(Boolean);
+  return { message: kept.join(" ").trim(), replaced };
+}
+
 // ---------- model ----------
 
 let clientOverride: (() => OpenAI) | null = null;
@@ -848,6 +965,8 @@ Grounding:
 - Set variantRef only when that exact variant matches the request; otherwise null, and say the shopper can choose options on the product page.
 - "Available to buy" and "AI room preview" are different things. A product without AI preview is still sold by the store.
 - If a tool says store data is temporarily unavailable, say so; never claim the store has no matching products in that case.
+- Never say the store has none of something unless count_products or search_products explicitly says the full catalogue was checked and nothing matched. Search results are capped at a few items: never infer totals or absence from them. Use count_products for "how many" and "do you have any" questions.
+- The product the shopper is viewing is sold by this store. When they ask about its category, include it.
 - Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. Otherwise say the store has not published it and suggest contacting the store.
 - You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or the store's contact details.
 Conversation:
@@ -867,8 +986,17 @@ function contextMessage(ctx: RequestContext, shown: ShownRecommendation[], room:
     const detail = variant ? ` (${Object.entries(variant.options).map(([name, value]) => `${name}: ${value}`).join(", ")})` : "";
     return `productRef ${entry.productRef}${entry.variantRef ? `, variantRef ${entry.variantRef}` : ""}${product ? ` "${product.title}"${detail}` : ""}`;
   };
-  const current = ctx.currentProductId ? ctx.snapshot?.byRef.get(ctx.currentProductId.split("/").pop() ?? "") : undefined;
-  if (current) lines.push(`The shopper is viewing productRef ${current.ref}: "${current.title}".`);
+  const current = ctx.currentProduct;
+  if (current) {
+    const available = current.variants.filter((variant) => variant.available).length;
+    const stock = current.variantsComplete
+      ? (available ? `${available} of ${current.variantCount} variants available to buy` : "currently sold out in every variant")
+      : "stock not fully checked";
+    const kind = [current.productType, current.category].filter(Boolean).join("; ");
+    lines.push(`The shopper is viewing a product this store sells (verified from Shopify): productRef ${current.ref}, "${current.title}"${kind ? ` (${kind})` : ""}, price ${priceText(current)} ${current.currencyCode}, ${stock}, AI room preview ${ctx.previewProducts.has(current.id) ? "configured" : "not offered"}.`);
+  } else if (ctx.currentProductId) {
+    lines.push(`The shopper is viewing productRef ${ctx.currentProductId.split("/").pop()}, but its details could not be verified right now.`);
+  }
   if (shown.length) {
     lines.push("Recommendations already shown in this chat, in order:");
     shown.forEach((entry, index) => lines.push(`${index + 1}. ${describe(entry)}`));
@@ -977,7 +1105,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     ? input.currentProductId : undefined;
   emit({ type: "status", stage: input.roomPhoto ? "analysing_room" : "understanding" });
 
-  const [settings, catalogue, previewRows] = await Promise.all([
+  const [settings, catalogue, previewRows, current] = await Promise.all([
     input.settings ?? storeSettings(input.shopId),
     getCatalogue(input.admin, input.shopId, CATALOGUE_WAIT_MS),
     prisma.productPreviewConfig.findMany({
@@ -985,6 +1113,9 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
       select: { productId: true },
       take: 5000,
     }),
+    currentProductId
+      ? getProductDetails(input.admin, [currentProductId.split("/").pop()!], new ShopifyBudget(3)).then((found) => [...found.values()][0] ?? null, () => null)
+      : Promise.resolve(null),
   ]);
   const ctx: RequestContext = {
     admin: input.admin,
@@ -1004,8 +1135,14 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     visualise: null,
     room: null,
     preferences: null,
+    currentProduct: current,
+    zeroVerified: false,
   };
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
+  if (current) {
+    ctx.fresh.set(current.ref, current);
+    notePrices(ctx, current.minPrice, current.maxPrice, ...current.variants.map((variant) => variant.price));
+  }
 
   const latest = history.at(-1)!;
   const content: any[] = [{ type: "input_text", text: latest.content }];
@@ -1122,8 +1259,11 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     throw new TryoraError("PROVIDER_UNAVAILABLE");
   }
   const shopperText = history.filter((message) => message.role === "user").map((message) => message.content).join(" ");
-  const { message, removed } = sanitiseMessage(raw, ctx.prices, shopperText);
-  if (removed) logAssistant("model_parse_failure", { shop: input.shopId, reason: "unverified_price_removed", products: removed });
+  const priced = sanitiseMessage(raw, ctx.prices, shopperText);
+  if (priced.removed) logAssistant("model_parse_failure", { shop: input.shopId, reason: "unverified_price_removed", products: priced.removed });
+  const guarded = ctx.zeroVerified ? { message: priced.message, replaced: 0 } : guardAbsenceClaims(priced.message, ctx.currentProduct);
+  if (guarded.replaced) logAssistant("model_parse_failure", { shop: input.shopId, reason: "unverified_absence_claim_removed", products: guarded.replaced });
+  const message = guarded.message;
   const reply: AssistantReply = {
     message,
     room: ctx.room,

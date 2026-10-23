@@ -214,7 +214,7 @@ describe("store-wide grounding", () => {
     const [found] = toolOutputs(requests, "call-search_products");
     expect(found.results.map((entry: any) => entry.title)).toEqual(["Oslo Couch"]);
     expect(found.results[0].aiRoomPreview).toBe("not offered");
-    expect(found.catalogue.searchedAllPublishedProducts).toBe(true);
+    expect(found.catalogue).toEqual({ coverage: "searched every product published to the online store", complete: true });
     expect(reply.recommendations).toEqual([expect.objectContaining({
       productId: oslo.id, variantId: gray.id, price: "899.00", purchaseAvailable: true, previewAvailable: false, previewStatus: "not_configured",
       url: `/products/${oslo.handle}?variant=${ref(gray.id)}`,
