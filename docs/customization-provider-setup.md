@@ -1,5 +1,6 @@
 # Provider foundation: installation and merchant setup
 
+> **Update (Cloudlift native-linked branch):** Cloudlift may now be selected on a single product with a reviewed exact native-variant mapping, following [cloudlift-native-linked.md](cloudlift-native-linked.md). Unmapped Cloudlift-only custom properties and external image libraries remain unsupported. The provider feature flag, additive table and real-store verification gates below are still mandatory.\n\n
 ## Release gate
 
 This implementation is local and opt-in. No database migration or production
