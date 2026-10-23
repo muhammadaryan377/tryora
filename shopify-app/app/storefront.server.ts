@@ -283,6 +283,7 @@ export async function startPreview(input: {
   shopId: string;
   productId: string;
   optionValue: string;
+  variantId?: string;
   visitorId: string;
   idempotencyKey: string;
   leadStepDone: boolean;
@@ -293,7 +294,7 @@ export async function startPreview(input: {
   await cleanupStalePreviews();
   if (!input.idempotencyKey || input.idempotencyKey.length > 128) throw new TryoraError("BAD_REQUEST");
   const config = await configuredProduct(input.shopId, input.productId);
-  const product = await resolvePreviewProduct(input.admin, config, input.optionValue);
+  const product = await resolvePreviewProduct(input.admin, config, input.optionValue, input.variantId);
   const room = await normaliseImage(input.room);
   const analysisSignal = AbortSignal.timeout(30_000);
   const analysis = await measured(input.shopId, undefined, "generation_photo_check", () => abortable(analysisSignal, () => provider.analyseRoom(room, product.referenceAngle, {
