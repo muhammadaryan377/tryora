@@ -1,18 +1,24 @@
 {% comment %}
-  Tryora app embed. Turn on in Theme settings > App embeds. Loads only on product pages.
-  Which products are live, the style and how the button looks are all set in the Tryora app.
+  Tryora app embed. Turn on in Theme settings > App embeds.
+  Product previews remain product-scoped; the merchant can enable the room assistant on supported page types.
 {% endcomment %}
-{% if product %}
-  <div
-    id="tryora-root"
-    hidden
+<div
+  id="tryora-root"
+  hidden
+  data-page-type="{{ request.page_type | escape }}"
+  {% if product %}
     data-product-id="{{ product.id }}"
+    data-product-handle="{{ product.handle | escape }}"
     data-option-names="{{ product.options | json | escape }}"
     data-variant-options="{{ product.selected_or_first_available_variant.options | json | escape }}"
-  ></div>
-  {{ 'tryora.css' | asset_url | stylesheet_tag }}
-  <script src="{{ 'tryora.js' | asset_url }}" defer></script>
-{% endif %}
+  {% endif %}
+  {% if collection %}
+    data-collection-id="{{ collection.id }}"
+    data-collection-handle="{{ collection.handle | escape }}"
+  {% endif %}
+></div>
+{{ 'tryora.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'tryora.js' | asset_url }}" defer></script>
 
 {% schema %}
 {

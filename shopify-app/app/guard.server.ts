@@ -44,3 +44,12 @@ export async function guardPreview(shopId: string, visitorId: string) {
     throw new TryoraError("RATE_LIMITED", "Unusual burst");
   }
 }
+
+/** Assistant messages can call a paid model but never reserve or consume preview credits. */
+export function guardAssistant(shopId: string, visitorId: string) {
+  if (!VISITOR.test(visitorId)) throw new TryoraError("RATE_LIMITED", "Missing visitor");
+  if (!hit(`assistant-visitor:${shopId}:${visitorId}`, 20, 10 * 60_000) ||
+      !hit(`assistant-shop:${shopId}`, 200, 10 * 60_000)) {
+    throw new TryoraError("RATE_LIMITED");
+  }
+}

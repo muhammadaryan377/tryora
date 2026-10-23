@@ -22,6 +22,7 @@ export default function App() {
         <s-link href="/app/products">Products</s-link>
         <s-link href="/app/customization">Customization providers</s-link>
         <s-link href="/app/appearance">Appearance</s-link>
+        <s-link href="/app/assistant">Room assistant</s-link>
         <s-link href="/app/leads">Leads &amp; offers</s-link>
         <s-link href="/app/limits">Shopper limits</s-link>
         <s-link href="/app/billing">Plan &amp; credits</s-link>

@@ -19,6 +19,7 @@ import { launchersToRender, type LauncherSettings } from "../../core/src/launche
 import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
+import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig } from "./assistant.js";
 
 interface VariantChoice {
   id: string;
@@ -993,32 +994,57 @@ function variantPicker(): HTMLElement | null {
 async function boot() {
   const root = document.getElementById("tryora-root");
   const productId = root?.dataset.productId;
-  if (!root || !productId) return;
-  let cfg: Config;
-  try {
-    const res = await fetch(`${PROXY}/config?product=${encodeURIComponent(productId)}`, { credentials: "same-origin" });
-    cfg = await res.json();
-  } catch {
-    return;
+  if (!root) return;
+  const assistantConfigPromise = fetchAssistantConfig(root);
+  let cfg: Config | null = null;
+  if (productId) {
+    try {
+      const res = await fetch(`${PROXY}/config?product=${encodeURIComponent(productId)}`, { credentials: "same-origin" });
+      const body = await res.json();
+      if (body.enabled) cfg = body as Config;
+    } catch { /* The room assistant may still work away from preview-enabled products. */ }
   }
-  if (!cfg.enabled) return;
 
   let popup: Tryora | null = null;
-  const open = () => {
-    popup ??= new Tryora(cfg);
+  const open = cfg ? () => {
+    popup ??= new Tryora(cfg!);
     popup.open();
-  };
-  (window as any).Tryora = { open };
+  } : undefined;
+  if (open) (window as any).Tryora = { open };
 
   // The merchant's own buttons: link to #tryora or add data-tryora.
-  document.addEventListener("click", (e) => {
-    const el = (e.target as HTMLElement).closest('a[href="#tryora"], [data-tryora]');
-    if (el && !el.classList.contains("tryora-launch")) {
-      e.preventDefault();
-      open();
-    }
-  });
-  if (location.hash === "#tryora") open();
+  if (open) {
+    document.addEventListener("click", (e) => {
+      const el = (e.target as HTMLElement).closest('a[href="#tryora"], [data-tryora]');
+      if (el && !el.classList.contains("tryora-launch")) {
+        e.preventDefault();
+        open();
+      }
+    });
+    if (location.hash === "#tryora") open();
+  }
+
+  const assistantConfig = await assistantConfigPromise;
+  if (assistantConfig?.enabled) {
+    let assistant: RoomAssistant | null = null;
+    const openAssistant = () => {
+      assistant ??= new RoomAssistant(assistantConfig, { productId, openCurrentPreview: open });
+      assistant.open();
+    };
+    (window as any).TryoraAssistant = { open: openAssistant };
+    document.addEventListener("click", (event) => {
+      const element = (event.target as HTMLElement).closest('a[href="#tryora-assistant"], [data-tryora-assistant]');
+      if (element && !element.classList.contains("tryora-assistant-launch")) {
+        event.preventDefault();
+        openAssistant();
+      }
+    });
+    document.body.appendChild(buildAssistantLauncher(assistantConfig, openAssistant));
+    if (location.hash === "#tryora-assistant") openAssistant();
+    return;
+  }
+
+  if (!cfg || !open) return;
 
   const device = isMobile() ? "mobile" : "desktop";
   const { tryora } = launchersToRender(cfg.launcher, device);
