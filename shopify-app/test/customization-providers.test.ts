@@ -52,11 +52,12 @@ describe("strict manual/composite mapping boundary", () => {
 });
 
 describe("provider registry and server authorization", () => {
-  it("registers native/manual providers and rejects unknown/Cloudlift even if marked active", async () => {
+  it("registers verified native/manual and fails closed for unavailable Cloudlift", async () => {
     expect(providerAdapter("shopify_native").capabilities.authorization).toBe(true);
     expect(providerAdapter("manual_mapping").capabilities.authorization).toBe(true);
     for (const id of ["cloudlift", "unsupported", "unknown"] ) {
       const { context, graphql } = providerFixture(); context.setting.providerId = id;
+      if (id === "cloudlift") context.setting.active = false;
       expect((await providerAdapter(id).discover(context, { shopId, productId })).status).toBe("unsupported");
       await expect(resolveConfiguredPreview(context, grey, "gid://shopify/ProductVariant/12", "revision-1")).rejects.toMatchObject({ code: "BAD_REQUEST" });
       expect((await providerAdapter("shopify_native").validate(context, { scope: { shopId, productId }, revision: "revision-1",
@@ -77,7 +78,7 @@ describe("provider registry and server authorization", () => {
     expect(result.description).toContain("Tall");
     expect(result.optionValue).toBe("Velvet / Grey");
   });
-  it.each(["shopify_native", "manual_mapping"])("round-trips discovered combination IDs through the %s adapter contract", async (id) => {
+  it.each(["shopify_native", "manual_mapping", "cloudlift"])("round-trips discovered combination IDs through the %s adapter contract", async (id) => {
     const { context } = providerFixture(); context.setting.providerId = id;
     const adapter = providerAdapter(id);
     const result = await adapter.discover(context, { shopId, productId });
@@ -110,6 +111,18 @@ describe("provider registry and server authorization", () => {
     if (reason === "merchant-off") context.config.choices = [{ optionValue: "Velvet", available: false }] as any;
     await expect(resolveConfiguredPreview(context, option, id, revision)).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
+  it("Cloudlift refuses store defaults and stale or absent reviewed product mappings", async () => {
+    const { context } = providerFixture();
+    context.setting.providerId = "cloudlift";
+    context.setting.productId = "__store__";
+    await expect(resolveConfiguredPreview(context, grey, "gid://shopify/ProductVariant/12", "revision-1"))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    context.setting.productId = productId;
+    context.setting.mapping = null;
+    await expect(resolveConfiguredPreview(context, grey, "gid://shopify/ProductVariant/12", "revision-1"))
+      .rejects.toMatchObject({ code: "BAD_REQUEST" });
+  });
+
   it("uses availableForSale and refuses a missing reference after activation", async () => {
     const { context, variants, media } = providerFixture();
     variants[1]!.availableForSale = false;
@@ -133,7 +146,8 @@ describe("provider registry and server authorization", () => {
     expect(effectiveSetting(shopId, productId, rows).providerId).toBe("manual_mapping");
     vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "false");
     expect((await loadProviderSetting(shopId, productId)).providerId).toBe("shopify_native");
-    expect(providerSummary("cloudlift", true).status).toContain("Needs setup");
+    expect(providerSummary("cloudlift", false).status).toContain("Needs setup");
+    expect(providerSummary("cloudlift", true).status).toContain("Native-linked mapping active");
   });
   it("rejects failed or stalled native pagination", async () => {
     const graphql = vi.fn(async () => Response.json({ data: { product: { id: productId, options: [],
