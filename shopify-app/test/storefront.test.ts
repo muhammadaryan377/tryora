@@ -65,7 +65,7 @@ describe("preview lifecycle", () => {
     expect((await finished(jobId)).stage).toBe("ready");
     expect(analyse).toHaveBeenCalledWith(expect.any(Uint8Array), "diagonal", { placement: "replace", setting: "outdoor", itemNoun: "chair" }, expect.any(AbortSignal));
     expect(generate.mock.calls[0]![0]).toMatchObject({ productDescription: "Garden chair\nA blue chair", optionValue: "Blue" });
-    expect(generate.mock.calls[0]![0].productReferences).toHaveLength(2);
+    expect(generate.mock.calls[0]![0].productReferences).toHaveLength(1);
     expect(check).toHaveBeenCalledOnce();
     expect(await fixture.service.getJob(jobId)).toMatchObject({ providerRequestId: "req1", costMicros: 12 });
     expect(fixture.usages.map((x) => x.stage)).toEqual(["generation_photo_check", "generation", "result_check"]);
@@ -76,6 +76,14 @@ describe("preview lifecycle", () => {
     vi.spyOn(provider, "analyseRoom").mockResolvedValue({ outcome: "unsupported", confidence: 1, costMicros: 1 });
     await expect(start()).rejects.toMatchObject({ code: "BAD_PHOTO" });
     expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
+
+  it("passes only a validated selected Shopify variant into generation", async () => {
+    await expect(start({ variantId: "invalid" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+    const generate = vi.spyOn(provider, "generate");
+    await finished((await start({ variantId: "variant" })).jobId);
+    expect(generate).toHaveBeenCalledOnce();
   });
 
   it("rejects unready products, unknown options and unavailable selections", async () => {
@@ -182,11 +190,14 @@ describe("preview lifecycle", () => {
       const more = !opts.variables.after;
       return Response.json({ data: { product: {
         title: "Chair", productType: "chair", options: [{ name: "Colour", optionValues: [{ name: "Blue" }, { name: "Red" }] }],
-        variants: { nodes: [{ availableForSale: !more, selectedOptions: [{ name: "Colour", value: more ? "Blue" : "Red" }] }], pageInfo: { hasNextPage: more, endCursor: more ? "cursor" : null } },
+        variants: { nodes: [{ id: more ? "gid://shopify/ProductVariant/1" : "gid://shopify/ProductVariant/2", availableForSale: !more, image: { url: more ? "https://cdn.shopify.com/blue.jpg" : "https://cdn.shopify.com/red.jpg" }, selectedOptions: [{ name: "Colour", value: more ? "Blue" : "Red" }] }], pageInfo: { hasNextPage: more, endCursor: more ? "cursor" : null } },
       } } });
     });
     const config = await storefrontConfig(admin, shopId, productId);
-    expect(config.enabled && config.swatches).toMatchObject([{ value: "Blue", available: false }, { value: "Red", available: true }]);
+    expect(config.enabled && config.swatches).toMatchObject([
+      { value: "Blue", available: false, variants: [] },
+      { value: "Red", available: true, variants: [{ id: "gid://shopify/ProductVariant/2", image: "https://cdn.shopify.com/red.jpg", options: { Colour: "Red" } }] },
+    ]);
     expect(admin.graphql).toHaveBeenCalledTimes(2);
   });
 

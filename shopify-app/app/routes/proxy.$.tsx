@@ -76,6 +76,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             shopId,
             productId: field("product"),
             optionValue: field("option"),
+            variantId: field("variant") || undefined,
             visitorId: field("visitor"),
             idempotencyKey: field("key"),
             leadStepDone: field("leadDone") === "1",

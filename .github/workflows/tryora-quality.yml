@@ -1,0 +1,35 @@
+name: Tryora quality checks
+
+on:
+  push:
+    branches:
+      - feat/colour-variant-selection
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install root dependencies
+        run: npm ci
+      - name: Install Shopify app dependencies
+        run: npm ci --prefix shopify-app
+      - name: Generate Prisma client
+        run: npx --prefix shopify-app prisma generate --schema shopify-app/prisma/schema.prisma
+      - name: Test
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Check generated storefront bundle
+        run: git diff --exit-code -- shopify-app/extensions/tryora-theme/assets/tryora.js
