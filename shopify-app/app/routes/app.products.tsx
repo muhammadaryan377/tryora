@@ -105,7 +105,7 @@ export default function Products() {
                   </s-table-cell>
                   <s-table-cell>
                     <s-button variant="tertiary" href={`/app/products/${encodeURIComponent(r.id.split("/").pop()!)}`}>
-                      {r.previewOptionStatus.state === "stale" ? "Review settings" : r.enabled ? "Edit" : "Set up"}
+                      {r.previewOptionStatus.warning ? "Review settings" : r.enabled ? "Edit" : "Set up"}
                     </s-button>
                   </s-table-cell>
                 </s-table-row>

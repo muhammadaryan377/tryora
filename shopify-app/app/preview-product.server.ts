@@ -41,6 +41,7 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
   const option = product.options.find((o: any) => o.name === config.visualOptionName);
   if (config.visualOptionName && !option) throw new TryoraError("NOT_FOUND");
   const model = nativeSelections(product.options, config.visualOptionName, variants);
+  if (model.issue || (config.autoConfigured && model.ambiguous)) throw new TryoraError("BAD_REQUEST");
   const selection = model.selections.find((s) => s.value === requested);
   if (model.fabricOptionName && !selection) throw new TryoraError("BAD_REQUEST");
   const values: string[] = option?.optionValues.map((v: any) => v.name) ?? [];

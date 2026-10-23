@@ -13,6 +13,12 @@ const options = [{ name: "Fabric", values: ["Velvet", "Boucle"], swatches: [] },
 beforeEach(() => { state.configs = []; });
 
 describe("admin preview mapping diagnostics", () => {
+  it("warns about ambiguous automatic discovery but preserves manual no-selector intent", () => {
+    const duplicate = [{ name: "Colour", values: ["Cream"] }, { name: "Color", values: ["Grey"] }];
+    expect(previewOptionStatus(duplicate, null).state).toBe("ambiguous");
+    expect(previewOptionStatus(duplicate, "Colour").warning).toContain("Multiple Shopify options");
+    expect(previewOptionStatus(duplicate, null, { autoConfigured: false, visualOptionName: null }).state).toBe("configured_without_selector");
+  });
   it.each(["Fabric", "Colour"])("recognizes the exact native %s mapping", (name) => {
     const result = previewOptionStatus(options, name);
     expect(result.state).toBe("mapped");
@@ -65,5 +71,15 @@ describe("admin preview mapping diagnostics", () => {
       media: [{ id: "photo", url: "https://cdn.shopify.com/bed.jpg" }] };
     expect((await productRows("test.myshopify.com", [base]))[0]?.previewOptionStatus.state).toBe("missing");
     expect((await productRows("test.myshopify.com", [{ ...base, options }]))[0]?.previewOptionStatus.state).toBe("mapped");
+  });
+
+  it("does not label an enabled stale mapping Live when its storefront preview is blocked", async () => {
+    const product: ShopProduct = { id: "bed", title: "Bed", status: "ACTIVE", productType: "Beds", options,
+      media: [{ id: "photo", url: "https://cdn.shopify.com/bed.jpg" }] };
+    state.configs = [{ productId: "bed", enabled: true, autoConfigured: false, visualOptionName: "Old Colour", referenceMediaId: "photo" }];
+    const [row] = await productRows("test.myshopify.com", [product]);
+    expect(row?.enabled).toBe(true);
+    expect(row?.readiness).toBe("needs_attention");
+    expect(state.configs[0].visualOptionName).toBe("Old Colour");
   });
 });

@@ -4,6 +4,7 @@ import { defaultPlacement, resolveSwatches, type Placement, type ResolvedSwatch 
 import { photoColour } from "./photoColour.server";
 import { autoFurnitureCategory, isAutoEligibleProduct } from "./auto-products.server";
 import { previewOptionStatus } from "./preview-option-status";
+import { discoverNativeOptions } from "./core/native-option-discovery";
 
 export interface ShopProduct {
   id: string;
@@ -196,20 +197,21 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
     const automaticallyEligible = autoEnabled && isAutoEligibleProduct(p);
     const enabled = c ? (c.autoConfigured ? automaticallyEligible : c.enabled) : automaticallyEligible;
     const referenceMediaId = c ? c.referenceMediaId : (automaticallyEligible ? p.media[0]?.id ?? null : null);
-    const visualOptionName = c ? c.visualOptionName : (p.options.find((o) => /colou?r|fabric|finish/i.test(o.name))?.name ?? null);
+    const visualOptionName = c ? c.visualOptionName : discoverNativeOptions(p.options).recommendedName;
     const swatchColours = (c?.swatchColours as Record<string, string>) ?? {};
     const resolvedSwatches = swatchesFor(p, visualOptionName, swatchColours, swatchAutoFill, (c?.photoColours as PhotoCache) ?? {});
     const r = readinessOf(enabled, referenceMediaId, p);
+    const mappingStatus = previewOptionStatus(p.options, visualOptionName, c);
     return {
       ...p,
       enabled,
-      readiness: r.readiness,
-      readinessReason: r.reason,
+      readiness: enabled && mappingStatus.warning ? "needs_attention" : r.readiness,
+      readinessReason: enabled && mappingStatus.warning ? "Review the preview option mapping." : r.reason,
       itemNoun: c?.itemNoun ?? autoFurnitureCategory(p.productType, p.title) ?? defaultNoun(p.productType, p.title),
       placement: (c?.placement as Placement) ?? defaultPlacement(p.productType || p.title),
       setting: (c?.setting as ProductRow["setting"]) ?? "indoor",
       visualOptionName,
-      previewOptionStatus: previewOptionStatus(p.options, visualOptionName, c),
+      previewOptionStatus: mappingStatus,
       referenceMediaId: referenceMediaId ?? p.media[0]?.id ?? null,
       swatchColours,
       swatchAutoFill,

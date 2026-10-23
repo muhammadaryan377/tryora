@@ -78,6 +78,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     page = variants.pageInfo;
   }
   const model = nativeSelections(p.options, config.visualOptionName, p.variants.nodes);
+  if (model.issue || (config.autoConfigured && model.ambiguous)) return { enabled: false as const };
   if (model.fabricOptionName && !model.selections.length) return { enabled: false as const };
   const variantChoice = (v: any) => ({ id: v.id as string, image: v.image?.url ?? null,
     options: Object.fromEntries(v.selectedOptions.map((o: any) => [o.name, o.value])) as Record<string, string> });

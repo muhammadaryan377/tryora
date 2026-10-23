@@ -1,4 +1,6 @@
 // GENERATED from packages/core/src by scripts/sync-core.mjs. Do not edit here.
+import { discoverNativeOptions, nativeOptionRole } from "./native-option-discovery.js";
+
 /** Native Shopify options only. App-owned properties need an explicit adapter. */
 export interface NativeOption {
   name: string;
@@ -21,8 +23,11 @@ export interface NativeSelection {
 
 export function nativeSelections(options: NativeOption[], configuredName: string | null, variants: NativeVariant[]) {
   const primary = options.find((o) => o.name === configuredName);
-  const fabric = options.find((o) => /^(?:choose\s+)?fabric(?:\s+type)?$/i.test(o.name.trim()));
-  const colour = options.find((o) => /^(?:choose\s+)?colou?r$/i.test(o.name.trim()));
+  const primaryRole = primary ? nativeOptionRole(primary.name) : null;
+  const discovery = discoverNativeOptions(options);
+  const { fabric, colour } = discovery;
+  const issue = configuredName && !primary ? "stale_mapping" :
+    primaryRole && discovery.ambiguous ? "ambiguous_mapping" : null;
   // Respect a merchant's unrelated visual option (or single-style setting).
   const dependent = !!fabric && !!colour && (primary === fabric || primary === colour);
   // Some catalogues name the native option "Colour" but supply only fabric types.
@@ -46,8 +51,8 @@ export function nativeSelections(options: NativeOption[], configuredName: string
     for (const v of primary.optionValues) selections.push({ value: v.name, label: v.name, group: null,
       options: { [primary.name]: v.name }, image: v.swatch?.image?.image?.url ?? null, colour: v.swatch?.color ?? null });
   }
-  return { selections, fabricOptionName: dependent ? fabric!.name : null,
-    selectorLabel: dependent ? colour!.name : fabricValues ? "Fabric" : configuredName,
+  return { selections, issue, ambiguous: discovery.ambiguous, fabricOptionName: dependent ? fabric!.name : null,
+    selectorLabel: dependent ? "Colour" : fabricValues || primaryRole === "fabric" ? "Fabric" : primaryRole === "colour" ? "Colour" : primaryRole === "finish" ? "Finish" : configuredName,
     optionNames: dependent ? [fabric!.name, colour!.name] : primary ? [primary.name] : [],
     optionName: dependent ? colour!.name : configuredName };
 }

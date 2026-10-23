@@ -57,6 +57,27 @@ afterEach(async () => {
 });
 
 describe("preview lifecycle", () => {
+  it("hides stale mappings and rejects generation before credit reservation or provider use", async () => {
+    fixture.config.visualOptionName = "Old Colour";
+    const analyse = vi.spyOn(provider, "analyseRoom");
+    expect(await storefrontConfig(admin, shopId, productId)).toEqual({ enabled: false });
+    await expect(start()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(analyse).not.toHaveBeenCalled();
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
+
+  it("blocks ambiguous automatic discovery without treating it as single-style", async () => {
+    fixture.config.autoConfigured = true;
+    fixture.config.visualOptionName = null;
+    // Exercise the resolver independently of the auto-config API mock.
+    const { resolvePreviewProduct } = await import("../app/preview-product.server");
+    const graphql = vi.fn(async () => Response.json({ data: { product: {
+      title: "Bed", options: ["Colour", "Color"].map((name) => ({ name, optionValues: [{ name: "Cream" }] })),
+      variants: { nodes: [], pageInfo: { hasNextPage: false } },
+    } } }));
+    await expect(resolvePreviewProduct({ graphql }, fixture.config, "__single__", "variant")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
   it("loads exact product references and context, checks results, records costs and metadata", async () => {
     const analyse = vi.spyOn(provider, "analyseRoom").mockResolvedValue({ outcome: "accepted", confidence: 1, costMicros: 3 });
     const generate = vi.spyOn(provider, "generate").mockImplementation(async (req) => ({ image: req.roomImage, mimeType: "image/jpeg", costMicros: 7, providerRequestId: "req1", model: "test" }));

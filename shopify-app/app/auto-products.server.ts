@@ -1,4 +1,5 @@
 import prisma from "./db.server";
+import { discoverNativeOptions } from "./core/native-option-discovery";
 import type { AdminGraphql } from "./preview-product.server";
 
 /** Conservative allowlist: do not expose the AI tool on non-furniture or bedding accessories. */
@@ -50,7 +51,9 @@ export async function ensureAutoProductConfig(admin: AdminGraphql, shopId: strin
   if (!isAutoEligibleProduct({ ...product, media })) return null;
   const category = autoFurnitureCategory(product.productType, product.title)!;
   const referenceMediaId = media[0]!.id as string;
-  const option = (product.options ?? []).find((o: { name: string }) => /colou?r|fabric|finish/i.test(o.name))?.name ?? null;
+  const nativeOptions = (product.options ?? []) as { name: string }[];
+  // Keep saved identities, even stale ones, for explicit merchant review.
+  const option = existing?.visualOptionName ?? discoverNativeOptions(nativeOptions).recommendedName;
 
   if (existing && existing.referenceMediaId === referenceMediaId &&
       existing.visualOptionName === option && existing.enabled && existing.readiness === "ready") return existing;

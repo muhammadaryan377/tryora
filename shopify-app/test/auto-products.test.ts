@@ -38,6 +38,18 @@ beforeEach(() => {
 });
 
 describe("automatic eligible products", () => {
+  it("discovers bounded aliases without changing a saved automatic mapping", async () => {
+    const api = admin(product({ options: [{ name: "Upholstery Fabric" }, { name: "Fabric Color" }] }));
+    expect((await ensureAutoProductConfig(api, "demo.myshopify.com", product().id))?.visualOptionName).toBe("Fabric Color");
+    state.config = { id: "saved", autoConfigured: true, visualOptionName: "Old Fabric" };
+    expect((await ensureAutoProductConfig(api, "demo.myshopify.com", product().id))?.visualOptionName).toBe("Old Fabric");
+  });
+
+  it("does not select a duplicate colour alias or a substring match", async () => {
+    const api = admin(product({ options: [{ name: "Color" }, { name: "Colour" }] }));
+    expect((await ensureAutoProductConfig(api, "demo.myshopify.com", product().id))?.visualOptionName).toBeNull();
+    expect((await ensureAutoProductConfig(admin(product({ options: [{ name: "Fabric care" }] })), "demo.myshopify.com", product().id))?.visualOptionName).toBeNull();
+  });
   it.each([
     ["Beds", "Egerie Bed", "bed"],
     ["Sofas", "3 seater sofa", "sofa"],
