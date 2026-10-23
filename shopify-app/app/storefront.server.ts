@@ -57,7 +57,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
         id title productType
         featuredMedia { preview { image { url } } }
         options { name optionValues { name swatch { color image { image { url } } } } }
-        variants(first: 250) { nodes { id availableForSale image { url(transform: { maxWidth: 160, maxHeight: 160 }) } selectedOptions { name value } } pageInfo { hasNextPage endCursor } }
+        variants(first: 250) { nodes { id availableForSale image { url(transform: { maxWidth: 800, maxHeight: 800 }) } selectedOptions { name value } } pageInfo { hasNextPage endCursor } }
       }
     }`,
     { variables: { id: gid } },
