@@ -3,8 +3,9 @@ import { discoverNativeOptions, nativeOptionRole } from "./native-option-discove
 
 /** Native Shopify options only. App-owned properties need an explicit adapter. */
 export interface NativeOption {
+  id?: string;
   name: string;
-  optionValues: { name: string; swatch?: { color?: string | null; image?: { image?: { url?: string } } } | null }[];
+  optionValues: { id?: string; name: string; swatch?: { color?: string | null; image?: { image?: { url?: string } } } | null }[];
 }
 export interface NativeVariant {
   id: string;

@@ -18,6 +18,7 @@ import {
 import { launchersToRender, type LauncherSettings } from "../../core/src/launcher.js";
 import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
+import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
 import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig } from "./assistant.js";
 
 interface VariantChoice {
@@ -52,6 +53,8 @@ interface Config {
   selectionOptionNames?: string[];
   productVariants?: VariantChoice[];
   singleVariants?: VariantChoice[];
+  providerId?: string;
+  mappingRevision?: string;
   style: { template: string; accent: string | null; useThemeFont: boolean };
   launcher: LauncherSettings;
   lead: { mode: "required" | "skippable" | "off"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
@@ -189,6 +192,27 @@ export class Tryora {
   private pageOptions: Record<string, string> = {};
   private fabric: string | null = null;
   private configurationEpoch = 0;
+  private cloudliftUnverifiedSelection = false;
+  private cloudliftExpectedNative: { name: string; value: string } | null = null;
+  private readonly cloudliftChanged = (event: Event) => {
+    if (!this.root || this.cfg.providerId !== "cloudlift") return;
+    const options = new Set((this.cfg.productVariants ?? []).flatMap((v) =>
+      Object.keys(v.options).filter((name) => !name.startsWith("__tryora_"))));
+    const signal = classifyCloudliftOption((event as CustomEvent<unknown>).detail, options);
+    if (signal.kind === "native") this.cloudliftExpectedNative = { name: signal.name, value: signal.value };
+    else this.cloudliftUnverifiedSelection = true; // External/custom option: cannot verify its image identity.
+
+    // A Cloudlift change can modify furniture appearance without changing a native variant ID.
+    // Revoke stale results and invalidate in-flight work even if the form ID is unchanged.
+    if (!this.syncPageConfiguration()) {
+      this.configurationEpoch++;
+      for (const url of this.images.values()) URL.revokeObjectURL(url);
+      this.images.clear();
+      this.state = { ...this.state, generation: null, results: {}, shownOption: null, notice: null,
+        step: !this.cfg.available ? "unavailable" : this.state.photo ? "photoReady" : "opening" };
+    }
+    this.render();
+  };
   private pageWatchTimer: ReturnType<typeof setInterval> | undefined;
   private readonly pageChangeHandler = () => { if (this.root && this.syncPageConfiguration()) this.render(); };
 
@@ -235,6 +259,10 @@ export class Tryora {
     document.documentElement.classList.add("tryora-open");
     this.root = root;
     document.addEventListener("change", this.pageChangeHandler);
+    if (this.cfg.providerId === "cloudlift") {
+      window.addEventListener("option:changed", this.cloudliftChanged);
+      window.addEventListener("options:rendered", this.pageChangeHandler);
+    }
     // Some themes change the cart-form ID programmatically without a change event.
     this.pageWatchTimer = setInterval(this.pageChangeHandler, 750);
     this.render();
@@ -245,6 +273,10 @@ export class Tryora {
   close() {
     if (!this.root) return;
     document.removeEventListener("change", this.pageChangeHandler);
+    if (this.cfg.providerId === "cloudlift") {
+      window.removeEventListener("option:changed", this.cloudliftChanged);
+      window.removeEventListener("options:rendered", this.pageChangeHandler);
+    }
     clearInterval(this.pageWatchTimer);
     this.pageWatchTimer = undefined;
     this.root.remove();
@@ -312,6 +344,11 @@ export class Tryora {
   private async generate(option: string, photoId: string) {
     this.configurationNotice = null;
     if (this.syncPageConfiguration()) { this.render(); return; }
+    if (this.cfg.providerId === "cloudlift" && (this.cloudliftUnverifiedSelection ||
+        (this.cloudliftExpectedNative && this.pageOptions[this.cloudliftExpectedNative.name] !== this.cloudliftExpectedNative.value))) {
+      this.configurationNotice = "These Cloudlift options are not linked to a verified Shopify variant. Preview is unavailable for this configuration. No credit was used.";
+      return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+    }
     const epoch = this.configurationEpoch;
     const photo = this.photos.get(photoId);
     if (!photo) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
@@ -328,6 +365,11 @@ export class Tryora {
         product: this.cfg.productId,
         option,
         variant: variant?.id ?? "",
+        mappingRevision: this.cfg.mappingRevision ?? "",
+        // The server rechecks this complete native tuple and rejects ambiguity.
+        sourceVariant: ["manual_mapping", "cloudlift"].includes(this.cfg.providerId ?? "")
+          ? nativeSourceVariantId(this.pageOptions, this.cfg.productVariants ?? []) ?? ""
+          : "",
         visitor: visitorId(),
         key: crypto.randomUUID(),
         leadDone: leadSatisfied(this.state) ? "1" : "0",

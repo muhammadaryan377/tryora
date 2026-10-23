@@ -92,6 +92,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             productId: field("product"),
             optionValue: field("option"),
             variantId: field("variant") || undefined,
+            sourceVariantId: field("sourceVariant") || undefined,
+            mappingRevision: field("mappingRevision") || undefined,
             visitorId: field("visitor"),
             idempotencyKey: field("key"),
             leadStepDone: field("leadDone") === "1",

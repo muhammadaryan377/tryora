@@ -72,6 +72,7 @@ export default function Products() {
               <s-table-header listSlot="primary">Product</s-table-header>
               <s-table-header>Type</s-table-header>
               <s-table-header>Shoppers can switch</s-table-header>
+              <s-table-header>Customization source</s-table-header>
               <s-table-header listSlot="secondary">Status</s-table-header>
               <s-table-header>Action</s-table-header>
             </s-table-header-row>
@@ -93,6 +94,11 @@ export default function Products() {
                         <s-text>{r.previewOptionStatus.warning}</s-text>
                       </s-stack>
                     )}
+                  </s-table-cell>
+                  <s-table-cell>
+                    <s-text>{r.customizationProvider.label}</s-text>
+                    <s-text color="subdued"> {r.customizationProvider.status}</s-text>
+                    <s-link href={`/app/customization?product=${encodeURIComponent(r.id)}`}>Provider settings</s-link>
                   </s-table-cell>
                   <s-table-cell>
                     <s-badge tone={STATUS[r.readiness].tone}>{STATUS[r.readiness].label}</s-badge>

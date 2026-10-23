@@ -1,5 +1,9 @@
 # Fabric and colour selector
 
+Historical initial investigation. The merchant subsequently identified Cloudlift;
+authenticated catalogue/reference coverage is still unverified. See
+`customization-integration-report.md` for the implemented opt-in provider foundation.
+
 ## Investigation (23 October 2026)
 
 Reported products:
