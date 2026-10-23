@@ -5,7 +5,12 @@ import { manualMappingAdapter } from "./adapters/manual-mapping.server";
 import type { ProviderAdapter, ProviderContext } from "./adapters/types.server";
 import { STORE_DEFAULT } from "./provider-config.server";
 
-const unsupported: ProviderAdapter = { ...cloudliftAdapter, providerId: "unsupported", label: "Other providers — not yet supported" };
+const unsupported: ProviderAdapter = {
+  providerId: "unsupported", version: "0", label: "Other providers — not yet supported",
+  capabilities: { discovery: false, selectionEvents: false, authorization: false },
+  async discover() { return { status: "unsupported", reason: "unverified_provider" }; },
+  async validate() { return { status: "rejected", reason: "unsupported" }; },
+};
 const registry = new Map<string, ProviderAdapter>([shopifyNativeAdapter, cloudliftAdapter, manualMappingAdapter, unsupported].map((a) => [a.providerId, Object.freeze({ ...a, capabilities: Object.freeze({ ...a.capabilities }) })]));
 export function providerAdapter(id: string): ProviderAdapter { return registry.get(id) ?? unsupported; }
 export function providerDiagnostic(id: string, active: boolean) {
