@@ -1,121 +1,139 @@
-# Room Assistant
+# Room Assistant 2.0
 
-The Room Assistant is an opt-in storefront chat for Shopify furniture merchants. It has three entry points: preview the current product through the existing Tryora flow, get grounded product recommendations from a room photo, and ask questions about the store's products and policies.
+The Room Assistant is an opt-in storefront chat for Shopify furniture merchants. Shoppers open a right-side drawer, ask about the store's real products and policies, attach a room photo, get verified recommendations, and preview eligible products in their room without leaving the conversation. The existing "See it in your room" product popup is unchanged and works alongside it.
 
 ## Merchant controls
 
-The assistant is disabled by default. Merchants enable and configure it from **Tryora > Room assistant**:
+The assistant is disabled by default. Merchants configure it in **Tryora > Room assistant**:
 
-- page-type visibility, plus exact product and collection exclusions (exclusions win over page types). Exclusions control where the launcher appears. They do not hide products from search.
-- greeting text, launcher label, position and colour.
-- **Store notes**: up to 8,000 characters of merchant-written facts (delivery areas, lead times, showroom, warranty). Shoppers are quoted these notes, so they must be accurate.
+- page visibility (product, collection, home, other), plus exact product and collection exclusions. Exclusions control where the launcher appears; they do not hide products from search.
+- greeting, launcher label, launcher side (left or right) and accent colour.
+- **Assistant opens as**: side panel (default) or fullscreen. Shoppers can switch at any time, and phones always use fullscreen.
+- **Store notes**: up to 8,000 characters of merchant-written facts (delivery areas, lead times, showroom, warranty) that the assistant may quote.
 
-Settings are stored in the existing `Appearance.copy` JSON object under the `assistant` key. The feature adds no Prisma models, migrations or startup database operations. Saving settings clears that shop's cached catalogue and store knowledge.
+Settings live in the existing `Appearance.copy.assistant` JSON. 2.0 adds `defaultView` with a safe default, so settings saved earlier load unchanged. There are no Prisma models, migrations or scope changes.
+
+> **Fixed in 2.0:** the settings form had no submitted field for *Store notes*, so every save stored empty notes. A regression test now checks that every setting has a form field.
 
 ## Provider configuration
 
 ```env
 OPENAI_API_KEY=...
-OPENAI_ASSISTANT_MODEL=gpt-4.1-mini
+OPENAI_ASSISTANT_MODEL=gpt-4.1-mini           # optional
 OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED=true
+TRYORA_ASSISTANT_TRANSPORT=poll               # optional: "sse" only after verifying on a real store (see Streaming)
 ```
 
-`OPENAI_ASSISTANT_MODEL` is optional and defaults to `gpt-4.1-mini`. The separate privacy acknowledgement is required because requests can send a normalised room image, bounded catalogue summaries and relevant policy sections to OpenAI. Every request uses the Responses API with `store: false`. The API key is used only on the server.
+Every model call uses the Responses API with `store: false` and `stream: true`. The API key is only used on the server.
 
-## What the assistant knows
+## Shopper experience
 
-| Source | What is used | How |
+- **Launcher:** a compact pill with a chat-and-sparkle icon and the merchant's label and colour. It has a subtle entrance and hover animation and full keyboard support (`aria-haspopup="dialog"`, `aria-expanded`). It shows a dot while a conversation is waiting (red for an unread reply). It stacks above a floating "See it in your room" button on the same side, and above Shopify Inbox or similar chat bubbles.
+- **Drawer:** 440px wide, anchored to the right with the page still visible and usable. The header has *Conversation options* (New chat, Clear conversation, Forget room), *Minimise*, *Expand to fullscreen / Restore side panel* and *Close*. Minimising or switching modes never loses the conversation, and a running answer or preview keeps going. Only fullscreen is modal (it traps focus and locks page scroll). Escape closes menus, then minimises.
+- **Mobile (≤749px):** full-screen with safe-area padding. The header and composer stay fixed and only the conversation scrolls. Controls are touch-sized and there is no horizontal overflow (verified in a real browser at 390×844).
+- **Welcome screen:** *Visualise in my room*, *Find furniture for my room* and *Ask about products*, all real actions, plus suggestion chips. On a preview-enabled product page, *Use product preview instead* opens the existing popup.
+- **Composer:** a ＋ menu with *Upload photo* and *Take photo* (camera, shown on touch devices). The photo appears as a thumbnail with Replace and Remove, with validation and preparation errors and upload progress (percentage while sending). Enter sends, and Shift+Enter starts a new line.
+- **Answers:** status steps ("Analysing your room…", "Searching store products…", "Checking variants and availability…", "Preparing recommendations…"), then the model's text appears as it is generated. Stop cancels on the server too; Retry re-sends the same question once. Model text is escaped; only bold, bullets and paragraphs are rendered.
+- **Cards:** image, options, verified price, *Available to buy* or *Currently sold out*, AI preview status, the reason, *View product*, and *See it in my room* only when the exact variant passes Tryora's preview checks.
+- Motion is subtle, and `prefers-reduced-motion` disables it.
+
+## Conversation history
+
+| Kept | Where | Limits |
 |---|---|---|
-| Products | Every **active** product **published to the Online Store**, configured for Tryora or not: title, type, Shopify category, tags, vendor, description, collections, options and values, price range and currency, featured image | Per-shop search index, cached in memory |
-| Variants | Exact options, price, compare-at price, `availableForSale`, image | Up to 20 per product in the index; **all** (up to 500) when read fresh with `get_product_details` |
-| Attributes | Only these metafields: `custom.dimensions`, `width`, `depth`, `height`, `material`, `materials`, `fabric`, `care_instructions`, `assembly`, `warranty` | Read with the product. No other metafields are read |
-| Policies | Shopify shop policies (refund, shipping, privacy, terms, contact, legal, subscription) in full | Split into sections; only relevant sections are retrieved |
-| Pages | Published Online Store pages (FAQ, About, Delivery…) | Needs the `read_online_store_pages` scope; skipped without it (see *Staging*) |
-| Merchant notes | The *Store notes* setting | Sectioned and retrieved like policies |
-| Contact | Shop name, contact email and primary domain | Always available to `search_store_info` |
-| Tryora previews | Which products have an enabled, ready preview configuration | Flag only; preview eligibility is verified per exact variant |
+| Messages, cards, preview offers, room observations, stated preferences, selected product | `sessionStorage` key `tryora_assistant_v2:<shop>` | 4 h idle or 24 h total; ~100 KB and 60 entries (oldest dropped first) |
+| Room photo and generated preview images | In-memory object URLs only | Gone on reload; the transcript then shows "not kept after the page reloads" |
 
-The assistant has **no** access to orders, customers, discounts, inventory quantities or shipping-rate calculations. It is told to say so and point shoppers to the store's contact details.
+- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Tryora's database, Shopify or analytics.
+- Each message sends a bounded slice to the server: the last 12 completed turns, up to 6 numbered recommendations, the selected product, room observations and preferences. The server re-validates every reference against fresh Shopify data.
+- The key and stored shop are checked on load, so one store's context can't appear in another. The v1 shared key `tryora_assistant_context` is deleted.
+- **New chat** clears messages, recommendations and preferences but keeps the room. **Forget room** removes the room notes and photo but keeps messages. **Clear conversation** removes everything.
+- This is browser-side history. OpenAI requests still use `store: false`.
 
-### Available to buy versus available for AI preview
+## Streaming
 
-Each recommendation card shows two separate facts, both checked in the same request:
+**Default transport: long-polling a server-side turn buffer**
 
-- **Available to buy**: the exact variant's `availableForSale`, read fresh from Shopify.
-- **AI room preview available**: shown only when the exact variant passes Tryora's strict preview path, which is the same `loadProviderSetting` → provider adapter → `resolveConfiguredPreview` → `resolvePreviewProduct` chain that `startPreview` uses (stock, frozen context, approved variant IDs, reference images).
+1. `POST /apps/tryora/assistant/turn` starts the turn and returns `turnId`. A newer question from the same visitor aborts their previous turn.
+2. The server runs the agent loop and appends events: `status`, `delta` (real model output deltas from the streamed Responses API), `reset_text`, `recommendations`, `visualise`, `room`, `preferences`, then `final` (the authoritative message) and `done`, `error` or `cancelled`.
+3. `GET /apps/tryora/assistant/turn/<id>?visitor=&after=n` returns new events as soon as they exist, waiting up to 8 s. Text therefore arrives incrementally even if Shopify's app proxy buffers each response.
+4. `POST …/turn/<id>/cancel` aborts the model call.
 
-Other preview states are `not_configured`, `unavailable`, `choose_options` (no exact variant was chosen) and `product_page`. `product_page` applies to Cloudlift or manual-mapping products: their image identity depends on the shopper's live product-page selection, so the assistant never claims a preview for them. Only cards with a verified preview link to `#tryora`. Every other card opens the normal product page.
+Buffers are bounded (3,000 events, 512 KB), bound to shop and visitor, expire 3 minutes after a turn ends, and hold no photos. Turn IDs carry the worker ID, so with `TRYORA_WORKER_ORIGINS` configured, reads are routed to the instance that owns the turn. The client reconnects through short network drops and resumes from the last event.
 
-## Search
+**Optional SSE transport (`TRYORA_ASSISTANT_TRANSPORT=sse`)**
 
-`search_products` uses hybrid retrieval with no embeddings infrastructure:
+`POST /apps/tryora/assistant/stream` returns `text/event-stream` (2 KB padding, `X-Accel-Buffering: no`, keep-alives). If the stream breaks, the browser continues the same turn by polling, without duplicates.
 
-1. **Vocabulary normalisation**, applied to the catalogue and to queries: sofa/couch/settee/loveseat, grey/gray, bed/bed frame/divan, nightstand/bedside table, cream/ivory/off-white, bouclé/boucle/teddy, faux/PU/vegan leather, king size/king, super king/California king, small double/4ft, small room/small space/space saving → compact, and more (`app/assistant/text.ts`). Some one-way widening is applied at half weight (grey also matches charcoal or slate, compact also matches loveseat or single).
-2. **Field-weighted BM25** over title, type and category, collections, option values, tags, attributes and description.
-3. **Constraints**: a named furniture kind is required ("green sofa" never returns a bed). Budget and availability are hard filters on known variants. Colour, size and material are soft: products that lack them are ranked lower and flagged with `notFoundOnProduct`. "King" never matches "Super King".
-4. **Shopify search fallback**: when the index is cold or capped, the tool also queries Shopify (`products(query:, sortKey: RELEVANCE)`) and merges the results.
-5. **Semantic layer**: the model rewrites the shopper's question into structured search fields and chooses among the verified results.
+**What was verified, and what wasn't**
 
-## Agent loop
+- Real Chrome against a local HTTP server running the real turn handlers: long-poll delivered at least 3 partial answer states over more than 750 ms before the final text, and SSE delivered at least 4 incremental states over one real chunked HTTP response.
+- **Not verified:** whether Shopify's app proxy forwards SSE chunks unbuffered. That needs a real store, which is why SSE is off by default. Long-polling doesn't depend on it.
 
-- Read-only tools only: `search_products`, `get_product_details`, `search_store_info`, `list_collections`. Unknown tools and invalid arguments get an error result and are never executed.
-- Up to **3 tool rounds** (the first round must call a tool), then one forced answer with `tool_choice: "none"`. At most 6 tool calls and 12 model-driven Shopify calls per request.
-- 40 s total request budget, 30 s per model call, one retry for 429/5xx/connection errors when time allows.
-- The final answer uses a strict JSON schema. Recommendations must name a `productRef` that a tool returned in this request (or a verified earlier recommendation). The `variantRef` must belong to that product in fresh data. Otherwise the recommendation is dropped and never substituted.
-- Every recommended product is re-read fresh from Shopify before it is shown, so prices and stock are current even when the index is a few minutes old.
+**Safety of streamed text**
 
-## Conversation continuity
+Recommendations are only shown as cards that the server has verified, and they arrive before the prose. The final message replaces the streamed draft, and any price the server never returned (and the shopper never typed) is removed from it. Stock and preview status appear only on cards.
 
-The browser keeps chat state in tab memory, and room notes plus numbered recommendations in `sessionStorage`, so they survive page navigation within the tab:
+## Agent and tools
 
-- **Room notes** (colours, style, lighting, notes) returned after a photo analysis are sent back as structured, sanitised data on later messages. The photo is uploaded only for an explicit *Analyse* request. Shoppers can choose **Forget room**.
-- **Shown recommendations** are sent back as `productRef`/`variantRef` pairs and listed for the model as "1., 2., 3.", so "the second one" resolves. The server validates the refs and re-reads them fresh before answering.
+Tools are read-only and allowlisted, with argument validation:
 
-Nothing in this flow is written to the database. Room photos and chat content are never logged.
+- `search_products`
+- `get_product_details`
+- `search_store_info`
+- `list_collections`
+- `recommend_products` (verified cards)
+- `request_visualisation` (preview offer, strict eligibility)
+- `record_room_observations` (only when a photo is attached)
+- `update_shopper_context` (budget, colours, materials, sizes, room dimensions)
 
-## Performance
+Limits per request: up to 4 tool rounds (the first must call a tool), then a forced answer; at most 8 tool calls and 12 model-driven Shopify calls; 60 s budget, 30 s per model call, and one retry only before any text has streamed.
 
-The catalogue index is cached per shop for 5 minutes. A stale index (up to 30 minutes old) is served while it refreshes in the background. It is warmed when the storefront fetches the assistant config, so a first question rarely waits. If the index is still cold, a request waits up to 6 s and then falls back to live Shopify search. The index covers up to 1,000 products (50 pages of 20). Larger stores rely on the Shopify search fallback for the remainder.
+If Shopify fails, tools return `store_data_temporarily_unavailable` with an instruction not to claim the store has no matching products.
 
-Benchmark on a simulated Shopify Admin API (500-product catalogue, 25 Tryora-configured products, fixed per-call latency, model calls mocked so only Shopify and CPU time are measured):
+Catalogue awareness, search (synonyms, BM25, constraints, live Shopify fallback) and store knowledge are unchanged from 1.x; see `app/assistant/catalogue.server.ts`, `text.ts` and `knowledge.server.ts`.
 
-| Path | Shopify calls / message | 60 ms latency | 200 ms latency |
-|---|---|---|---|
-| Previous implementation (every message) | 27 | ~1.7–1.8 s | ~5.5 s |
-| New, cold cache, first message | 26 | ~2.1 s | ~5.8 s |
-| New, warm cache, recommendation | 1 | ~80–95 ms | ~230 ms |
-| New, warm cache, verified-preview recommendation | 2 | ~140–155 ms | ~430 ms |
-| Background warm-up (off the shopper path) | 25 | ~1.9 s | ~5.3 s |
+## Previews inside the conversation
 
-Model latency dominates real requests. Each request makes 2 Responses API calls when one tool round is enough, and up to 4 at most. The previous implementation always made exactly 2.
+A *See it in my room* or *Generate preview* button appears only when the server's strict check passed for that exact variant. That check is the same `loadProviderSetting` → adapter → `resolveConfiguredPreview` chain that `startPreview` uses. Cloudlift and manual-mapping products show "choose options on the product page" instead.
 
-## Logging
+Generation calls the existing `/apps/tryora/preview` → `/preview/<job>` → `/ack` endpoints with the exact product, variant and option value. The server therefore re-applies every existing check: reference images, photo analysis, quotas, lead capture and credits. Following the popup's rule, the acknowledgement that consumes a credit is sent only after the image is displayed. If the store requires an email before previews, the chat hands off to the product page popup (`#tryora`).
 
-`app/assistant/log.server.ts` writes one JSON line per event: `assistant_request`, `openai_failure`, `shopify_failure`, `tool_validation_failure`, `model_parse_failure`, `timeout`, `rate_limited`, `catalogue_loaded` and `recommendation_dropped`. Fields are allowlisted (shop domain, stage, status, durations, counts, token usage, error class). Message text, photos, visitor IDs, emails, upstream error messages and API keys are never written.
+Refinements such as "Show it in cream" or "Try another option" are new verified requests. Placement can't be steered: the instructions forbid promising exact positions, moving furniture, or colours that aren't real variants.
 
-## Rate limits
+## Privacy and security
 
-- 20 messages per visitor and 200 per shop per 10 minutes (`guardAssistant`), plus at most 8 concurrent assistant requests per shop.
-- These counters, the catalogue cache and the knowledge cache are **in process memory**. With several app instances each one keeps its own counters and caches: limits become per instance, and a settings save clears the cache only on the instance that handled it (others refresh within 5 minutes). A shared limiter needs Redis or a database table. Neither exists today, and adding a table needs a migration, so this is left for a planned infrastructure change.
-- Assistant messages never reserve or consume preview credits. Credits are used only by the existing preview delivery flow.
+- Room photos are compressed in the browser (max 1600px), sent only with the message they're attached to, normalised on the server for that request, and never stored or logged.
+- Logs are structured and allowlisted (`app/assistant/log.server.ts`): no message text, photos, visitor IDs or API keys.
+- The proxy enforces request size limits (history 30 KB, photo 8 MB) and the existing visitor, shop and concurrency rate limits.
+- Chat never consumes credits.
 
-## Staging checklist (not yet verified against a live store)
+## Tests
 
-1. Run each new Admin query (`TryoraAssistantCatalogue`, `TryoraAssistantProductDetail`, `TryoraAssistantStoreInfo`, `TryoraAssistantPages`) against a development store on API version 2026-07 and check query cost. The tests use a simulated Admin API.
-2. Decide whether to request `read_online_store_pages`. Until it is added to `shopify.app.toml` and merchants re-approve scopes, FAQ and About pages are skipped. Policies and store notes still work.
-3. Confirm request time through the Shopify app proxy for a 3-round answer. The server budget is 40 s; the browser waits 55 s.
-4. Check the `custom.*` metafield allowlist against real merchant catalogues.
-5. Enable for one merchant, verify answers, recommendation badges and preview links, then widen.
+| Suite | Covers |
+|---|---|
+| `test/room-assistant.test.ts` | Settings compatibility and form fields, validation, grounding, fresh re-checks, visualisation eligibility (sold out, unconfigured, Cloudlift), preferences, streaming deltas and reset, price sanitisation, cancellation, multi-turn references, room continuity, bounded rounds, Shopify outage, rate limits |
+| `test/assistant-turns.test.ts` | Turn buffers (wake-up, isolation, supersede, bounds), request limits, incremental long-poll before completion, Stop, SSE, worker routing |
+| `test/room-assistant-ui.test.ts` (happy-dom) | Launcher, drawer modes, minimise and restore, keyboard, welcome actions, attachments, upload progress, streaming render, XSS safety, cards, in-chat preview and acknowledgement, lead hand-off, Stop and Retry, errors, New chat / Forget room / Clear, history across reloads, expiry and cross-store isolation, blocked storage |
+| `test/storefront-boot.test.ts` | Preview and assistant launchers coexisting, merchant placement, independent failure |
+| `test/assistant-browser.e2e.test.ts` | Real Chrome: everything above end to end, plus desktop and mobile layout. Run with `TRYORA_E2E=1` (optionally `TRYORA_E2E_BROWSER`, `TRYORA_E2E_SCREENSHOTS`) |
 
-## Release verification
+## Release checklist (test store first)
 
-Run from the repository root:
+1. Re-run `npm test`, `npm run typecheck`, `npm run build`, `git diff --check` and the browser suite (`TRYORA_E2E=1`).
+2. Deploy the app server to a **staging** environment with `TRYORA_ASSISTANT_TRANSPORT` unset (poll).
+3. `shopify app deploy` the theme extension to a **development store** only, and enable the Tryora app embed.
+4. In the development store, enable the assistant for product pages and add test Store notes. Confirm the notes persist after saving.
+5. Verify on desktop and a real phone:
+   - launcher placement next to the product preview button and any chat widget
+   - a text question streams
+   - a photo question records the room
+   - a follow-up uses it
+   - a verified card generates an in-chat preview and uses exactly one credit
+   - Stop, Retry, New chat, Clear and Forget room work
+   - refresh keeps history
+6. Check the new Admin queries (`TryoraAssistantCatalogue`, `…ProductDetail`, `…StoreInfo`, `…Pages`) succeed against the real store and watch `room-assistant` logs for `shopify_failure`.
+7. Optional: set `TRYORA_ASSISTANT_TRANSPORT=sse` on staging and confirm in browser devtools that `/apps/tryora/assistant/stream` events arrive incrementally through the app proxy. If they arrive all at once, keep `poll`.
+8. Only then consider a production release and merchant enablement.
 
-```sh
-npm test
-npm run typecheck
-npm run build
-git diff --check
-```
-
-The storefront bundle at `shopify-app/extensions/tryora-theme/assets/tryora.js` is generated by `npm run build` and must not be edited manually.
+The storefront bundle `shopify-app/extensions/tryora-theme/assets/tryora.js` is generated by `npm run build` and must not be edited by hand.

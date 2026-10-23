@@ -19,7 +19,7 @@ import { launchersToRender, type LauncherSettings } from "../../core/src/launche
 import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
-import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig } from "./assistant.js";
+import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig, wasOpen } from "./assistant.js";
 
 interface VariantChoice {
   id: string;
@@ -991,82 +991,115 @@ function variantPicker(): HTMLElement | null {
   );
 }
 
-async function boot() {
-  const root = document.getElementById("tryora-root");
-  const productId = root?.dataset.productId;
-  if (!root) return;
-  const assistantConfigPromise = fetchAssistantConfig(root);
-  let cfg: Config | null = null;
-  if (productId) {
-    try {
-      const res = await fetch(`${PROXY}/config?product=${encodeURIComponent(productId)}`, { credentials: "same-origin" });
-      const body = await res.json();
-      if (body.enabled) cfg = body as Config;
-    } catch { /* The room assistant may still work away from preview-enabled products. */ }
-  }
-
-  let popup: Tryora | null = null;
-  const open = cfg ? () => {
-    popup ??= new Tryora(cfg!);
-    popup.open();
-  } : undefined;
-  if (open) (window as any).Tryora = { open };
-
-  // The merchant's own buttons: link to #tryora or add data-tryora.
-  if (open) {
-    document.addEventListener("click", (e) => {
-      const el = (e.target as HTMLElement).closest('a[href="#tryora"], [data-tryora]');
-      if (el && !el.classList.contains("tryora-launch")) {
-        e.preventDefault();
-        open();
-      }
-    });
-    if (location.hash === "#tryora") open();
-  }
-
-  const assistantConfig = await assistantConfigPromise;
-  if (assistantConfig?.enabled) {
-    let assistant: RoomAssistant | null = null;
-    const openAssistant = () => {
-      assistant ??= new RoomAssistant(assistantConfig, { productId, openCurrentPreview: open });
-      assistant.open();
-    };
-    (window as any).TryoraAssistant = { open: openAssistant };
-    document.addEventListener("click", (event) => {
-      const element = (event.target as HTMLElement).closest('a[href="#tryora-assistant"], [data-tryora-assistant]');
-      if (element && !element.classList.contains("tryora-assistant-launch")) {
-        event.preventDefault();
-        openAssistant();
-      }
-    });
-    document.body.appendChild(buildAssistantLauncher(assistantConfig, openAssistant));
-    if (location.hash === "#tryora-assistant") openAssistant();
-    return;
-  }
-
-  if (!cfg || !open) return;
-
+/** Places the merchant's preview launcher exactly as configured (inline, overlay or floating). */
+function mountPreviewLauncher(cfg: Config, open: () => void): HTMLElement | null {
   const device = isMobile() ? "mobile" : "desktop";
   const { tryora } = launchersToRender(cfg.launcher, device);
-  if (!tryora) return;
+  if (!tryora) return null;
   const slot = document.querySelector<HTMLElement>("[data-tryora-slot]");
   if (tryora === "inline" || slot) {
     const where = slot ?? variantPicker();
     if (where) {
       const btn = buildLauncher(cfg, "inline", open);
       slot ? slot.appendChild(btn) : where.insertAdjacentElement("afterend", btn);
-      return;
+      return btn;
     }
   }
   if (tryora === "overlay") {
     const media = mediaContainer();
     if (media) {
       if (getComputedStyle(media).position === "static") media.style.position = "relative";
-      media.appendChild(buildLauncher(cfg, "overlay", open));
-      return;
+      const btn = buildLauncher(cfg, "overlay", open);
+      media.appendChild(btn);
+      return btn;
     }
   }
-  document.body.appendChild(buildLauncher(cfg, "floating", open));
+  const btn = buildLauncher(cfg, "floating", open);
+  document.body.appendChild(btn);
+  return btn;
+}
+
+/** Product previews: only for products the server reports as enabled and ready. */
+async function bootPreview(productId: string | undefined): Promise<{ open: () => void; launcher: HTMLElement | null } | null> {
+  if (!productId) return null;
+  let cfg: Config;
+  try {
+    const res = await fetch(`${PROXY}/config?product=${encodeURIComponent(productId)}`, { credentials: "same-origin" });
+    const body = await res.json();
+    if (body?.enabled !== true) return null;
+    cfg = body as Config;
+  } catch {
+    return null;
+  }
+
+  let popup: Tryora | null = null;
+  const open = () => {
+    popup ??= new Tryora(cfg);
+    popup.open();
+  };
+  (window as any).Tryora = { open };
+
+  // The merchant's own buttons: link to #tryora or add data-tryora.
+  document.addEventListener("click", (e) => {
+    const el = (e.target as HTMLElement).closest('a[href="#tryora"], [data-tryora]');
+    if (el && !el.classList.contains("tryora-launch")) {
+      e.preventDefault();
+      open();
+    }
+  });
+  if (location.hash === "#tryora") open();
+  return { open, launcher: mountPreviewLauncher(cfg, open) };
+}
+
+/** Keeps the assistant launcher clear of a floating preview launcher on the same side of the screen. */
+export function arrangeLaunchers(preview: HTMLElement | null, assistant: HTMLElement) {
+  if (!preview?.classList.contains("tryora-launch--floating")) return;
+  const side = preview.style.left ? "bottom-left" : "bottom-right";
+  if (!assistant.classList.contains(`tryora-assistant-launch--${side}`)) return;
+  const height = preview.offsetHeight || 44;
+  assistant.style.setProperty("--ta-stack", `${height + 12}px`);
+  assistant.classList.add("tryora-assistant-launch--stacked");
+}
+
+/** Room assistant: independent of product previews, so it also works on home and collection pages. */
+async function bootAssistant(root: HTMLElement, productId: string | undefined, preview: Promise<{ open: () => void; launcher: HTMLElement | null } | null>) {
+  const config = await fetchAssistantConfig(root);
+  if (!config?.enabled) return;
+  // The preview config request runs in parallel; it only decides whether "Preview this product" is offered.
+  const current = await preview.catch(() => null);
+  let assistant: RoomAssistant | null = null;
+  let launcher: HTMLElement | null = null;
+  const openAssistant = () => {
+    assistant ??= new RoomAssistant(config, {
+      productId,
+      openCurrentPreview: current?.open,
+      launcher,
+      currentVariantId: () => document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value ?? null,
+    });
+    assistant.open();
+  };
+  (window as any).TryoraAssistant = { open: openAssistant };
+  document.addEventListener("click", (event) => {
+    const element = (event.target as HTMLElement).closest('a[href="#tryora-assistant"], [data-tryora-assistant]');
+    if (element && !element.classList.contains("tryora-assistant-launch")) {
+      event.preventDefault();
+      openAssistant();
+    }
+  });
+  launcher = buildAssistantLauncher(config, openAssistant);
+  document.body.appendChild(launcher);
+  arrangeLaunchers(current?.launcher ?? null, launcher);
+  // Continue an open conversation after the shopper navigates within this tab.
+  if (location.hash === "#tryora-assistant" || (config.shop && wasOpen(config.shop))) openAssistant();
+}
+
+export async function boot() {
+  const root = document.getElementById("tryora-root");
+  if (!root) return;
+  const productId = root.dataset.productId;
+  // Each feature fails independently: an assistant outage never hides previews, and vice versa.
+  const preview = bootPreview(productId);
+  await Promise.all([preview.catch(() => null), bootAssistant(root, productId, preview).catch(() => {})]);
 }
 
 if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", () => void boot());

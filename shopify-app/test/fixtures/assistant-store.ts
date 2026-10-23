@@ -224,11 +224,30 @@ export const toolCall = (name: string, args: Record<string, unknown>, id = `call
   output: [{ type: "function_call", name, call_id: id, arguments: JSON.stringify(args) }],
 });
 
-export const finalAnswer = (message: string, recommendations: { productRef: string; variantRef: string | null; reason: string }[] = [], room: unknown = null) => ({
-  output: [],
-  output_text: JSON.stringify({ message, room, recommendations }),
+/** A final prose answer, as the Responses API returns it. */
+export const finalAnswer = (message: string) => ({
+  output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: message }] }],
+  output_text: message,
   usage: { input_tokens: 1200, output_tokens: 150 },
 });
+
+export const recommend = (items: { productRef: string; variantRef: string | null; reason: string }[], id = "call-recommend_products") =>
+  toolCall("recommend_products", { items }, id);
+
+export const observeRoom = (room: Record<string, unknown>) => toolCall("record_room_observations", {
+  colours: [], walls: "", floor: "", style: "", lighting: "", furniture: [], layout: "", placement: [], notes: "", ...room,
+});
+
+/** A streamed Responses API result: text deltas, then the completed response. */
+export function streamed(response: any, deltas: string[] = typeof response.output_text === "string" ? [response.output_text] : []) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield { type: "response.created" };
+      for (const delta of deltas) yield { type: "response.output_text.delta", delta };
+      yield { type: "response.completed", response: { ...response, output_text: undefined } };
+    },
+  };
+}
 
 export const ref = (gid: string) => gid.split("/").pop()!;
 
