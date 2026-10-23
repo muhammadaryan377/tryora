@@ -1,5 +1,6 @@
 # Customization integration completion report
 
+> **Update (Cloudlift native-linked branch):** The following is the historical provider-foundation report. This branch adds an opt-in Cloudlift **native-linked Shopify mapping** adapter and a documented `option:changed` synchronization bridge. It is NOT a Cloudlift custom-option catalogue/API integration. See [cloudlift-native-linked.md](cloudlift-native-linked.md). No real Avelor product has been activated or tested.\n\n
 ## Scope and architecture
 
 This increment implements an opt-in, tenant-scoped provider foundation while
