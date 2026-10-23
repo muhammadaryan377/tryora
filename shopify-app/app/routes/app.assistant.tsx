@@ -5,12 +5,14 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
-  DEFAULT_ROOM_ASSISTANT_SETTINGS,
+  MAX_ASSISTANT_KNOWLEDGE,
   parseExclusionList,
   roomAssistantSettings,
   type RoomAssistantSettings,
 } from "../room-assistant-settings";
 import { assistantProviderReady } from "../room-assistant.server";
+import { invalidateAssistantCatalogue } from "../assistant/catalogue.server";
+import { invalidateAssistantKnowledge } from "../assistant/knowledge.server";
 import type { Prisma } from "@prisma/client";
 
 async function load(shopId: string) {
@@ -40,12 +42,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     },
     excludedProducts: parseExclusionList(form.get("excludedProducts")),
     excludedCollections: parseExclusionList(form.get("excludedCollections")),
+    knowledge: String(form.get("knowledge") ?? "").trim(),
   };
   const errors: string[] = [];
   if (!settings.greeting || settings.greeting.length > 120) errors.push("Greeting must be between 1 and 120 characters.");
   if (!settings.launcherLabel || settings.launcherLabel.length > 40) errors.push("Launcher label must be between 1 and 40 characters.");
   if (!/^#[0-9a-f]{6}$/i.test(settings.launcherColour)) errors.push("Launcher colour must be a six-digit hex colour.");
   if (settings.enabled && !Object.values(settings.pages).some(Boolean)) errors.push("Choose at least one page type, or turn the assistant off.");
+  if (settings.knowledge.length > MAX_ASSISTANT_KNOWLEDGE) errors.push(`Store notes must be ${MAX_ASSISTANT_KNOWLEDGE} characters or fewer.`);
   if (errors.length) return { ok: false as const, errors };
 
   const existing = await prisma.appearance.findFirst({ where: { shopId: session.shop, scope: "store", scopeId: null } });
@@ -54,6 +58,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   else await prisma.appearance.create({
     data: { shopId: session.shop, scope: "store", template: "gallery", tokens: {}, launchers: {}, copy: copy as unknown as Prisma.InputJsonValue },
   });
+  // Shoppers see the new notes and a fresh catalogue on their next question.
+  invalidateAssistantKnowledge(session.shop);
+  invalidateAssistantCatalogue(session.shop);
   return { ok: true as const, errors: [] as string[] };
 };
 
@@ -131,6 +138,24 @@ export default function AssistantSettings() {
           />
         </s-section>
 
+        <s-section heading="Store notes for the assistant">
+          <s-paragraph>
+            <s-text color="subdued">
+              The assistant already reads your Shopify policies and published products. Add anything else shoppers
+              ask about, such as delivery areas, lead times, showroom details or warranty terms. Only write what is
+              true and current: the assistant quotes these notes to shoppers.
+            </s-text>
+          </s-paragraph>
+          <s-text-area
+            label="Store notes"
+            value={settings.knowledge}
+            rows={8}
+            maxLength={MAX_ASSISTANT_KNOWLEDGE}
+            onInput={(event: any) => update("knowledge", value(event))}
+            details={`${settings.knowledge.length} of ${MAX_ASSISTANT_KNOWLEDGE} characters`}
+          />
+        </s-section>
+
         <s-section heading="Wording and launcher">
           <s-text-field label="Greeting" value={settings.greeting} maxLength={120} onInput={(event: any) => update("greeting", value(event))} />
           <s-text-field label="Launcher label" value={settings.launcherLabel} maxLength={40} onInput={(event: any) => update("launcherLabel", value(event))} />
@@ -149,8 +174,9 @@ export default function AssistantSettings() {
       <s-section slot="aside" heading="Data and safety">
         <s-paragraph>
           Room photos are normalized in memory and sent to the configured AI provider for the active request. Tryora
-          does not write photos or chat messages to its database. Recommendations use only live, available Shopify
-          variants with an approved preview reference.
+          does not write photos or chat messages to its database. The assistant can recommend any active product
+          published to your Online Store, using live Shopify prices and availability. A recommendation offers an AI
+          room preview only when that exact variant passes Tryora's preview checks.
         </s-paragraph>
       </s-section>
     </s-page>

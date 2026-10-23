@@ -8,27 +8,41 @@ export interface AssistantConfig {
 
 interface AssistantRecommendation {
   id: string;
+  productRef: string;
+  variantRef: string | null;
   productId: string;
-  variantId: string;
+  variantId: string | null;
   title: string;
   url: string;
   image: string | null;
-  price: string;
+  price: string | null;
+  maxPrice: string | null;
   currencyCode: string;
   options: Record<string, string>;
+  purchaseAvailable: boolean;
   previewAvailable: boolean;
+  previewStatus: "available" | "not_configured" | "unavailable" | "choose_options" | "product_page";
   reason: string;
 }
 
+interface RoomNotes { colours: string[]; style: string; lighting: string; notes: string }
+
 interface AssistantReply {
   message: string;
-  room: { colours: string[]; style: string; lighting: string; notes: string } | null;
+  room: RoomNotes | null;
   recommendations: AssistantRecommendation[];
+}
+
+/** Chat context the server re-validates on every message. Room photos themselves are never stored. */
+interface SessionContext {
+  room: RoomNotes | null;
+  shown: { productRef: string; variantRef: string | null; title: string }[];
 }
 
 interface Message { role: "user" | "assistant"; content: string }
 
 const PROXY = "/apps/tryora";
+const SESSION_KEY = "tryora_assistant_context";
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, (character) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]!);
 
@@ -65,11 +79,31 @@ async function prepareRoomPhoto(file: File): Promise<{ blob: Blob; url: string }
   }
 }
 
-async function sendMessage(history: Message[], productId?: string, photo?: Blob): Promise<AssistantReply> {
+/** Room notes and shown recommendations survive page navigation within this tab only. */
+function loadSessionContext(): SessionContext {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? "null");
+    if (parsed && typeof parsed === "object") {
+      return { room: parsed.room ?? null, shown: Array.isArray(parsed.shown) ? parsed.shown.slice(0, 6) : [] };
+    }
+  } catch { /* Storage can be unavailable; the chat still works without it. */ }
+  return { room: null, shown: [] };
+}
+
+function saveSessionContext(context: SessionContext) {
+  try {
+    if (!context.room && !context.shown.length) sessionStorage.removeItem(SESSION_KEY);
+    else sessionStorage.setItem(SESSION_KEY, JSON.stringify(context));
+  } catch { /* Storage can be unavailable; the chat still works without it. */ }
+}
+
+async function sendMessage(history: Message[], productId: string | undefined, context: SessionContext, photo?: Blob): Promise<AssistantReply> {
   const form = new FormData();
   form.set("visitor", storedVisitorId());
   form.set("history", JSON.stringify(history.slice(-12)));
   if (productId) form.set("product", productId);
+  if (context.room) form.set("room", JSON.stringify(context.room));
+  if (context.shown.length) form.set("shown", JSON.stringify(context.shown.map(({ productRef, variantRef }) => ({ productRef, variantRef }))));
   if (photo) form.set("photo", photo, "room.jpg");
   const response = await fetch(`${PROXY}/assistant/message`, {
     method: "POST",
@@ -83,7 +117,9 @@ async function sendMessage(history: Message[], productId?: string, photo?: Blob)
       ? "The room assistant is busy. Please wait a moment and try again."
       : body.error === "BAD_PHOTO"
         ? "That room photo couldn't be read. Please choose another one."
-        : "The room assistant is temporarily unavailable. Please try again.";
+        : body.error === "PROVIDER_TIMEOUT"
+          ? "That took too long to answer. Please try again, or ask a shorter question."
+          : "The room assistant is temporarily unavailable. Please try again.";
     throw new Error(message);
   }
   return body as AssistantReply;
@@ -99,6 +135,7 @@ export class RoomAssistant {
   private loading = false;
   private error = "";
   private draft = "";
+  private session: SessionContext = loadSessionContext();
 
   constructor(
     private readonly config: AssistantConfig,
@@ -165,6 +202,11 @@ export class RoomAssistant {
     if (action === "chat") { this.screen = "chat"; this.error = ""; return this.render(); }
     if (action === "choose-photo") return this.root?.querySelector<HTMLInputElement>("[data-assistant-file]")?.click();
     if (action === "analyse") return void this.recommend();
+    if (action === "forget-room") {
+      this.session = { ...this.session, room: null };
+      saveSessionContext(this.session);
+      return this.render();
+    }
     if (action === "send") return void this.chat();
     if (action === "preview-current") {
       if (!this.context.openCurrentPreview) {
@@ -195,9 +237,9 @@ export class RoomAssistant {
     const history = [...this.history, { role: "user" as const, content: prompt }].slice(-12);
     this.render();
     try {
-      const reply = await sendMessage(history, this.context.productId, this.photo.blob);
+      const reply = await sendMessage(history, this.context.productId, this.session, this.photo.blob);
       this.history = [...history, { role: "assistant" as const, content: reply.message }].slice(-12);
-      this.reply = reply;
+      this.absorb(reply);
     } catch (error) {
       this.error = error instanceof Error ? error.message : "The room assistant is temporarily unavailable.";
     } finally {
@@ -216,9 +258,9 @@ export class RoomAssistant {
     this.history = history;
     this.render();
     try {
-      const reply = await sendMessage(history, this.context.productId);
+      const reply = await sendMessage(history, this.context.productId, this.session);
       this.history = [...history, { role: "assistant" as const, content: reply.message }].slice(-12);
-      this.reply = reply;
+      this.absorb(reply);
     } catch (error) {
       this.error = error instanceof Error ? error.message : "The room assistant is temporarily unavailable.";
     } finally {
@@ -227,25 +269,56 @@ export class RoomAssistant {
     }
   }
 
+  /** Keeps room notes and numbered recommendations so follow-ups like "the second one" can be resolved. */
+  private absorb(reply: AssistantReply) {
+    this.reply = reply;
+    const recommendations = reply.recommendations ?? [];
+    this.session = {
+      room: reply.room ?? this.session.room,
+      shown: recommendations.length
+        ? recommendations.map(({ productRef, variantRef, title }) => ({ productRef, variantRef, title }))
+        : this.session.shown,
+    };
+    saveSessionContext(this.session);
+  }
+
+  private roomChip() {
+    const room = this.session.room;
+    if (!room) return "";
+    const summary = [room.style, ...room.colours.slice(0, 3)].filter(Boolean).join(", ");
+    return `<p class="tryora-assistant__room-chip">Using your room: ${escapeHtml(summary || "photo notes")}
+      <button class="tryora-assistant__link" data-assistant-act="forget-room">Forget room</button></p>`;
+  }
+
   private recommendations() {
     const recommendations = this.reply?.recommendations ?? [];
     if (!recommendations.length) return "";
     return `<div class="tryora-assistant__recommendations">${recommendations.map((item, index) => {
-      const price = Number.isFinite(Number(item.price))
-        ? new Intl.NumberFormat(undefined, { style: "currency", currency: item.currencyCode }).format(Number(item.price))
+      const money = (value: string | null) => value !== null && Number.isFinite(Number(value))
+        ? new Intl.NumberFormat(undefined, { style: "currency", currency: item.currencyCode }).format(Number(value))
         : "";
+      const price = item.maxPrice ? `${money(item.price)} – ${money(item.maxPrice)}` : money(item.price);
+      const badges = [
+        `<span class="tryora-assistant__badge ${item.purchaseAvailable ? "is-yes" : "is-no"}">${item.purchaseAvailable ? "Available to buy" : "Currently sold out"}</span>`,
+        item.previewAvailable ? `<span class="tryora-assistant__badge is-yes">AI room preview available</span>`
+          : item.previewStatus === "product_page" || item.previewStatus === "choose_options"
+            ? `<span class="tryora-assistant__badge">Choose options on the product page to check AI preview</span>`
+            : `<span class="tryora-assistant__badge">AI room preview not available</span>`,
+      ].join("");
       const options = Object.entries(item.options).map(([name, value]) =>
         `<span class="tryora-assistant__tag">${escapeHtml(name)}: ${escapeHtml(value)}</span>`).join("");
-      const href = `${item.url}${item.url.includes("#") ? "" : "#tryora"}`;
+      // Only a verified preview opens the popup; every other card goes to the ordinary product page.
+      const href = item.previewAvailable && !item.url.includes("#") ? `${item.url}#tryora` : item.url;
       return `<article class="tryora-assistant__product">
         ${item.image ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy">` : ""}
         <div class="tryora-assistant__product-copy">
-          <span class="tryora-assistant__eyebrow">Recommendation ${index + 1}</span>
+          <span class="tryora-assistant__eyebrow">Option ${index + 1}</span>
           <h3>${escapeHtml(item.title)}</h3>
           <div class="tryora-assistant__tags">${options}</div>
           ${price ? `<strong>${escapeHtml(price)}</strong>` : ""}
+          <div class="tryora-assistant__tags">${badges}</div>
           <p>${escapeHtml(item.reason)}</p>
-          <a class="tryora-assistant__product-link" href="${escapeHtml(href)}">View options and preview</a>
+          <a class="tryora-assistant__product-link" href="${escapeHtml(href)}">${item.previewAvailable ? "View options and preview" : "View product"}</a>
         </div>
       </article>`;
     }).join("")}</div>`;
@@ -293,11 +366,12 @@ export class RoomAssistant {
   private chatScreen() {
     return `<button class="tryora-assistant__back" data-assistant-act="home">‹ Back</button>
       <h2>Ask the room assistant</h2>
-      <div class="tryora-assistant__transcript" aria-live="polite">${this.transcript() || `<p class="tryora-assistant__muted">Ask about real products, colours, sizes, availability or what may suit your room.</p>`}</div>
+      ${this.roomChip()}
+      <div class="tryora-assistant__transcript" aria-live="polite">${this.transcript() || `<p class="tryora-assistant__muted">Ask about any product, colour, size, budget, delivery or returns, or what may suit your room.</p>`}</div>
       ${this.recommendations()}
       ${this.loading ? `<div class="tryora-assistant__loading" role="status"><span></span> Checking the store catalogue…</div>` : ""}
       <label class="tryora-assistant__composer"><span class="tryora-assistant__sr">Your question</span>
-        <textarea name="assistant-message" maxlength="800" rows="2" placeholder="Which bed would suit a smaller room?" ${this.loading ? "disabled" : ""}>${escapeHtml(this.draft)}</textarea>
+        <textarea name="assistant-message" maxlength="800" rows="2" placeholder="${this.session.room ? "What about grey for my room?" : "Which bed would suit a smaller room?"}" ${this.loading ? "disabled" : ""}>${escapeHtml(this.draft)}</textarea>
         <button data-assistant-act="send" aria-label="Send question" ${this.loading ? "disabled" : ""}>↑</button>
       </label>`;
   }

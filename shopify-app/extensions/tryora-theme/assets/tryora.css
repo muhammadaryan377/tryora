@@ -253,6 +253,11 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__eyebrow { color: #6e7049; font-size: 11px; line-height: 1.2; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
 .tryora-assistant__tags { display: flex; flex-wrap: wrap; gap: 5px; }
 .tryora-assistant__tag { background: #f0f0eb; border-radius: 99px; padding: 3px 8px; font-size: 11px; }
+.tryora-assistant__badge { border: 1px solid #deded9; border-radius: 99px; padding: 3px 8px; font-size: 11px; color: #5b5a55; }
+.tryora-assistant__badge.is-yes { border-color: #b9c79f; background: #f1f5e8; color: #3c4a1f; }
+.tryora-assistant__badge.is-no { border-color: #e2c3bd; background: #fbf1ef; color: #78291f; }
+.tryora-assistant__room-chip { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: #f1f1ed; border-radius: 10px; padding: 8px 11px; font-size: 13px; }
+.tryora-assistant__link { background: none; border: 0; padding: 0; color: #363820; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .tryora-assistant__product-link { display: inline-flex; margin-top: auto; color: #363820; font-weight: 700; text-underline-offset: 3px; }
 .tryora-assistant__transcript { display: flex; flex-direction: column; gap: 10px; margin: 10px 0 18px; }
 .tryora-assistant__message { max-width: 84%; padding: 12px 14px; border-radius: 13px; background: #f1f1ed; }

@@ -9,7 +9,11 @@ export interface RoomAssistantSettings {
   pages: Record<AssistantPageType, boolean>;
   excludedProducts: string[];
   excludedCollections: string[];
+  /** Merchant-written facts for shoppers (delivery areas, showroom, warranty…). Quoted only when relevant. */
+  knowledge: string;
 }
+
+export const MAX_ASSISTANT_KNOWLEDGE = 8000;
 
 export interface AssistantPageContext {
   pageType: string;
@@ -28,6 +32,7 @@ export const DEFAULT_ROOM_ASSISTANT_SETTINGS: RoomAssistantSettings = {
   pages: { home: false, product: true, collection: false, other: false },
   excludedProducts: [],
   excludedCollections: [],
+  knowledge: "",
 };
 
 const cleanTokens = (value: unknown) => Array.isArray(value)
@@ -58,6 +63,7 @@ export function roomAssistantSettings(copy: unknown): RoomAssistantSettings {
     },
     excludedProducts: cleanTokens(source.excludedProducts),
     excludedCollections: cleanTokens(source.excludedCollections),
+    knowledge: typeof source.knowledge === "string" ? source.knowledge.trim().slice(0, MAX_ASSISTANT_KNOWLEDGE) : "",
   };
 }
 
