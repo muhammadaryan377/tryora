@@ -85,7 +85,15 @@ export default function Products() {
                     </s-stack>
                   </s-table-cell>
                   <s-table-cell>{r.itemNoun}</s-table-cell>
-                  <s-table-cell>{r.visualOptionName ?? "Single style"}</s-table-cell>
+                  <s-table-cell>
+                    {r.previewOptionStatus.label}
+                    {r.previewOptionStatus.warning && (
+                      <s-stack gap="small">
+                        <s-badge tone="caution">Preview mapping needs review</s-badge>
+                        <s-text>{r.previewOptionStatus.warning}</s-text>
+                      </s-stack>
+                    )}
+                  </s-table-cell>
                   <s-table-cell>
                     <s-badge tone={STATUS[r.readiness].tone}>{STATUS[r.readiness].label}</s-badge>
                     {r.readinessReason && (
@@ -97,7 +105,7 @@ export default function Products() {
                   </s-table-cell>
                   <s-table-cell>
                     <s-button variant="tertiary" href={`/app/products/${encodeURIComponent(r.id.split("/").pop()!)}`}>
-                      {r.enabled ? "Edit" : "Set up"}
+                      {r.previewOptionStatus.warning ? "Review settings" : r.enabled ? "Edit" : "Set up"}
                     </s-button>
                   </s-table-cell>
                 </s-table-row>

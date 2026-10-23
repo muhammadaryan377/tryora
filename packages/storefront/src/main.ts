@@ -27,6 +27,7 @@ interface VariantChoice {
 
 interface Swatch {
   value: string;
+  label?: string;
   image: string | null;
   colour: string | null;
   available: boolean;
@@ -44,7 +45,12 @@ interface Config {
   placement: string;
   setting: "indoor" | "outdoor" | "either";
   optionName: string | null;
+  selectorLabel?: string | null;
   swatches: Swatch[];
+  fabricOptionName?: string | null;
+  selectionOptionNames?: string[];
+  productVariants?: VariantChoice[];
+  singleVariants?: VariantChoice[];
   style: { template: string; accent: string | null; useThemeFont: boolean };
   launcher: LauncherSettings;
   lead: { mode: "required" | "skippable" | "off"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
@@ -55,7 +61,6 @@ interface Config {
 const PROXY = "/apps/tryora";
 /** Option value used for products with a single style (no colour choice). Never shown to shoppers. */
 const SINGLE = "__single__";
-const shown = (v: string | null | undefined) => (v && v !== SINGLE ? v : "");
 const COMPACT_DESKTOP = 12;
 const ISSUE_CATEGORIES: [string, string][] = [
   ["wrong_product", "It's not the right product"],
@@ -179,10 +184,34 @@ export class Tryora {
   private marketing = false;
   private emailError = "";
   private copied = false;
+  private configurationNotice: string | null = null;
+  private pageOptions: Record<string, string> = {};
+  private fabric: string | null = null;
+  private configurationEpoch = 0;
+  private pageWatchTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly pageChangeHandler = () => { if (this.root && this.syncPageConfiguration()) this.render(); };
+
+  private syncPageConfiguration(): boolean {
+    const page = productPageOptions(this.cfg);
+    const same = Object.keys(page).length === Object.keys(this.pageOptions).length && Object.entries(page).every(([name, value]) => this.pageOptions[name] === value);
+    if (same) return false;
+    this.configurationEpoch++;
+    this.pageOptions = page;
+    this.fabric = this.cfg.fabricOptionName ? page[this.cfg.fabricOptionName] ?? this.fabric : null;
+    for (const url of this.images.values()) URL.revokeObjectURL(url);
+    this.images.clear();
+    this.state = { ...this.state, generation: null, results: {}, shownOption: null, notice: null,
+      selectedOption: this.cfg.swatches.length ? this.visibleSwatches().find((x) => this.selectedVariant(x.value))?.value ?? null : SINGLE,
+      step: !this.cfg.available ? "unavailable" : this.state.photo ? "photoReady" : "opening" };
+    return true;
+  }
 
   constructor(private readonly cfg: Config) {
-    const firstAvailable = cfg.swatches.find((s) => s.available && this.selectedVariant(s.value))?.value ?? null;
-    const onPage = preselected(cfg);
+    this.pageOptions = productPageOptions(cfg);
+    this.fabric = cfg.fabricOptionName ? this.pageOptions[cfg.fabricOptionName] ?? cfg.swatches[0]?.group ?? null : null;
+    const firstAvailable = this.visibleSwatches().find((s) => s.available && this.selectedVariant(s.value))?.value ?? null;
+    const onPage = cfg.swatches.find((x) => Object.entries(this.pageOptions).length > 0 &&
+      x.variants.some((v) => Object.entries(this.pageOptions).every(([name, value]) => !value || v.options[name] === value)))?.value ?? preselected(cfg);
     const defaultOption = onPage && this.selectedVariant(onPage) ? onPage : firstAvailable;
     this.state = initialFlow({ leadMode: cfg.lead.mode, leadTiming: cfg.lead.timing ?? "before", defaultOption: cfg.swatches.length ? defaultOption : SINGLE });
     if (!cfg.available) this.state = reduce(this.state, { type: "PREVIEWS_UNAVAILABLE" }).state;
@@ -190,6 +219,7 @@ export class Tryora {
 
   open() {
     if (this.root) return;
+    this.syncPageConfiguration();
     this.lastFocus = document.activeElement;
     const root = document.createElement("div");
     root.className = "tryora";
@@ -203,6 +233,9 @@ export class Tryora {
     document.body.appendChild(root);
     document.documentElement.classList.add("tryora-open");
     this.root = root;
+    document.addEventListener("change", this.pageChangeHandler);
+    // Some themes change the cart-form ID programmatically without a change event.
+    this.pageWatchTimer = setInterval(this.pageChangeHandler, 750);
     this.render();
     (root.querySelector("[data-autofocus]") as HTMLElement | null)?.focus();
   }
@@ -210,6 +243,9 @@ export class Tryora {
   /** Closing keeps any running job and results; reopening on this page shows them again. */
   close() {
     if (!this.root) return;
+    document.removeEventListener("change", this.pageChangeHandler);
+    clearInterval(this.pageWatchTimer);
+    this.pageWatchTimer = undefined;
     this.root.remove();
     this.root = null;
     document.documentElement.classList.remove("tryora-open");
@@ -273,10 +309,16 @@ export class Tryora {
   }
 
   private async generate(option: string, photoId: string) {
+    this.configurationNotice = null;
+    if (this.syncPageConfiguration()) { this.render(); return; }
+    const epoch = this.configurationEpoch;
     const photo = this.photos.get(photoId);
     if (!photo) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
     const variant = this.selectedVariant(option);
-    if (this.cfg.swatches.length && !variant) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+    if ((this.cfg.swatches.length || this.cfg.singleVariants) && !variant) {
+      this.configurationNotice = "This combination cannot be previewed. Choose another available option or review the product page. No credit was used.";
+      return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+    }
     this.dispatch({ type: "JOB_STAGE", stage: "checking_photo" });
     let jobId: string;
     try {
@@ -292,7 +334,11 @@ export class Tryora {
       const r = await createWithRetry(() => post("preview", fields));
       jobId = r.jobId;
     } catch (e: any) {
+      if (epoch !== this.configurationEpoch) return;
       const code = e?.code;
+      if (code === "BAD_REQUEST" || code === "NOT_FOUND") {
+        this.configurationNotice = "This combination or its product reference is no longer available for preview. Choose another available option or review the product page. No credit was used.";
+      }
       const reason =
         code === "QUOTA_PRODUCT" || code === "QUOTA_STORE" || code === "RATE_LIMITED"
           ? "quota_reached"
@@ -301,6 +347,7 @@ export class Tryora {
             : "generation_failed";
       return this.dispatch({ type: "JOB_FAILED", reason });
     }
+    if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { this.render(); return; }
     this.dispatch({ type: "JOB_STARTED", jobId });
     this.dispatch({ type: "JOB_STAGE", stage: "preparing" });
 
@@ -308,6 +355,7 @@ export class Tryora {
     let slow = false;
     for (;;) {
       await new Promise((r) => setTimeout(r, 1200));
+      if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { this.render(); return; }
       if (this.state.photo?.id !== photoId) return; // shopper changed room
       if (Date.now() - started > 10 * 60_000) return this.dispatch({ type: "JOB_FAILED", reason: "connection_lost" });
       let r: any;
@@ -318,6 +366,7 @@ export class Tryora {
       } catch {
         continue;
       }
+      if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { this.render(); return; }
       if (r.stage === "generating" || r.stage === "checking_result") this.dispatch({ type: "JOB_STAGE", stage: r.stage });
       if (!slow && Date.now() - started > 45_000) {
         slow = true;
@@ -332,8 +381,10 @@ export class Tryora {
           await decodePreview(url);
         } catch {
           if (url) URL.revokeObjectURL(url);
+          if (epoch !== this.configurationEpoch) return;
           return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
         }
+        if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { URL.revokeObjectURL(url); this.render(); return; }
         this.images.set(jobId, url);
         this.dispatch({ type: "JOB_DELIVERED", result: { option, imageHandle: url, jobId } });
         // Only once the image is on screen is the credit used.
@@ -357,9 +408,21 @@ export class Tryora {
     switch (act) {
       case "close":
         return this.close();
+      case "fabric": {
+        if (s.generation) return;
+        const fabric = el.dataset.value!;
+        if (!this.cfg.swatches.some((x) => x.group === fabric)) return;
+        this.fabric = fabric;
+        const next = this.visibleSwatches().find((x) => this.selectedVariant(x.value));
+        // Changing fabric cannot retain a colour from the previous fabric.
+        this.state = { ...s, selectedOption: next?.value ?? null, notice: null };
+        return this.render();
+      }
       case "swatch": {
         const v = el.dataset.value!;
         if (s.generation) return;
+        if (!this.visibleSwatches().some((x) => x.value === v)) return;
+        if (!isViewed(s, v) && !this.selectedVariant(v)) return;
         if (s.step === "result" && isViewed(s, v)) return this.dispatch({ type: "SHOW_RESULT", option: v });
         if (s.step === "opening" || s.step === "photoReady") {
           // Tapping a viewed colour reopens its image instantly, free.
@@ -444,6 +507,24 @@ export class Tryora {
   }
 
   private onKey(e: KeyboardEvent) {
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
+      const target = e.target as HTMLElement;
+      const group = target.closest('[role="radiogroup"]');
+      if (group) {
+        const buttons = [...group.querySelectorAll<HTMLButtonElement>('button[role="radio"]:not(:disabled)')];
+        const index = buttons.indexOf(target.closest('button') as HTMLButtonElement);
+        if (index >= 0 && buttons.length) {
+          e.preventDefault();
+          const nextIndex = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 :
+            (index + (["ArrowLeft", "ArrowUp"].includes(e.key) ? -1 : 1) + buttons.length) % buttons.length;
+          const next = buttons[nextIndex]!;
+          const value = next.dataset.value;
+          next.click();
+          if (value) this.root?.querySelector<HTMLElement>(`[data-act="swatch"][data-value="${CSS.escape(value)}"]`)?.focus();
+          return;
+        }
+      }
+    }
     if (e.key === "Escape") {
       if (this.panel !== "none") {
         this.panel = "none";
@@ -473,7 +554,7 @@ export class Tryora {
     if (!r) return;
     const a = document.createElement("a");
     a.href = r.imageHandle;
-    a.download = `${[this.cfg.product, shown(r.option)].filter(Boolean).join(" - ")} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
+    a.download = `${[this.cfg.product, this.optionLabel(r.option)].filter(Boolean).join(" - ")} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -506,7 +587,7 @@ export class Tryora {
       opening: `See this {item} in your room`,
       photoReady: s.photo ? "Your photo is ready" : "Add your room photo",
       emailStep: "Your room photo is ready",
-      generating: shown(s.generation?.option) ? `Creating your ${shown(s.generation?.option)} image` : "Creating your image",
+      generating: this.optionLabel(s.generation?.option) ? `Creating your ${this.optionLabel(s.generation?.option)} image` : "Creating your image",
       result: "Your room, with {product}",
       unavailable: "Previews are unavailable",
     };
@@ -535,9 +616,9 @@ export class Tryora {
     const c = this.cfg;
     if (s.step === "result" && s.shownOption) {
       const r = s.results[s.shownOption]!;
-      return `<img class="tryora__img" src="${r.imageHandle}" alt="${esc(`${c.product}${shown(r.option) ? ` in ${shown(r.option)}` : ""}, shown in your room`)}">
+      return `<img class="tryora__img" src="${r.imageHandle}" alt="${esc(`${c.product}${this.optionLabel(r.option) ? ` in ${this.optionLabel(r.option)}` : ""}, shown in your room`)}">
         ${c.mock ? `<span class="tryora__mock">Development preview (not AI)</span>` : ""}
-        <p class="tryora__label"><strong>${esc(c.product)}</strong>${shown(r.option) ? ` · ${esc(shown(r.option))}` : ""}</p>
+        <p class="tryora__label"><strong>${esc(c.product)}</strong>${this.optionLabel(r.option) ? ` · ${esc(this.optionLabel(r.option))}` : ""}</p>
         <p class="tryora__small">AI-generated visualisation for illustration only. Colour, scale, positioning and product details may differ. Check dimensions and product information before ordering.</p>
         <p class="tryora__strong">Download before leaving this page.</p>`;
     }
@@ -561,7 +642,8 @@ export class Tryora {
   private side(): string {
     const s = this.state;
     const c = this.cfg;
-    const notice = s.notice ? `<p class="tryora__notice" role="status">${esc(NOTICES[s.notice] ?? "")}</p>` : "";
+    const noticeText = s.notice === "generation_failed" && this.configurationNotice ? this.configurationNotice : s.notice ? NOTICES[s.notice] : "";
+    const notice = s.notice ? `<p class="tryora__notice" role="status">${esc(noticeText ?? "")}</p>` : "";
     switch (s.step) {
       case "opening":
         return `
@@ -578,7 +660,7 @@ export class Tryora {
             ${this.fileProblem ? `<p class="tryora__notice" role="alert">${esc(this.fileProblem)}</p>` : ""}
             <button class="tryora__btn" data-act="take">Take photo</button>
             <button class="tryora__btn tryora__btn--ghost" data-act="upload">Upload photo</button>
-            <p class="tryora__small">Your product and colour are kept. Your photo will be checked automatically.</p>`;
+            <p class="tryora__small">Your selected product options are kept. Your photo will be checked automatically.</p>`;
         }
         const check = s.photo.check;
         const status =
@@ -593,7 +675,7 @@ export class Tryora {
             : "";
         const note = photoNote(check, c.itemNoun);
         const viewedHint = Object.keys(s.results).length
-          ? `<p class="tryora__small">Tap a viewed colour to open it instantly. Free to view again.</p>`
+          ? `<p class="tryora__small">Tap a viewed option to open it instantly. Free to view again.</p>`
           : "";
         return `
           ${status}
@@ -611,7 +693,7 @@ export class Tryora {
           <h3 class="tryora__h3 tryora__h3--first">${
             s.leadTiming === "after" ? "Enter your email to create another image" : "Enter your email to create your preview"
           }</h3>
-          <p class="tryora__label"><strong>${esc(c.product)}</strong>${shown(s.selectedOption) ? ` · ${esc(shown(s.selectedOption))}` : ""}</p>
+          <p class="tryora__label"><strong>${esc(c.product)}</strong>${this.optionLabel(s.selectedOption) ? ` · ${esc(this.optionLabel(s.selectedOption))}` : ""}</p>
           ${this.leadFields("Generate image")}`;
       case "generating": {
         const g = s.generation!;
@@ -620,7 +702,7 @@ export class Tryora {
         const list = STAGES.map((st, i) => {
           const idx = i + 1;
           const cls = idx < at ? "done" : idx === at ? "now" : "todo";
-          return `<li class="tryora__stage tryora__stage--${cls}">${cls === "done" ? `<span class="tryora__dot">${TICK}</span>` : `<span class="tryora__ring"></span>`} ${esc(st.label(shown(g.option)))}</li>`;
+          return `<li class="tryora__stage tryora__stage--${cls}">${cls === "done" ? `<span class="tryora__dot">${TICK}</span>` : `<span class="tryora__ring"></span>`} ${esc(st.label(this.optionLabel(g.option)))}</li>`;
         }).join("");
         return `
           <ol class="tryora__stages" aria-live="polite">${list}</ol>
@@ -632,7 +714,7 @@ export class Tryora {
         return `
           ${
             c.swatches.length > 1
-              ? `<button class="tryora__btn" data-act="another" data-autofocus>Try another colour</button>
+              ? `<button class="tryora__btn" data-act="another" data-autofocus>Try another option</button>
           <button class="tryora__btn tryora__btn--ghost" data-act="download">Download image</button>`
               : `<button class="tryora__btn" data-act="download" data-autofocus>Download image</button>`
           }
@@ -698,73 +780,84 @@ export class Tryora {
     </div>`;
   }
 
-  /** Compact swatches: about 12 in two rows on desktop with "+N more"; one scrolling row on mobile. */
+  private optionLabel(value: string | null | undefined): string {
+    const swatch = this.cfg.swatches.find((x) => x.value === value);
+    return swatch ? [swatch.group, swatch.label ?? swatch.value].filter(Boolean).join(" / ") : value && value !== SINGLE ? value : "";
+  }
+
+  private visibleSwatches(): Swatch[] {
+    return this.cfg.fabricOptionName ? this.cfg.swatches.filter((x) => x.group === this.fabric) : this.cfg.swatches;
+  }
+
+  private fabricPicker(locked: boolean): string {
+    if (!this.cfg.fabricOptionName) return "";
+    const fabrics = [...new Set(this.cfg.swatches.map((x) => x.group).filter((v): v is string => !!v))];
+    return '<p class="tryora__label">Choose fabric</p><div class="tryora__chips" role="group" aria-label="Fabric">' +
+      fabrics.map((f) => '<button type="button" class="tryora__gchip" data-act="fabric" data-value="' + esc(f) +
+        '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + esc(f) + '</button>').join("") + '</div>';
+  }
+
   private swatches(locked = false): string {
     const c = this.cfg;
     if (!c.swatches.length) return "";
-    const s = this.state;
+    const all = this.visibleSwatches();
     const mobile = isMobile();
-    let shown = c.swatches;
+    let shown = all;
     let more = 0;
-    if (!mobile && c.swatches.length > COMPACT_DESKTOP) {
-      shown = c.swatches.slice(0, COMPACT_DESKTOP - 1);
-      const sel = c.swatches.find((x) => x.value === s.selectedOption);
-      if (sel && !shown.includes(sel)) shown = [...shown.slice(0, -1), sel]; // selected colour always visible
-      more = c.swatches.length - shown.length;
+    if (!mobile && all.length > COMPACT_DESKTOP) {
+      shown = all.slice(0, COMPACT_DESKTOP - 1);
+      const selected = all.find((x) => x.value === this.state.selectedOption);
+      if (selected && !shown.includes(selected)) shown = [...shown.slice(0, -1), selected];
+      more = all.length - shown.length;
     }
-    const sel = s.selectedOption ? ` · ${esc(s.selectedOption)}` : "";
-    return `
-      <div class="tryora__sw">
-        <p class="tryora__label"><strong>${esc(c.product)}</strong>${sel}${c.swatches.length > 6 ? ` <span class="tryora__count">${c.swatches.length} colours</span>` : ""}</p>
-        <div class="tryora__swrow ${mobile ? "tryora__swrow--scroll" : ""}" role="radiogroup" aria-label="${esc(c.optionName ?? "Colour")}">
-          ${shown.map((x) => this.swatch(x, locked)).join("")}
-          ${more ? `<button class="tryora__more" data-act="more" aria-label="Show all ${c.swatches.length} colours">+${more}<br>more</button>` : ""}
-        </div>
-        ${mobile && c.swatches.length > 5 ? `<p class="tryora__swhint"><button class="tryora__link" data-act="more">All ${c.swatches.length} colours ›</button><span>Swipe for more →</span></p>` : ""}
-      </div>`;
+    const selected = this.optionLabel(this.state.selectedOption);
+    return '<div class="tryora__sw"><p class="tryora__label"><strong>' + esc(c.product) + '</strong>' +
+      (selected ? ' · ' + esc(selected) : '') + '</p>' + this.fabricPicker(locked) +
+      '<p class="tryora__label">Choose ' + esc(c.selectorLabel ?? c.optionName ?? 'option') + '</p>' +
+      '<div class="tryora__swrow ' + (mobile ? 'tryora__swrow--scroll' : '') + '" role="radiogroup" aria-label="' + esc(c.selectorLabel ?? c.optionName ?? 'Options') + '">' +
+      shown.map((x) => this.swatch(x, locked)).join("") +
+      (more ? '<button class="tryora__more" data-act="more" aria-label="Show all options">+' + more + '<br>more</button>' : '') + '</div>' +
+      (mobile && all.length > 5 ? '<button class="tryora__link" data-act="more">All ' + all.length + ' options</button>' : '') +
+      (this.cfg.fabricOptionName && !all.some((x) => this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">No supported colours for this fabric and the selected product options.</p>' : '') +
+      (!this.cfg.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? '') ? '<p class="tryora__small">Colour samples are not available from the Shopify product options. The preview uses its product reference.</p>' : '') + '</div>';
   }
 
   private selectedVariant(value: string): VariantChoice | null {
     const swatch = this.cfg.swatches.find((x) => x.value === value);
-    if (!swatch) return null;
-    const page = productPageOptions(this.cfg);
-    const matching = (swatch.variants ?? []).filter((variant) =>
-      Object.entries(page).every(([name, selected]) =>
-        name === this.cfg.optionName || !selected || variant.options[name] === selected));
-    // Shopify may carry size, length or fabric as well as colour. Never silently
-    // change those other options when the shopper taps a new colour.
-    return matching.find((variant) => variant.image) ?? matching[0] ?? null;
+    const candidates = swatch?.variants ?? (!this.cfg.swatches.length ? this.cfg.singleVariants ?? [] : []);
+    const varying = this.cfg.selectionOptionNames ?? (this.cfg.optionName ? [this.cfg.optionName] : []);
+    const matching = candidates.filter((v) =>
+      Object.keys(v.options).every((name) => varying.includes(name) || !!this.pageOptions[name]) &&
+      Object.entries(this.pageOptions).every(([name, selected]) =>
+        varying.includes(name) || !selected || v.options[name] === selected));
+    // Missing or ambiguous context must never change size, headboard or storage.
+    return matching.length === 1 ? matching[0]! : null;
   }
 
   private swatch(x: Swatch, locked: boolean): string {
-    const s = this.state;
-    const selected = s.selectedOption === x.value;
-    const viewed = isViewed(s, x.value);
+    const selected = this.state.selectedOption === x.value;
+    const viewed = isViewed(this.state, x.value);
     const available = x.available && !!this.selectedVariant(x.value);
-    const fill = x.image ? `background-image:url('${esc(x.image)}')` : x.colour ? `background:${esc(x.colour)}` : "";
     const disabled = locked || (!available && !viewed);
+    const label = x.label ?? x.value;
     const text = !x.image && !x.colour;
-    return `<button class="tryora__s ${selected ? "is-selected" : ""} ${!available ? "is-soldout" : ""} ${text ? "is-text" : ""}"
-        data-act="swatch" data-value="${esc(x.value)}" role="radio" aria-checked="${selected}"
-        ${disabled ? "disabled" : ""} aria-label="${esc(x.value)}${viewed ? ", viewed" : ""}${!available ? ", unavailable for selected options" : ""}">
-        <span class="tryora__chip" style="${fill}">${text ? esc(x.value) : ""}</span>
-        ${text ? "" : `<span class="tryora__sname">${esc(x.value)}</span>`}
-        ${viewed ? `<span class="tryora__viewed">${TICK} Viewed</span>` : !available ? `<span class="tryora__sold">Unavailable</span>` : ""}
-        ${locked && !selected ? `<span class="tryora__lock" aria-hidden="true">${LOCK}</span>` : ""}
-      </button>`;
+    return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-soldout ' : '') + (text ? 'is-text' : '') +
+      '" data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
+      ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', unavailable for selected options' : '') + '">' +
+      '<span class="tryora__chip"' + (!x.image && x.colour ? ' style="background:' + esc(x.colour) + '"' : '') + '>' +
+      (x.image ? '<img src="' + esc(x.image) + '" alt="' + esc(label) + '" loading="lazy">' : text ? esc(label) : '') + '</span>' +
+      (text ? '' : '<span class="tryora__sname">' + esc(label) + '</span>') +
+      (locked && !selected ? '<span class="tryora__lock" aria-hidden="true">' + LOCK + '</span>' : '') +
+      (viewed ? '<span class="tryora__viewed">' + TICK + ' Viewed</span>' : !available ? '<span class="tryora__sold">Unavailable</span>' : '') + '</button>';
   }
 
-  /** "+N more" panel on desktop, "All N colours" bottom sheet on mobile. No search, by owner decision. */
   private swatchPanel(): string {
-    const c = this.cfg;
-    const groups = [...new Set(c.swatches.map((x) => x.group).filter(Boolean))] as string[];
+    const all = this.visibleSwatches();
     const locked = !!this.state.generation;
-    return `<div class="tryora__panel ${isMobile() ? "tryora__panel--sheet" : ""}" role="dialog" aria-label="All ${c.swatches.length} colours">
-      <div class="tryora__ptop"><strong>All ${c.swatches.length} colours</strong><button class="tryora__x" data-act="panel-close" aria-label="Close colours">×</button></div>
-      ${this.state.selectedOption ? `<p class="tryora__small">Selected: ${esc(this.state.selectedOption)}</p>` : ""}
-      ${groups.length ? `<div class="tryora__chips">${["All", ...groups].map((g) => `<span class="tryora__gchip">${esc(g)}</span>`).join("")}</div>` : ""}
-      <div class="tryora__grid">${c.swatches.map((x) => this.swatch(x, locked)).join("")}</div>
-    </div>`;
+    return '<div class="tryora__panel ' + (isMobile() ? 'tryora__panel--sheet' : '') + '" role="dialog" aria-label="All options">' +
+      '<div class="tryora__ptop"><strong>All options</strong><button class="tryora__x" data-act="panel-close" aria-label="Close options">×</button></div>' +
+      this.fabricPicker(locked) + '<div class="tryora__grid" role="radiogroup" aria-label="' + esc(this.cfg.selectorLabel ?? this.cfg.optionName ?? 'Options') + '">' +
+      all.map((x) => this.swatch(x, locked)).join("") + '</div></div>';
   }
 
   private issuePanel(): string {
@@ -792,12 +885,14 @@ function productPageOptions(cfg: Config): Record<string, string> {
     const names: string[] = JSON.parse(root?.dataset.optionNames ?? "[]");
     const values: string[] = JSON.parse(root?.dataset.variantOptions ?? "[]");
     initial = Object.fromEntries(names.map((name, i) => [name, values[i] ?? ""]));
-  } catch { /* fall back to the selected colour's first eligible variant */ }
+  } catch { /* Missing context is handled conservatively by selectedVariant. */ }
   const id = document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value;
   if (id) {
-    const current = cfg.swatches.flatMap((swatch) => swatch.variants ?? [])
+    const current = (cfg.productVariants ?? cfg.swatches.flatMap((swatch) => swatch.variants ?? []))
       .find((variant) => variant.id.split("/").pop() === id);
     if (current) return current.options;
+    // An unknown live selection must not fall back to stale Liquid defaults.
+    return { __unsupported_variant__: id };
   }
   return initial;
 }

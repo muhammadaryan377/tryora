@@ -21,6 +21,8 @@ import { abortable, downloadReference, normaliseImage } from "./preview-images.s
 import { PREVIEW_PRODUCT_QUERY, resolvePreviewProduct, type AdminGraphql } from "./preview-product.server";
 import { remoteJob, workerId } from "./preview-worker.server";
 import { createImageProvider } from "./image-provider.server";
+import { nativeSelections } from "./core/customization";
+import { eligibleVariants } from "./native-selection.server";
 /**
  * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
  * Image bytes are handled in process memory and never written to disk or the database here.
@@ -31,6 +33,7 @@ import { createImageProvider } from "./image-provider.server";
 export const provider: ImageProvider = createImageProvider();
 export interface Swatch {
   value: string;
+  label?: string;
   image: string | null;
   colour: string | null;
   available: boolean;
@@ -74,34 +77,14 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     p.variants.nodes.push(...variants.nodes);
     page = variants.pageInfo;
   }
-  const optionName = config.visualOptionName;
-  const option = optionName ? p.options.find((o: any) => o.name === optionName) : null;
-  // One colour (e.g. just a black sofa) needs no swatches: the product's own photos are used.
-  const values = (option?.optionValues ?? []).length > 1 ? option.optionValues : [];
-  const frozen = (config.frozenContext ?? {}) as Record<string, string>;
-  const swatches: Swatch[] = values.map((v: any) => {
-    const choice = config.choices.find((c) => c.optionValue === v.name);
-    const allowedIds = (choice?.variantIds ?? []) as string[];
-    const variants = p.variants.nodes.filter((n: any) =>
-      n.availableForSale &&
-      n.selectedOptions.some((s: any) => s.name === optionName && s.value === v.name) &&
-      Object.entries(frozen).every(([name, value]) =>
-        n.selectedOptions.some((s: any) => s.name === name && s.value === value)) &&
-      (!choice || choice.available) &&
-      (!allowedIds.length || allowedIds.includes(n.id)),
-    ).map((n: any) => ({
-      id: n.id as string,
-      image: (n.image?.url as string) ?? null,
-      options: Object.fromEntries(n.selectedOptions.map((o: any) => [o.name, o.value])) as Record<string, string>,
-    }));
-    return {
-      value: v.name,
-      image: v.swatch?.image?.image?.url ?? null,
-      colour: v.swatch?.color ?? null,
-      available: variants.length > 0,
-      group: null, // colour groups come from merchant settings (not built yet), so no chips show
-      variants,
-    };
+  const model = nativeSelections(p.options, config.visualOptionName, p.variants.nodes);
+  if (model.issue || (config.autoConfigured && model.ambiguous)) return { enabled: false as const };
+  if (model.fabricOptionName && !model.selections.length) return { enabled: false as const };
+  const variantChoice = (v: any) => ({ id: v.id as string, image: v.image?.url ?? null,
+    options: Object.fromEntries(v.selectedOptions.map((o: any) => [o.name, o.value])) as Record<string, string> });
+  const swatches: Swatch[] = model.selections.map((selection) => {
+    const variants = eligibleVariants(config, p.variants.nodes, selection).map(variantChoice);
+    return { ...selection, available: variants.length > 0, variants };
   });
   const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
   // The popup only asks for its settings when the app embed is on in the theme, so this marks setup step 3 done.
@@ -111,8 +94,8 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
   // Fill gaps with the merchant's own colours, or name-based guesses if they approved guessing.
   const resolved = resolveSwatches(
     swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
-    (config.swatchColours as Record<string, string>) ?? {},
-    { approved: !!shopRow?.swatchAutoFill, photoColours: cachedPhotoColours(config.photoColours) },
+    model.fabricOptionName ? {} : (config.swatchColours as Record<string, string>) ?? {},
+    { approved: !model.fabricOptionName && !!shopRow?.swatchAutoFill, photoColours: model.fabricOptionName ? {} : cachedPhotoColours(config.photoColours) },
   );
   swatches.forEach((s, i) => {
     s.colour = resolved[i]!.colour;
@@ -143,7 +126,13 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     itemNoun,
     placement: config.placement as Placement,
     setting: config.setting as "indoor" | "outdoor" | "either",
-    optionName,
+    optionName: model.optionName,
+    selectorLabel: model.selectorLabel,
+    fabricOptionName: model.fabricOptionName,
+    selectionOptionNames: model.optionNames,
+    // Unavailable variants identify page context but are never offered for generation.
+    productVariants: p.variants.nodes.map(variantChoice),
+    singleVariants: eligibleVariants(config, p.variants.nodes).map(variantChoice),
     swatches,
     style: { template, accent: tokens.accent, useThemeFont: tokens.useThemeFont },
     launcher: { ...launcher, wording: launcher.wording || DEFAULT_WORDING },

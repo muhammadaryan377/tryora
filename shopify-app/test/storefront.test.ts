@@ -57,6 +57,27 @@ afterEach(async () => {
 });
 
 describe("preview lifecycle", () => {
+  it("hides stale mappings and rejects generation before credit reservation or provider use", async () => {
+    fixture.config.visualOptionName = "Old Colour";
+    const analyse = vi.spyOn(provider, "analyseRoom");
+    expect(await storefrontConfig(admin, shopId, productId)).toEqual({ enabled: false });
+    await expect(start()).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(analyse).not.toHaveBeenCalled();
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
+
+  it("blocks ambiguous automatic discovery without treating it as single-style", async () => {
+    fixture.config.autoConfigured = true;
+    fixture.config.visualOptionName = null;
+    // Exercise the resolver independently of the auto-config API mock.
+    const { resolvePreviewProduct } = await import("../app/preview-product.server");
+    const graphql = vi.fn(async () => Response.json({ data: { product: {
+      title: "Bed", options: ["Colour", "Color"].map((name) => ({ name, optionValues: [{ name: "Cream" }] })),
+      variants: { nodes: [], pageInfo: { hasNextPage: false } },
+    } } }));
+    await expect(resolvePreviewProduct({ graphql }, fixture.config, "__single__", "variant")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
   it("loads exact product references and context, checks results, records costs and metadata", async () => {
     const analyse = vi.spyOn(provider, "analyseRoom").mockResolvedValue({ outcome: "accepted", confidence: 1, costMicros: 3 });
     const generate = vi.spyOn(provider, "generate").mockImplementation(async (req) => ({ image: req.roomImage, mimeType: "image/jpeg", costMicros: 7, providerRequestId: "req1", model: "test" }));
@@ -64,7 +85,9 @@ describe("preview lifecycle", () => {
     const { jobId } = await start();
     expect((await finished(jobId)).stage).toBe("ready");
     expect(analyse).toHaveBeenCalledWith(expect.any(Uint8Array), "diagonal", { placement: "replace", setting: "outdoor", itemNoun: "chair" }, expect.any(AbortSignal));
-    expect(generate.mock.calls[0]![0]).toMatchObject({ productDescription: "Garden chair\nA blue chair", optionValue: "Blue" });
+    expect(generate.mock.calls[0]![0]).toMatchObject({ productDescription: expect.stringContaining("Garden chair"), optionValue: "Blue" });
+    expect(generate.mock.calls[0]![0].productDescription).toContain("A blue chair");
+    expect(generate.mock.calls[0]![0].productDescription).toContain('"name":"Colour","value":"Blue"');
     expect(generate.mock.calls[0]![0].productReferences).toHaveLength(1);
     expect(check).toHaveBeenCalledOnce();
     expect(await fixture.service.getJob(jobId)).toMatchObject({ providerRequestId: "req1", costMicros: 12 });
@@ -206,6 +229,35 @@ describe("preview lifecycle", () => {
     expect(await checkPhoto(admin, photo, shopId, productId)).toEqual({ ok: true, detected: undefined });
     expect(spy).toHaveBeenCalledWith(expect.any(Uint8Array), "diagonal", expect.objectContaining({ setting: "outdoor" }), expect.any(AbortSignal));
     expect(fixture.usages[0]).toMatchObject({ stage: "photo_check", costMicros: 2 });
+  });
+
+  it("serves native dependent swatches and generates the approved exact fabric/colour variant", async () => {
+    fixture.config.visualOptionName = "Fabric";
+    const p = {
+      title: "Bed", productType: "Bed", description: "Upholstered",
+      options: [
+        { name: "Fabric", optionValues: [{ name: "Plush Velvet" }, { name: "Teddy Boucle" }] },
+        { name: "Colour", optionValues: [{ name: "Cream", swatch: { image: { image: { url: "https://cdn.shopify.com/cream-swatch.jpg" } } } }, { name: "Grey" }] },
+        { name: "Size", optionValues: [{ name: "King" }] },
+      ],
+      variants: { nodes: [
+        { id: "plush-cream", availableForSale: true, image: { url: "https://cdn.shopify.com/plush-cream-bed.jpg" }, selectedOptions: [{ name: "Fabric", value: "Plush Velvet" }, { name: "Colour", value: "Cream" }, { name: "Size", value: "King" }] },
+        { id: "boucle-grey", availableForSale: true, image: { url: "https://cdn.shopify.com/boucle-grey-bed.jpg" }, selectedOptions: [{ name: "Fabric", value: "Teddy Boucle" }, { name: "Colour", value: "Grey" }, { name: "Size", value: "King" }] },
+      ], pageInfo: { hasNextPage: false } },
+    };
+    admin.graphql.mockImplementation(async () => Response.json({ data: { product: p } }));
+    const cfg = await storefrontConfig(admin, shopId, productId);
+    expect(cfg.enabled && cfg).toMatchObject({ fabricOptionName: "Fabric", optionName: "Colour", selectionOptionNames: ["Fabric", "Colour"] });
+    expect(cfg.enabled && cfg.swatches).toMatchObject([
+      { value: '["Plush Velvet","Cream"]', label: "Cream", group: "Plush Velvet", image: "https://cdn.shopify.com/cream-swatch.jpg", available: true },
+      { value: '["Teddy Boucle","Grey"]', label: "Grey", group: "Teddy Boucle", image: null, colour: null, available: true },
+    ]);
+    await expect(start({ optionValue: '["Teddy Boucle","Cream"]', variantId: "boucle-grey" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+    const generate = vi.spyOn(provider, "generate");
+    await finished((await start({ optionValue: '["Teddy Boucle","Grey"]', variantId: "boucle-grey" })).jobId);
+    expect(generate.mock.calls[0]?.[0].optionValue).toBe("Teddy Boucle / Grey");
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(["https://cdn.shopify.com/boucle-grey-bed.jpg"]);
   });
 });
 
