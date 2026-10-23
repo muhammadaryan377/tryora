@@ -1,5 +1,8 @@
 # Selector discovery audit — commit 2856735
 
+Historical audit findings; subsequent admin/discovery and provider-foundation work
+is summarized in `customization-integration-report.md`.
+
 23 October 2026. Audit and synthetic regression fixtures only; no runtime change
 or additional integration has been implemented.
 

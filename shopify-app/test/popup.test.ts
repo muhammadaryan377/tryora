@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { providerFixture } from "./fixtures/provider-mapping";
+import { manualStorefrontData } from "../app/customization/validation.server";
 
 let popup: any;
 beforeEach(async () => {
@@ -62,6 +64,24 @@ describe("popup validation and delivery", () => {
     expect(buttons[1]!.click).toHaveBeenCalledOnce(); expect(preventDefault).toHaveBeenCalledOnce();
   });
 
+  it("posts scoped manual revision and original variant while retaining composite preservation groups", async () => {
+    const synthetic = providerFixture(); const projection = await manualStorefrontData(synthetic.context);
+    let current = "11";
+    vi.stubGlobal("document", { readyState: "loading", getElementById: () => null, querySelector: () => ({ value: current }), addEventListener: vi.fn() });
+    const { Tryora } = await import("../../packages/storefront/src/main");
+    popup = new Tryora({ ...projection, product: "Synthetic bed", available: true, lead: { mode: "off" } } as any);
+    popup.render = vi.fn();
+    expect(popup.fabric).toBe("Velvet");
+    expect(popup.selectedVariant('["velvet","grey"]').id).toBe("gid://shopify/ProductVariant/12");
+    popup.photos.set("photo", { blob: new Blob(["photo"]), url: "blob:room" });
+    const fetcher = vi.fn(async () => Response.json({ error: "BAD_REQUEST" }, { status: 400 }));
+    vi.stubGlobal("fetch", fetcher);
+    await popup.generate('["velvet","grey"]', "photo");
+    const form = (fetcher.mock.calls[0] as any)[1].body;
+    expect(form.get("sourceVariant")).toBe("gid://shopify/ProductVariant/11");
+    expect(form.get("mappingRevision")).toBe("revision-1");
+    expect(form.get("variant")).toBe("gid://shopify/ProductVariant/12");
+  });
   it("blocks generation after a photo-check service failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     await popup.run({ type: "START_PHOTO_CHECK", photoId: "photo" });

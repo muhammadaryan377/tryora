@@ -105,6 +105,7 @@ export default function ProductSetup() {
   return (
     <s-page heading={row.title}>
       <s-link slot="breadcrumb-actions" href="/app/products">Products</s-link>
+      <s-section heading="Customization provider"><s-paragraph>Native options are the default. Configure a reviewed product-specific mapping or inspect provider compatibility without changing this product’s enabled setting.</s-paragraph><s-link href={`/app/customization?product=${encodeURIComponent(row.id)}`}>Provider settings and native data</s-link></s-section>
       {row.previewOptionStatus.warning && (
         <s-section heading="Preview mapping needs review">
           <s-paragraph>{row.previewOptionStatus.warning}</s-paragraph>
