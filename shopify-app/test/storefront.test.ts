@@ -83,10 +83,10 @@ describe("preview lifecycle", () => {
     expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
   });
 
-  it("delivers an exact reviewed mapped reference and consumes credit only on acknowledgement", async () => {
+  it.each(["manual_mapping", "cloudlift"])("delivers a reviewed native-linked reference through %s with credit only on acknowledgement", async (providerId) => {
     vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
     const synthetic = providerFixture(); synthetic.mapping.shopId = shopId;
-    fixture.providerSettings = [{ shopId, productId, providerId: "manual_mapping", active: true, revision: "revision-1", mapping: synthetic.mapping }];
+    fixture.providerSettings = [{ shopId, productId, providerId, active: true, revision: "revision-1", mapping: synthetic.mapping }];
     fixture.config.visualOptionName = "2. Choose Your Fabric";
     admin.graphql.mockImplementation(synthetic.graphql);
     const generate = vi.spyOn(provider, "generate");
