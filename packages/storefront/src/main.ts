@@ -19,12 +19,19 @@ import { launchersToRender, type LauncherSettings } from "../../core/src/launche
 import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 
+interface VariantChoice {
+  id: string;
+  image: string | null;
+  options: Record<string, string>;
+}
+
 interface Swatch {
   value: string;
   image: string | null;
   colour: string | null;
   available: boolean;
   group: string | null;
+  variants: VariantChoice[];
 }
 
 interface Config {
@@ -174,8 +181,10 @@ export class Tryora {
   private copied = false;
 
   constructor(private readonly cfg: Config) {
-    const firstAvailable = cfg.swatches.find((s) => s.available)?.value ?? null;
-    this.state = initialFlow({ leadMode: cfg.lead.mode, leadTiming: cfg.lead.timing ?? "before", defaultOption: cfg.swatches.length ? (preselected(cfg) ?? firstAvailable) : SINGLE });
+    const firstAvailable = cfg.swatches.find((s) => s.available && this.selectedVariant(s.value))?.value ?? null;
+    const onPage = preselected(cfg);
+    const defaultOption = onPage && this.selectedVariant(onPage) ? onPage : firstAvailable;
+    this.state = initialFlow({ leadMode: cfg.lead.mode, leadTiming: cfg.lead.timing ?? "before", defaultOption: cfg.swatches.length ? defaultOption : SINGLE });
     if (!cfg.available) this.state = reduce(this.state, { type: "PREVIEWS_UNAVAILABLE" }).state;
   }
 
@@ -266,6 +275,8 @@ export class Tryora {
   private async generate(option: string, photoId: string) {
     const photo = this.photos.get(photoId);
     if (!photo) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+    const variant = this.selectedVariant(option);
+    if (this.cfg.swatches.length && !variant) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
     this.dispatch({ type: "JOB_STAGE", stage: "checking_photo" });
     let jobId: string;
     try {
@@ -273,6 +284,7 @@ export class Tryora {
         photo: photo.blob,
         product: this.cfg.productId,
         option,
+        variant: variant?.id ?? "",
         visitor: visitorId(),
         key: crypto.randomUUID(),
         leadDone: leadSatisfied(this.state) ? "1" : "0",
@@ -538,8 +550,11 @@ export class Tryora {
           <span>Match the front-on product view.</span>
         </button>`;
     }
-    return c.productImage
-      ? `<img class="tryora__img tryora__img--product" src="${esc(c.productImage)}" alt="${esc(c.product)}">`
+    // Show the photograph of the actual selected colour instead of the generic
+    // featured product, which may be in a different colour.
+    const selectedPhoto = this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage;
+    return selectedPhoto
+      ? `<img class="tryora__img tryora__img--product" src="${esc(selectedPhoto)}" alt="${esc(c.product)}">`
       : "";
   }
 
@@ -709,19 +724,32 @@ export class Tryora {
       </div>`;
   }
 
+  private selectedVariant(value: string): VariantChoice | null {
+    const swatch = this.cfg.swatches.find((x) => x.value === value);
+    if (!swatch) return null;
+    const page = productPageOptions(this.cfg);
+    const matching = (swatch.variants ?? []).filter((variant) =>
+      Object.entries(page).every(([name, selected]) =>
+        name === this.cfg.optionName || !selected || variant.options[name] === selected));
+    // Shopify may carry size, length or fabric as well as colour. Never silently
+    // change those other options when the shopper taps a new colour.
+    return matching.find((variant) => variant.image) ?? matching[0] ?? null;
+  }
+
   private swatch(x: Swatch, locked: boolean): string {
     const s = this.state;
     const selected = s.selectedOption === x.value;
     const viewed = isViewed(s, x.value);
+    const available = x.available && !!this.selectedVariant(x.value);
     const fill = x.image ? `background-image:url('${esc(x.image)}')` : x.colour ? `background:${esc(x.colour)}` : "";
-    const disabled = locked || (!x.available && !viewed);
+    const disabled = locked || (!available && !viewed);
     const text = !x.image && !x.colour;
-    return `<button class="tryora__s ${selected ? "is-selected" : ""} ${!x.available ? "is-soldout" : ""} ${text ? "is-text" : ""}"
+    return `<button class="tryora__s ${selected ? "is-selected" : ""} ${!available ? "is-soldout" : ""} ${text ? "is-text" : ""}"
         data-act="swatch" data-value="${esc(x.value)}" role="radio" aria-checked="${selected}"
-        ${disabled ? "disabled" : ""} aria-label="${esc(x.value)}${viewed ? ", viewed" : ""}${!x.available ? ", sold out" : ""}">
+        ${disabled ? "disabled" : ""} aria-label="${esc(x.value)}${viewed ? ", viewed" : ""}${!available ? ", unavailable for selected options" : ""}">
         <span class="tryora__chip" style="${fill}">${text ? esc(x.value) : ""}</span>
         ${text ? "" : `<span class="tryora__sname">${esc(x.value)}</span>`}
-        ${viewed ? `<span class="tryora__viewed">${TICK} Viewed</span>` : !x.available ? `<span class="tryora__sold">Sold out</span>` : ""}
+        ${viewed ? `<span class="tryora__viewed">${TICK} Viewed</span>` : !available ? `<span class="tryora__sold">Unavailable</span>` : ""}
         ${locked && !selected ? `<span class="tryora__lock" aria-hidden="true">${LOCK}</span>` : ""}
       </button>`;
   }
@@ -755,18 +783,29 @@ const TICK = `<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"
 const LOCK = `<svg viewBox="0 0 16 16" width="12" height="12"><path d="M4 7V5a4 4 0 018 0v2h1v8H3V7zm2 0h4V5a2 2 0 00-4 0z" fill="currentColor"/></svg>`;
 const CAMERA = `<svg viewBox="0 0 24 24" width="36" height="36"><path d="M4 7h3l2-3h6l2 3h3v13H4z M12 17a4 4 0 100-8 4 4 0 000 8z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>`;
 
-/** The colour the shopper already picked on the product page, if any. */
-function preselected(cfg: Config): string | null {
+/** Read the current Shopify product variant when the popup opens. This also
+ * handles theme pickers that update the cart form after the initial page load. */
+function productPageOptions(cfg: Config): Record<string, string> {
   const root = document.getElementById("tryora-root");
+  let initial: Record<string, string> = {};
   try {
     const names: string[] = JSON.parse(root?.dataset.optionNames ?? "[]");
     const values: string[] = JSON.parse(root?.dataset.variantOptions ?? "[]");
-    const i = cfg.optionName ? names.indexOf(cfg.optionName) : -1;
-    const v = i >= 0 ? values[i] : undefined;
-    return v && cfg.swatches.some((s) => s.value === v) ? v : null;
-  } catch {
-    return null;
+    initial = Object.fromEntries(names.map((name, i) => [name, values[i] ?? ""]));
+  } catch { /* fall back to the selected colour's first eligible variant */ }
+  const id = document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value;
+  if (id) {
+    const current = cfg.swatches.flatMap((swatch) => swatch.variants ?? [])
+      .find((variant) => variant.id.split("/").pop() === id);
+    if (current) return current.options;
   }
+  return initial;
+}
+
+/** The colour the shopper already picked on the product page, if available. */
+function preselected(cfg: Config): string | null {
+  const v = cfg.optionName ? productPageOptions(cfg)[cfg.optionName] : undefined;
+  return v && cfg.swatches.some((s) => s.value === v && s.available) ? v : null;
 }
 
 // ---------- launchers ----------
