@@ -23,6 +23,9 @@ import { remoteJob, workerId } from "./preview-worker.server";
 import { createImageProvider } from "./image-provider.server";
 import { nativeSelections } from "./core/customization";
 import { eligibleVariants } from "./native-selection.server";
+import { loadProviderSetting } from "./customization/provider-config.server";
+import { providerAdapter, resolveConfiguredPreview } from "./customization/registry.server";
+import { manualStorefrontData } from "./customization/validation.server";
 /**
  * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
  * Image bytes are handled in process memory and never written to disk or the database here.
@@ -52,13 +55,15 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     include: { choices: true },
   });
   if (!config?.enabled || config.readiness !== "ready") return { enabled: false as const };
+  const providerSetting = await loadProviderSetting(shopId, gid);
+  if (!providerAdapter(providerSetting.providerId).capabilities.authorization || (providerSetting.providerId !== "shopify_native" && !providerSetting.active)) return { enabled: false as const };
   const res = await admin.graphql(
     `#graphql
     query TryoraStorefrontProduct($id: ID!) {
       product(id: $id) {
         id title productType
         featuredMedia { preview { image { url } } }
-        options { name optionValues { name swatch { color image { image { url } } } } }
+        options { id name optionValues { id name swatch { color image { image { url } } } } }
         variants(first: 250) { nodes { id availableForSale image { url(transform: { maxWidth: 800, maxHeight: 800 }) } selectedOptions { name value } } pageInfo { hasNextPage endCursor } }
       }
     }`,
@@ -78,14 +83,20 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     page = variants.pageInfo;
   }
   const model = nativeSelections(p.options, config.visualOptionName, p.variants.nodes);
-  if (model.issue || (config.autoConfigured && model.ambiguous)) return { enabled: false as const };
-  if (model.fabricOptionName && !model.selections.length) return { enabled: false as const };
+  if (providerSetting.providerId === "shopify_native" && (model.issue || (config.autoConfigured && model.ambiguous))) return { enabled: false as const };
+  if (providerSetting.providerId === "shopify_native" && model.fabricOptionName && !model.selections.length) return { enabled: false as const };
   const variantChoice = (v: any) => ({ id: v.id as string, image: v.image?.url ?? null,
     options: Object.fromEntries(v.selectedOptions.map((o: any) => [o.name, o.value])) as Record<string, string> });
-  const swatches: Swatch[] = model.selections.map((selection) => {
+  let swatches: Swatch[] = model.selections.map((selection) => {
     const variants = eligibleVariants(config, p.variants.nodes, selection).map(variantChoice);
     return { ...selection, available: variants.length > 0, variants };
   });
+  let manualData: Awaited<ReturnType<typeof manualStorefrontData>> | undefined;
+  if (providerSetting.providerId === "manual_mapping") {
+    try { manualData = await manualStorefrontData({ admin, config, setting: providerSetting }, { product: p, variants: p.variants.nodes }); }
+    catch { return { enabled: false as const }; }
+    swatches = manualData.swatches;
+  }
   const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
   // The popup only asks for its settings when the app embed is on in the theme, so this marks setup step 3 done.
   if (shopRow && !shopRow.storefrontEnabled) {
@@ -94,8 +105,8 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
   // Fill gaps with the merchant's own colours, or name-based guesses if they approved guessing.
   const resolved = resolveSwatches(
     swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
-    model.fabricOptionName ? {} : (config.swatchColours as Record<string, string>) ?? {},
-    { approved: !model.fabricOptionName && !!shopRow?.swatchAutoFill, photoColours: model.fabricOptionName ? {} : cachedPhotoColours(config.photoColours) },
+    (manualData || model.fabricOptionName) ? {} : (config.swatchColours as Record<string, string>) ?? {},
+    { approved: !manualData && !model.fabricOptionName && !!shopRow?.swatchAutoFill, photoColours: (manualData || model.fabricOptionName) ? {} : cachedPhotoColours(config.photoColours) },
   );
   swatches.forEach((s, i) => {
     s.colour = resolved[i]!.colour;
@@ -134,6 +145,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     productVariants: p.variants.nodes.map(variantChoice),
     singleVariants: eligibleVariants(config, p.variants.nodes).map(variantChoice),
     swatches,
+    ...(manualData ?? {}),
     style: { template, accent: tokens.accent, useThemeFont: tokens.useThemeFont },
     launcher: { ...launcher, wording: launcher.wording || DEFAULT_WORDING },
     lead: {
@@ -253,6 +265,8 @@ export async function startPreview(input: {
   productId: string;
   optionValue: string;
   variantId?: string;
+  sourceVariantId?: string;
+  mappingRevision?: string;
   visitorId: string;
   idempotencyKey: string;
   leadStepDone: boolean;
@@ -262,8 +276,11 @@ export async function startPreview(input: {
   ensureSweep();
   await cleanupStalePreviews();
   if (!input.idempotencyKey || input.idempotencyKey.length > 128) throw new TryoraError("BAD_REQUEST");
+  if (input.productId.length > 256 || input.optionValue.length > 4096 ||
+    (input.variantId?.length ?? 0) > 128 || (input.sourceVariantId?.length ?? 0) > 128 || (input.mappingRevision?.length ?? 0) > 128) throw new TryoraError("BAD_REQUEST");
   const config = await configuredProduct(input.admin, input.shopId, input.productId);
-  const product = await resolvePreviewProduct(input.admin, config, input.optionValue, input.variantId);
+  const setting = await loadProviderSetting(input.shopId, config.productId);
+  const product = await resolveConfiguredPreview({ admin: input.admin, config, setting, sourceVariantId: input.sourceVariantId }, input.optionValue, input.variantId, input.mappingRevision);
   const room = await normaliseImage(input.room);
   const analysisSignal = AbortSignal.timeout(30_000);
   const analysis = await measured(input.shopId, undefined, "generation_photo_check", () => abortable(analysisSignal, () => provider.analyseRoom(room, product.referenceAngle, {

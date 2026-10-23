@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { providerFixture } from "./fixtures/provider-mapping";
+import { manualStorefrontData } from "../app/customization/validation.server";
 
 let popup: any;
 beforeEach(async () => {
@@ -14,6 +16,72 @@ beforeEach(async () => {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("popup validation and delivery", () => {
+  it("discards an in-flight result after the native product selection changes, without acknowledging it", async () => {
+    let current = "1";
+    popup.cfg.productVariants = [{ id: "1", image: null, options: { Size: "King" } }, { id: "2", image: null, options: { Size: "Double" } }];
+    popup.cfg.singleVariants = popup.cfg.productVariants;
+    popup.pageOptions = { Size: "King" };
+    vi.stubGlobal("document", { getElementById: () => null, querySelector: () => ({ value: current }) });
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/preview")) return Response.json({ jobId: "old-job" });
+      current = "2";
+      return Response.json({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "token" });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const running = popup.generate("__single__", "photo");
+    await vi.advanceTimersByTimeAsync(1500); await running;
+    expect(popup.state.results).toEqual({});
+    expect(popup.pageOptions).toEqual({ Size: "Double" });
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/ack"))).toBe(false);
+  });
+
+  it("registers one product-change listener per open popup and removes it on close", () => {
+    const root = { className: "", dataset: {}, style: { setProperty: vi.fn() }, classList: { add: vi.fn() },
+      addEventListener: vi.fn(), remove: vi.fn(), querySelector: () => null };
+    const add = vi.fn(), remove = vi.fn();
+    vi.stubGlobal("document", { getElementById: () => null, querySelector: () => null, createElement: () => root,
+      addEventListener: add, removeEventListener: remove, body: { appendChild: vi.fn() }, documentElement: { classList: { add: vi.fn(), remove: vi.fn() } } });
+    popup.cfg.style = { template: "gallery", accent: null, useThemeFont: false };
+    popup.open(); popup.open();
+    expect(add).toHaveBeenCalledTimes(1);
+    expect(popup.pageWatchTimer).toBeDefined();
+    popup.close();
+    expect(popup.pageWatchTimer).toBeUndefined();
+    expect(remove).toHaveBeenCalledWith("change", popup.pageChangeHandler);
+    popup.open(); popup.close();
+    expect(add).toHaveBeenCalledTimes(2); expect(remove).toHaveBeenCalledTimes(2);
+  });
+
+  it("supports arrow-key radio navigation without selecting disabled options", () => {
+    const buttons = [{ dataset: { value: "a" }, click: vi.fn() }, { dataset: { value: "b" }, click: vi.fn() }];
+    const group = { querySelectorAll: vi.fn(() => buttons) };
+    const target = { closest: (selector: string) => selector === "button" ? buttons[0] : group };
+    popup.root = { querySelector: vi.fn(() => null) };
+    vi.stubGlobal("CSS", { escape: (s: string) => s });
+    const preventDefault = vi.fn();
+    popup.onKey({ key: "ArrowRight", target, preventDefault });
+    expect(group.querySelectorAll).toHaveBeenCalledWith('button[role="radio"]:not(:disabled)');
+    expect(buttons[1]!.click).toHaveBeenCalledOnce(); expect(preventDefault).toHaveBeenCalledOnce();
+  });
+
+  it("posts scoped manual revision and original variant while retaining composite preservation groups", async () => {
+    const synthetic = providerFixture(); const projection = await manualStorefrontData(synthetic.context);
+    let current = "11";
+    vi.stubGlobal("document", { readyState: "loading", getElementById: () => null, querySelector: () => ({ value: current }), addEventListener: vi.fn() });
+    const { Tryora } = await import("../../packages/storefront/src/main");
+    popup = new Tryora({ ...projection, product: "Synthetic bed", available: true, lead: { mode: "off" } } as any);
+    popup.render = vi.fn();
+    expect(popup.fabric).toBe("Velvet");
+    expect(popup.selectedVariant('["velvet","grey"]').id).toBe("gid://shopify/ProductVariant/12");
+    popup.photos.set("photo", { blob: new Blob(["photo"]), url: "blob:room" });
+    const fetcher = vi.fn(async () => Response.json({ error: "BAD_REQUEST" }, { status: 400 }));
+    vi.stubGlobal("fetch", fetcher);
+    await popup.generate('["velvet","grey"]', "photo");
+    const form = (fetcher.mock.calls[0] as any)[1].body;
+    expect(form.get("sourceVariant")).toBe("gid://shopify/ProductVariant/11");
+    expect(form.get("mappingRevision")).toBe("revision-1");
+    expect(form.get("variant")).toBe("gid://shopify/ProductVariant/12");
+  });
   it("blocks generation after a photo-check service failure", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     await popup.run({ type: "START_PHOTO_CHECK", photoId: "photo" });

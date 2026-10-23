@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { PreviewService, InMemoryStore } from "../app/core/index";
 
-const fixture = vi.hoisted(() => ({ service: null as any, config: null as any, usages: [] as any[], events: new Map<string, unknown>(), leadUpdates: [] as any[] }));
+const fixture = vi.hoisted(() => ({ service: null as any, config: null as any, providerSettings: [] as any[], usages: [] as any[], events: new Map<string, unknown>(), leadUpdates: [] as any[] }));
 vi.mock("../app/db.server", () => ({ default: {
   productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
+  customizationConfig: { findMany: vi.fn(async () => fixture.providerSettings) },
   visualChoice: { findMany: vi.fn(async () => fixture.config.choices ?? []) },
   providerUsage: { create: vi.fn(async ({ data }) => { fixture.usages.push(data); return data; }) },
   event: { upsert: vi.fn(async ({ where, create }) => { fixture.events.set(where.id, create); }), create: vi.fn(async () => ({})) },
@@ -16,6 +17,7 @@ vi.mock("../app/db.server", () => ({ default: {
 vi.mock("../app/tryora.server", () => ({ tryora: new Proxy({}, { get: (_, key) => fixture.service[key].bind(fixture.service) }) }));
 import { acknowledge, captureLead, checkPhoto, cleanupStalePreviews, pollLocalPreview, provider, startPreview, storefrontConfig } from "../app/storefront.server";
 import prisma from "../app/db.server";
+import { providerFixture } from "./fixtures/provider-mapping";
 
 const shopId = "test.myshopify.com";
 const productId = "gid://shopify/Product/1";
@@ -37,6 +39,7 @@ beforeEach(async () => {
   vi.useFakeTimers();
   fixture.service = new PreviewService(new InMemoryStore());
   await fixture.service.grantTrial(shopId);
+  fixture.providerSettings = [];
   fixture.usages = []; fixture.events.clear(); fixture.leadUpdates = [];
   fixture.config = { shopId, productId, enabled: true, readiness: "ready", choices: [], referenceMediaId: "gid://shopify/MediaImage/1", referenceAngle: "diagonal", placement: "replace", setting: "outdoor", itemNoun: "chair", visualOptionName: "Colour", frozenContext: {} };
   photo = await sharp({ create: { width: 500, height: 400, channels: 3, background: "blue" } }).jpeg().toBuffer();
@@ -53,10 +56,49 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.restoreAllMocks();
   await vi.advanceTimersByTimeAsync(11 * 60_000);
-  vi.useRealTimers(); vi.unstubAllGlobals();
+  vi.useRealTimers(); vi.unstubAllGlobals(); vi.unstubAllEnvs();
 });
 
 describe("preview lifecycle", () => {
+  it("bounds customization identities before native lookups or provider work", async () => {
+    const analyse = vi.spyOn(provider, "analyseRoom");
+    for (const over of [{ optionValue: "x".repeat(4097) }, { sourceVariantId: "x".repeat(129) }, { mappingRevision: "x".repeat(129) }]) {
+      await expect(start(over)).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+    expect(admin.graphql).not.toHaveBeenCalled(); expect(analyse).not.toHaveBeenCalled();
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
+  it("rejects an unverified provider or missing manual reference before provider calls and credit reservation", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
+    const analyse = vi.spyOn(provider, "analyseRoom");
+    fixture.providerSettings = [{ shopId, productId, providerId: "cloudlift", active: false, revision: "disabled", mapping: null }];
+    await expect(start()).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const synthetic = providerFixture(); synthetic.mapping.shopId = shopId;
+    synthetic.mapping.entries[0]!.referenceMediaIds = ["gid://shopify/MediaImage/999"];
+    fixture.providerSettings = [{ shopId, productId, providerId: "manual_mapping", active: true, revision: "revision-1", mapping: synthetic.mapping }];
+    admin.graphql.mockImplementation(synthetic.graphql);
+    await expect(start({ optionValue: '["velvet","grey"]', variantId: "gid://shopify/ProductVariant/12", sourceVariantId: "gid://shopify/ProductVariant/11", mappingRevision: "revision-1" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(analyse).not.toHaveBeenCalled();
+    expect(fixture.usages).toEqual([]);
+    expect((await fixture.service.balance(shopId)).availableTotal).toBe(10);
+  });
+
+  it("delivers an exact reviewed mapped reference and consumes credit only on acknowledgement", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
+    const synthetic = providerFixture(); synthetic.mapping.shopId = shopId;
+    fixture.providerSettings = [{ shopId, productId, providerId: "manual_mapping", active: true, revision: "revision-1", mapping: synthetic.mapping }];
+    fixture.config.visualOptionName = "2. Choose Your Fabric";
+    admin.graphql.mockImplementation(synthetic.graphql);
+    const generate = vi.spyOn(provider, "generate");
+    const { jobId } = await start({ optionValue: '["velvet","grey"]', variantId: "gid://shopify/ProductVariant/12", sourceVariantId: "gid://shopify/ProductVariant/11", mappingRevision: "revision-1" });
+    const ready = await finished(jobId);
+    expect(ready.stage).toBe("ready");
+    expect(generate.mock.calls[0]?.[0].optionValue).toBe("Velvet / Grey");
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual(["https://cdn.shopify.com/102.jpg"]);
+    expect((await fixture.service.balance(shopId)).consumed).toBe(0);
+    await acknowledge(shopId, jobId, ready.token);
+    expect((await fixture.service.balance(shopId)).consumed).toBe(1);
+  });
   it("hides stale mappings and rejects generation before credit reservation or provider use", async () => {
     fixture.config.visualOptionName = "Old Colour";
     const analyse = vi.spyOn(provider, "analyseRoom");
