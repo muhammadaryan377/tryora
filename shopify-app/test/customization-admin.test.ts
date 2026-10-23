@@ -31,6 +31,13 @@ describe("authenticated merchant provider configuration", () => {
     const view = await loader({ request: new Request("https://tryora.example/app/customization") } as any);
     expect(view.enabled).toBe(true);
   });
+  it("activates a Cloudlift native-linked profile only with a reviewed Shopify mapping", async () => {
+    const { mapping } = providerFixture();
+    const response = await act(request({ provider: "cloudlift", intent: "activate", reviewed: "yes", mapping: JSON.stringify(mapping) }));
+    expect(response).toBeInstanceOf(Response);
+    expect(state.create.mock.calls[0]?.[0].data).toMatchObject({ shopId, productId, providerId: "cloudlift", active: true });
+  });
+
   it("validates complete product evidence before manual activation", async () => {
     const { mapping } = providerFixture();
     const response = await act(request({ provider: "manual_mapping", intent: "activate", reviewed: "yes", mapping: JSON.stringify(mapping) }));
@@ -47,7 +54,7 @@ describe("authenticated merchant provider configuration", () => {
     if (kind === "cross-tenant") mapping.shopId = "other.myshopify.com";
     if (kind === "missing-reference") mapping.entries[0]!.referenceMediaIds = ["gid://shopify/MediaImage/999"];
     if (kind === "missing-review") delete fields.reviewed;
-    if (kind === "unsupported-activate") fields.provider = "cloudlift";
+    if (kind === "unsupported-activate") fields.provider = "unsupported";
     fields.mapping = kind === "malformed" ? "not-json" : JSON.stringify(mapping);
     const response = await act(request(fields));
     expect(response).toHaveProperty("error");
