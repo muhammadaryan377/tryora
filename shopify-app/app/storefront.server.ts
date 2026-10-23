@@ -37,13 +37,17 @@ export interface Swatch {
   colour: string | null;
   available: boolean;
   group: string | null;
+  /** Available, merchant-eligible Shopify variants for this colour. */
+  variants: { id: string; image: string | null; options: Record<string, string> }[];
 }
 
 export async function storefrontConfig(admin: AdminGraphql, shopId: string, productId: string) {
   ensureSweep();
   await cleanupStalePreviews();
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
-  const config = await prisma.productPreviewConfig.findUnique({ where: { shopId_productId: { shopId, productId: gid } } });
+  const config = await prisma.productPreviewConfig.findUnique({
+    where: { shopId_productId: { shopId, productId: gid } }, include: { choices: true },
+  });
   if (!config?.enabled || config.readiness !== "ready") return { enabled: false as const };
 
   const res = await admin.graphql(
@@ -53,7 +57,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
         id title productType
         featuredMedia { preview { image { url } } }
         options { name optionValues { name swatch { color image { image { url } } } } }
-        variants(first: 250) { nodes { availableForSale image { url(transform: { maxWidth: 160, maxHeight: 160 }) } selectedOptions { name value } } pageInfo { hasNextPage endCursor } }
+        variants(first: 250) { nodes { id availableForSale image { url(transform: { maxWidth: 160, maxHeight: 160 }) } selectedOptions { name value } } pageInfo { hasNextPage endCursor } }
       }
     }`,
     { variables: { id: gid } },
@@ -76,16 +80,29 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
   const option = optionName ? p.options.find((o: any) => o.name === optionName) : null;
   // One colour (e.g. just a black sofa) needs no swatches: the product's own photos are used.
   const values = (option?.optionValues ?? []).length > 1 ? option.optionValues : [];
+  const frozen = (config.frozenContext ?? {}) as Record<string, string>;
   const swatches: Swatch[] = values.map((v: any) => {
+    const choice = config.choices.find((c) => c.optionValue === v.name);
+    const allowedIds = (choice?.variantIds ?? []) as string[];
     const variants = p.variants.nodes.filter((n: any) =>
-      n.selectedOptions.some((s: any) => s.name === optionName && s.value === v.name),
-    );
+      n.availableForSale &&
+      n.selectedOptions.some((s: any) => s.name === optionName && s.value === v.name) &&
+      Object.entries(frozen).every(([name, value]) =>
+        n.selectedOptions.some((s: any) => s.name === name && s.value === value)) &&
+      (!choice || choice.available) &&
+      (!allowedIds.length || allowedIds.includes(n.id)),
+    ).map((n: any) => ({
+      id: n.id as string,
+      image: (n.image?.url as string) ?? null,
+      options: Object.fromEntries(n.selectedOptions.map((o: any) => [o.name, o.value])) as Record<string, string>,
+    }));
     return {
       value: v.name,
       image: v.swatch?.image?.image?.url ?? null,
       colour: v.swatch?.color ?? null,
-      available: variants.some((n: any) => n.availableForSale),
+      available: variants.length > 0,
       group: null, // colour groups come from merchant settings (not built yet), so no chips show
+      variants,
     };
   });
   const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
