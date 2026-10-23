@@ -11,7 +11,7 @@ export interface FixtureVariant {
   availableForSale: boolean;
   price: string;
   compareAtPrice: string | null;
-  image: { url: string } | null;
+  image: { url: string; altText?: string | null } | null;
   selectedOptions: { name: string; value: string }[];
 }
 
@@ -26,11 +26,13 @@ export interface FixtureProduct {
   status: "ACTIVE" | "DRAFT" | "ARCHIVED";
   description: string;
   category: { fullName: string } | null;
-  featuredMedia: { preview: { image: { url: string } } } | null;
+  featuredMedia: { preview: { image: { url: string; altText?: string | null } } } | null;
   options: { name: string; optionValues: { name: string }[] }[];
   collections: { nodes: { title: string; handle: string }[] };
   metafields: Record<string, string>;
   variants: FixtureVariant[];
+  /** Product media (MediaImage) that a merchant can approve as preview references. */
+  media: { id: string; url: string }[];
 }
 
 let nextId = 1000;
@@ -49,6 +51,11 @@ export function fixtureProduct(input: {
   status?: FixtureProduct["status"];
   id?: number;
   category?: string;
+  /** Featured image URL; null for a product without media. */
+  featuredImage?: string | null;
+  /** Per-variant image URL; null when the merchant assigned none. */
+  variantImage?: (options: Record<string, string>, index: number) => string | null;
+  media?: { id: string; url: string }[];
 }): FixtureProduct {
   const id = input.id ?? nextId++;
   const handle = input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + `-${id}`;
@@ -65,7 +72,10 @@ export function fixtureProduct(input: {
       availableForSale: input.available ? input.available(options) : true,
       price: price.toFixed(2),
       compareAtPrice: null,
-      image: { url: `https://cdn.shopify.com/${handle}-${index}.jpg` },
+      image: (() => {
+        const url = input.variantImage ? input.variantImage(options, index) : `https://cdn.shopify.com/${handle}-${index}.jpg`;
+        return url ? { url, altText: `${input.title} ${Object.values(options).join(" ")}` } : null;
+      })(),
       selectedOptions: names.map((name) => ({ name, value: options[name]! })),
     };
   });
@@ -80,11 +90,12 @@ export function fixtureProduct(input: {
     status: input.status ?? "ACTIVE",
     description: input.description ?? `${input.title}. A ${input.productType.toLowerCase()} for modern homes.`,
     category: { fullName: input.category ?? `Home & Garden > Furniture > ${input.productType}` },
-    featuredMedia: { preview: { image: { url: `https://cdn.shopify.com/${handle}.jpg` } } },
+    featuredMedia: input.featuredImage === null ? null : { preview: { image: { url: input.featuredImage ?? `https://cdn.shopify.com/${handle}.jpg`, altText: `${input.title} product photo` } } },
     options: names.map((name) => ({ name, optionValues: input.options[name]!.map((value) => ({ name: value })) })),
     collections: { nodes: (input.collections ?? [input.productType + "s"]).map((title) => ({ title, handle: title.toLowerCase().replace(/[^a-z0-9]+/g, "-") })) },
     metafields: input.metafields ?? {},
     variants,
+    media: input.media ?? [],
   };
 }
 
@@ -121,7 +132,7 @@ export function furnitureCatalogue(count: number): FixtureProduct[] {
 
 function productNode(product: FixtureProduct, variants: FixtureVariant[], hasNextPage: boolean, endCursor: string | null) {
   const prices = product.variants.map((variant) => Number(variant.price));
-  const { metafields, variants: _all, ...rest } = product;
+  const { metafields, variants: _all, media: _media, ...rest } = product;
   const aliases = Object.fromEntries(["dimensions", "width", "depth", "height", "material", "materials", "fabric", "care", "assembly", "warranty"]
     .map((alias) => [alias, metafields[alias] ? { value: metafields[alias] } : null]));
   return {
@@ -228,6 +239,14 @@ export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {},
         options: product.options.map((option, index) => ({ id: `option-${index}`, name: option.name, optionValues: option.optionValues.map((value, i) => ({ id: `value-${index}-${i}`, name: value.name })) })),
         variants: { nodes: product.variants.map((variant) => ({ id: variant.id, availableForSale: variant.availableForSale, image: variant.image, selectedOptions: variant.selectedOptions })), pageInfo: { hasNextPage: false, endCursor: null } },
       } } });
+    }
+    if (name === "TryoraPreviewMedia") {
+      const product = products.find((entry) => entry.id === vars.id);
+      if (!product) return Response.json({ data: { product: null } });
+      return Response.json({ data: { product: { media: {
+        nodes: product.media.map((media) => ({ id: media.id, image: { url: media.url } })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } });
     }
     throw new Error(`Unexpected query: ${name}`);
   };

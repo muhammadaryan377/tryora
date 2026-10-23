@@ -18,7 +18,12 @@ export interface Recommendation extends Money {
   variantId: string | null;
   title: string;
   url: string;
+  /** A real Shopify image URL, or null. */
   image: string | null;
+  /** Optional for conversations saved before image sources were recorded. */
+  imageAlt?: string;
+  imageSource?: "variant" | "reference" | "product" | null;
+  referenceImage?: string | null;
   options: Record<string, string>;
   purchaseAvailable: boolean;
   previewAvailable: boolean;

@@ -642,6 +642,20 @@ export class RoomAssistant {
     root.addEventListener("change", (event) => void this.onChange(event));
     root.addEventListener("keydown", (event) => this.onKey(event));
     root.addEventListener("input", (event) => { if ((event.target as HTMLElement).matches("textarea")) this.autosize(); });
+    // Image load and error events do not bubble; listen in the capture phase.
+    root.addEventListener("load", (event) => {
+      const thumb = (event.target as HTMLElement).closest?.(".tryora-assistant__thumb") as HTMLElement | null;
+      if (thumb) thumb.dataset.state = "loaded";
+    }, true);
+    root.addEventListener("error", (event) => {
+      const image = event.target as HTMLElement;
+      const thumb = image.closest?.(".tryora-assistant__thumb") as HTMLElement | null;
+      if (!thumb || image.tagName !== "IMG") return;
+      thumb.dataset.state = "error";
+      thumb.setAttribute("role", "img");
+      thumb.setAttribute("aria-label", `Image unavailable: ${image.getAttribute("alt") ?? ""}`);
+      thumb.innerHTML = "<span>Image unavailable</span>";
+    }, true);
     document.body.appendChild(root);
     this.root = root;
     if (!coarsePointer()) root.querySelector("[data-ta-camera]")?.setAttribute("hidden", "");
@@ -825,11 +839,29 @@ export class RoomAssistant {
     return `${buy}${preview}`;
   }
 
+  /**
+   * A real Shopify thumbnail with loading and error states. A general product photo shown for a specific option is
+   * labelled, so it is never mistaken for that option's appearance. Missing images show text, never stock art.
+   */
+  private thumbHtml(src: string | null | undefined, alt: string, note = "") {
+    if (!src) return `<div class="tryora-assistant__thumb is-missing" role="img" aria-label="${escapeHtml(`No image available for ${alt}`)}"><span>No image</span></div>`;
+    return `<div class="tryora-assistant__thumb" data-state="loading">
+      <img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
+      ${note ? `<span class="tryora-assistant__thumb-note">${escapeHtml(note)}</span>` : ""}
+    </div>`;
+  }
+
   private cardHtml(item: Recommendation, index: number) {
     const options = Object.entries(item.options).map(([name, value]) => `<span class="tryora-assistant__tag">${escapeHtml(name)}: ${escapeHtml(value)}</span>`).join("");
     const id = escapeHtml(item.id);
+    const generalPhoto = item.imageSource === "product" && !!item.variantRef;
+    const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
+    const unavailable = !item.previewAvailable && item.previewStatus !== "not_configured";
+    const reason = item.previewStatus === "choose_options" || item.previewStatus === "product_page"
+      ? "Choose options on the product page to preview this exact configuration."
+      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option can't be verified for an AI preview.";
     return `<article class="tryora-assistant__card">
-      ${item.image ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy">` : `<span class="tryora-assistant__card-placeholder">${ICONS.sofa}</span>`}
+      ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
         <span class="tryora-assistant__eyebrow">Option ${index + 1}</span>
         <h4>${escapeHtml(item.title)}</h4>
@@ -837,18 +869,23 @@ export class RoomAssistant {
         ${this.priceHtml(item)}
         <div class="tryora-assistant__tags">${this.badgesHtml(item)}</div>
         ${item.reason ? `<p>${escapeHtml(item.reason)}</p>` : ""}
+        ${generalPhoto ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" href="${escapeHtml(item.url)}">View product</a>
-          ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}">See it in my room</button>` : ""}
+          ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}">See it in my room</button>`
+            : unavailable ? `<button type="button" class="tryora-assistant__primary" disabled aria-describedby="ta-why-${id}">See it in my room</button>` : ""}
         </div>
+        ${unavailable ? `<p class="tryora-assistant__image-note" id="ta-why-${id}">${escapeHtml(reason)}</p>` : ""}
       </div>
     </article>`;
   }
 
   private visualiseHtml(item: Recommendation) {
     const options = Object.values(item.options).join(" / ");
+    // Show the exact approved reference the preview will be generated from, not a general product photo.
+    const reference = item.referenceImage ?? (item.imageSource === "variant" || item.imageSource === "reference" ? item.image : null);
     return `<div class="tryora-assistant__visualise">
-      ${item.image ? `<img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy">` : ""}
+      ${this.thumbHtml(reference, `${item.title}${options ? `, ${options}` : ""}`, reference ? "Preview reference" : "")}
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${escapeHtml(item.title)}</h4>

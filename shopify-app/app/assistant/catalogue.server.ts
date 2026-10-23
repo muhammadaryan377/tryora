@@ -57,14 +57,14 @@ const PRODUCT_FIELDS = `
   id title handle productType vendor tags onlineStoreUrl status
   description(truncateAt: 1500)
   category { fullName }
-  featuredMedia { preview { image { url(transform: { maxWidth: 800, maxHeight: 800 }) } } }
+  featuredMedia { preview { image { url(transform: { maxWidth: 800, maxHeight: 800 }) altText } } }
   priceRangeV2 { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
   variantsCount { count }
   options { name optionValues { name } }
   collections(first: 4) { nodes { title handle } }
   ${ATTRIBUTE_METAFIELDS.map(([alias, namespace, key]) => `${alias}: metafield(namespace: "${namespace}", key: "${key}") { value }`).join("\n  ")}`;
 
-const VARIANT_FIELDS = `id title availableForSale price compareAtPrice image { url(transform: { maxWidth: 800, maxHeight: 800 }) } selectedOptions { name value }`;
+const VARIANT_FIELDS = `id title availableForSale price compareAtPrice image { url(transform: { maxWidth: 800, maxHeight: 800 }) altText } selectedOptions { name value }`;
 /** The index samples variants without images; exact variants and images come from PRODUCT_DETAIL_QUERY. */
 const INDEX_VARIANT_FIELDS = `id title availableForSale price compareAtPrice selectedOptions { name value }`;
 
@@ -99,7 +99,9 @@ export interface CatalogueVariant {
   price: string;
   compareAtPrice: string | null;
   available: boolean;
+  /** This exact variant's own Shopify image, when the merchant assigned one. Never a product-level fallback. */
   image: string | null;
+  imageAlt: string | null;
 }
 
 export interface CatalogueProduct {
@@ -113,7 +115,9 @@ export interface CatalogueProduct {
   category: string | null;
   tags: string[];
   description: string;
+  /** The product's featured media image (Shopify CDN). Represents the product, not any particular variant. */
   image: string | null;
+  imageAlt: string | null;
   currencyCode: string;
   minPrice: number;
   maxPrice: number;
@@ -215,6 +219,12 @@ function attributeValue(raw: unknown): string | null {
   return clean ? clean.slice(0, 300) : null;
 }
 
+/** Only absolute https image URLs from Shopify are passed on to shoppers. */
+export function imageUrl(value: unknown): string | null {
+  return typeof value === "string" && /^https:\/\/[^\s"'<>]+$/i.test(value) ? value : null;
+}
+const altText = (value: unknown) => typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : null;
+
 function parseVariant(node: any): CatalogueVariant | null {
   if (typeof node?.id !== "string") return null;
   return {
@@ -225,7 +235,8 @@ function parseVariant(node: any): CatalogueVariant | null {
     price: String(node.price ?? "0"),
     compareAtPrice: node.compareAtPrice ? String(node.compareAtPrice) : null,
     available: node.availableForSale === true,
-    image: node.image?.url ?? null,
+    image: imageUrl(node.image?.url),
+    imageAlt: altText(node.image?.altText),
   };
 }
 
@@ -256,7 +267,8 @@ export function parseProduct(node: any, variantNodes: any[], variantsComplete: b
     category,
     tags,
     description: String(node.description ?? "").replace(/\s+/g, " ").trim(),
-    image: node.featuredMedia?.preview?.image?.url ?? null,
+    image: imageUrl(node.featuredMedia?.preview?.image?.url),
+    imageAlt: altText(node.featuredMedia?.preview?.image?.altText),
     currencyCode: String(node.priceRangeV2?.minVariantPrice?.currencyCode ?? "GBP"),
     minPrice: Number(node.priceRangeV2?.minVariantPrice?.amount ?? 0),
     maxPrice: Number(node.priceRangeV2?.maxVariantPrice?.amount ?? 0),

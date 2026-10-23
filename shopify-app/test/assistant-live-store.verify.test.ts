@@ -99,7 +99,15 @@ describe.skipIf(!SHOP || !TOKEN)(`Room Assistant against ${SHOP || "a live store
       bedSearch: beds.map((match) => ({ title: match.product.title, type: match.product.productType, published: true, sampleAvailable: match.product.variants.filter((variant) => variant.available).length, sampleSize: match.product.variants.length, variantsComplete: match.product.variantsComplete })),
       bedCountFromIndex: counted.length,
       bedsCounted: counted.map((product) => product.title),
+      // Real Shopify thumbnails the recommendation cards would show for each expected bed.
+      bedImages: EXPECTED_BEDS.map((title) => {
+        const product = counted.find((entry) => entry.title === title);
+        return { title, featuredImage: product?.image ?? null, altText: product?.imageAlt ?? null };
+      }),
     };
+    for (const bed of (report.catalogue as any).bedImages) {
+      if (bed.featuredImage) expect(bed.featuredImage, bed.title).toMatch(/^https:\/\//);
+    }
     expect(costs.filter((cost) => cost.operation === "TryoraAssistantCatalogue" && cost.errors.length)).toEqual([]);
     for (const title of EXPECTED_BEDS) expect(counted.map((product) => product.title), `${title} missing from the assistant's index`).toContain(title);
   }, 180_000);
@@ -120,7 +128,8 @@ describe.skipIf(!SHOP || !TOKEN)(`Room Assistant against ${SHOP || "a live store
     const product = details.get(ref!)!;
     report.viewedProduct = {
       title: product.title, type: product.productType, category: product.category, price: [product.minPrice, product.maxPrice, product.currencyCode],
-      variants: product.variants.map((variant) => ({ options: variant.options, price: variant.price, availableForSale: variant.available })),
+      featuredImage: product.image,
+      variants: product.variants.map((variant) => ({ options: variant.options, price: variant.price, availableForSale: variant.available, ownImage: variant.image })),
       allVariantsLoaded: product.variantsComplete,
     };
     expect(product.variants.length).toBeGreaterThan(0);

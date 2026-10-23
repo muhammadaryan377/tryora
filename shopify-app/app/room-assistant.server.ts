@@ -11,6 +11,7 @@ import { providerAdapter, resolveConfiguredPreview } from "./customization/regis
 import {
   adminQuery,
   countCatalogue,
+  imageUrl,
   getCatalogue,
   getProductDetails,
   isRef,
@@ -83,6 +84,8 @@ export interface ShopperPreferences {
 
 export interface ShownRecommendation { productRef: string; variantRef: string | null }
 
+export type ImageSource = "variant" | "reference" | "product" | null;
+
 export type PreviewStatus = "available" | "not_configured" | "unavailable" | "choose_options" | "product_page";
 
 export interface AssistantRecommendation {
@@ -93,7 +96,16 @@ export interface AssistantRecommendation {
   variantId: string | null;
   title: string;
   url: string;
+  /** Card thumbnail, always a real Shopify image (never generated, never a stock placeholder). */
   image: string | null;
+  imageAlt: string;
+  /**
+   * What the thumbnail shows. "variant": this exact variant's own image. "reference": the merchant-approved preview
+   * reference for this exact variant. "product": the product's featured image, which may show a different option.
+   */
+  imageSource: ImageSource;
+  /** The approved reference Tryora's preview pipeline validated for this exact variant; null when not previewable. */
+  referenceImage: string | null;
   price: string | null;
   maxPrice: string | null;
   currencyCode: string;
@@ -727,6 +739,10 @@ const cardSummary = (item: AssistantRecommendation, index: number) => ({
   currency: item.currencyCode,
   availableToBuy: item.purchaseAvailable,
   aiRoomPreview: item.previewStatus,
+  image: item.imageSource === "variant" ? "photo of this exact option"
+    : item.imageSource === "reference" ? "approved reference photo of this exact option"
+      : item.imageSource === "product" ? "general product photo (the chosen option may look different; do not describe its colour from it)"
+        : "no image",
 });
 
 async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendation[] }) {
@@ -814,7 +830,7 @@ function nativeVariants(product: CatalogueProduct): NativeVariant[] {
  * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
  * same provider adapter chain that startPreview uses. Anything less is reported as not available.
  */
-async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null }> {
+async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null; reference?: string | null }> {
   if (!config || config.shopId !== ctx.shopId || config.productId !== product.id) return { status: "not_configured", optionValue: null };
   if (!variant) return { status: "choose_options", optionValue: null };
   if (!variant.available) return { status: "unavailable", optionValue: null };
@@ -831,8 +847,10 @@ async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, 
     const selection = model.selections.find((entry) => matchesOptions(native, entry.options));
     if (model.selections.length && !selection) return { status: "unavailable", optionValue: null };
     const optionValue = selection?.value ?? SINGLE;
-    await resolveConfiguredPreview({ admin: ctx.admin, config, setting }, optionValue, variant.id);
-    return { status: "available", optionValue };
+    // The same validation startPreview runs: exact variant, stock, frozen context and approved reference images.
+    const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting }, optionValue, variant.id);
+    if (validated.variantId !== variant.id) return { status: "unavailable", optionValue: null };
+    return { status: "available", optionValue, reference: imageUrl(validated.urls[0]) };
   } catch {
     // A stale or incomplete reference is reported as unavailable instead of being substituted.
     return { status: "unavailable", optionValue: null };
@@ -842,6 +860,19 @@ async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, 
 // ---------- recommendations ----------
 
 interface ModelRecommendation { productRef: string; variantRef: string | null; reason: string }
+
+/**
+ * Picks a card thumbnail without ever passing one option's image off as another's: the variant's own image first,
+ * then the approved preview reference for that exact variant, then the product's featured image, labelled as such.
+ */
+export function cardImage(product: Pick<CatalogueProduct, "title" | "image" | "imageAlt">, variant: Pick<CatalogueVariant, "image" | "imageAlt" | "options"> | null, reference: string | null) {
+  const optionText = variant ? Object.values(variant.options).join(" / ") : "";
+  const label = optionText ? `${product.title}, ${optionText}` : product.title;
+  if (variant?.image) return { image: variant.image, imageAlt: variant.imageAlt ?? label, imageSource: "variant" as ImageSource, referenceImage: reference };
+  if (variant && reference) return { image: reference, imageAlt: label, imageSource: "reference" as ImageSource, referenceImage: reference };
+  if (product.image) return { image: product.image, imageAlt: product.imageAlt ?? product.title, imageSource: "product" as ImageSource, referenceImage: reference };
+  return { image: null, imageAlt: label, imageSource: null as ImageSource, referenceImage: reference };
+}
 
 async function verifiedRecommendations(ctx: RequestContext, requested: ModelRecommendation[]): Promise<AssistantRecommendation[]> {
   const picks: ModelRecommendation[] = [];
@@ -886,7 +917,7 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       variantId: variant?.id ?? null,
       title: product.title,
       url: variant ? `${product.url}?variant=${encodeURIComponent(variant.ref)}` : product.url,
-      image: variant?.image ?? product.image,
+      ...cardImage(product, variant, preview.status === "available" ? preview.reference ?? null : null),
       price: variant ? variant.price : String(product.minPrice),
       maxPrice: variant || product.minPrice === product.maxPrice ? null : String(product.maxPrice),
       currencyCode: product.currencyCode,

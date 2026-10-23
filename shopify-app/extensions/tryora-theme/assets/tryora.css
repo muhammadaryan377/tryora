@@ -286,8 +286,15 @@ html.tryora-open { overflow: hidden; }
 
 .tryora-assistant__cards { display: grid; gap: 10px; }
 .tryora-assistant__card { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 10px; border: 1px solid var(--ta-line); border-radius: 14px; background: #fff; }
-.tryora-assistant__card > img, .tryora-assistant__card-placeholder { width: 96px; height: 112px; object-fit: cover; border-radius: 10px; background: var(--ta-surface); }
-.tryora-assistant__card-placeholder { display: grid; place-items: center; color: var(--ta-muted); }
+/* Real Shopify product thumbnails: whole product visible (contain), never stretched, with loading and error states. */
+.tryora-assistant__thumb { position: relative; align-self: start; width: 96px; aspect-ratio: 1 / 1; overflow: hidden; border-radius: 10px; background: #fff; border: 1px solid var(--ta-line); }
+.tryora-assistant__thumb img { display: block; width: 100%; height: 100%; object-fit: contain; opacity: 1; transition: opacity .2s ease; }
+.tryora-assistant__thumb[data-state="loading"] { background: linear-gradient(100deg, var(--ta-surface) 30%, #fbfaf6 50%, var(--ta-surface) 70%) 0 0 / 200% 100%; animation: tryora-assistant-shimmer 1.2s linear infinite; }
+.tryora-assistant__thumb[data-state="loading"] img { opacity: 0; }
+.tryora-assistant__thumb.is-missing, .tryora-assistant__thumb[data-state="error"] { display: grid; place-items: center; padding: 6px; background: var(--ta-surface); color: var(--ta-muted); font-size: 11px; line-height: 1.2; text-align: center; }
+.tryora-assistant__thumb-note { position: absolute; left: 4px; right: 4px; bottom: 4px; padding: 2px 4px; border-radius: 6px; background: rgba(255,255,255,.92); color: #45443e; font-size: 9.5px; font-weight: 600; line-height: 1.2; text-align: center; }
+.tryora-assistant__image-note { color: var(--ta-muted) !important; font-size: 11.5px !important; font-style: italic; }
+@keyframes tryora-assistant-shimmer { to { background-position: -200% 0; } }
 .tryora-assistant__card-body { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 5px; }
 .tryora-assistant__card h4, .tryora-assistant__visualise h4 { font-size: 14.5px; font-weight: 650; line-height: 1.3; }
 .tryora-assistant__card p, .tryora-assistant__visualise p { color: var(--ta-muted); font-size: 12.5px; line-height: 1.4; }
@@ -305,12 +312,13 @@ html.tryora-open { overflow: hidden; }
 }
 .tryora-assistant__primary { border: 1px solid var(--ta-accent); background: var(--ta-accent); color: var(--ta-accent-ink) !important; }
 .tryora-assistant__primary:hover { filter: brightness(.94); }
+.tryora-assistant__primary:disabled { opacity: .45; cursor: not-allowed; filter: none; }
 .tryora-assistant__secondary, .tryora-assistant__chip-button { border: 1px solid var(--ta-line); background: #fff; color: var(--ta-ink) !important; }
 .tryora-assistant__secondary:hover, .tryora-assistant__chip-button:hover { border-color: var(--ta-accent); }
 .tryora-assistant__chip-button { min-height: 28px; padding: 3px 10px; font-size: 12.5px; }
 .tryora-assistant__link { padding: 0; border: 0; background: none; color: #45472a; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .tryora-assistant__visualise { display: grid; grid-template-columns: 88px 1fr; gap: 12px; padding: 12px; border: 1px solid #cfd2bb; border-radius: 14px; background: #f7f8f1; }
-.tryora-assistant__visualise > img { width: 88px; height: 88px; object-fit: cover; border-radius: 10px; }
+.tryora-assistant__visualise > .tryora-assistant__thumb { width: 88px; }
 .tryora-assistant__visualise > div { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .tryora-assistant__preview { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--ta-line); border-radius: 14px; background: #fff; }
 .tryora-assistant__preview > img { width: 100%; border-radius: 10px; background: var(--ta-surface); }
@@ -386,7 +394,7 @@ html.tryora-assistant-locked { overflow: hidden; }
   .tryora-assistant__row textarea { font-size: 16px; } /* prevents iOS zoom on focus */
   .tryora-assistant__scroll { padding: 14px 14px 8px; }
   .tryora-assistant__card { grid-template-columns: 84px 1fr; }
-  .tryora-assistant__card > img, .tryora-assistant__card-placeholder { width: 84px; height: 100px; }
+  .tryora-assistant__card .tryora-assistant__thumb { width: 84px; }
   .tryora-assistant__bubble { max-width: 92%; }
   html:has(.tryora-assistant[data-state="open"]) { overflow: hidden; }
   .tryora-assistant-launch { bottom: calc(14px + env(safe-area-inset-bottom)); min-height: 46px; padding-right: 15px; font-size: 14px; }
@@ -398,5 +406,5 @@ html.tryora-assistant-locked { overflow: hidden; }
 @keyframes tryora-assistant-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .tryora-assistant__panel, .tryora-assistant-launch, .tryora-assistant__action { animation: none !important; transition: none !important; }
-  .tryora-assistant__dots i, .tryora-assistant__spinner { animation: none !important; }
+  .tryora-assistant__dots i, .tryora-assistant__spinner, .tryora-assistant__thumb { animation: none !important; }
 }
