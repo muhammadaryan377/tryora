@@ -1,5 +1,9 @@
 # Composite native options: data requirements and implementation plan
 
+Follow-up: the exact native/manual mapping foundation is now implemented and tested
+with synthetic fixtures; see `customization-integration-report.md`. Complete real-store
+data and semantic/media review are still required. No Aspen mapping is activated.
+
 Status: proposal, pending complete product data. No parser, adapter or production
 configuration has been implemented. The examples reported in chat are truncated;
 their separators and suffix semantics are not a verified grammar.

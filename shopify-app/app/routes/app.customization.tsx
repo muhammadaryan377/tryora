@@ -121,6 +121,7 @@ export default function CustomizationSettings() {
       <s-paragraph>Effective provider: {data.effectiveProvider}. Status: {data.diagnostic}.</s-paragraph>
       {data.coverage && <s-paragraph>{data.coverage.mapped} reviewed bindings out of {data.coverage.total} native variants; {data.coverage.unmapped} unmapped variants are not offered by this profile. Shopify currently reports {data.coverage.available} native variants available for sale.</s-paragraph>}
       <s-paragraph>Cloudlift and other external sources are not connected. Browser selection events cannot approve a preview. Manual mappings support reviewed native variants only.</s-paragraph>
+      <s-paragraph>Saving a provider that needs setup pauses Tryora previews for products using that setting. A store default affects inheriting products; explicit product overrides remain in effect. Manual drafts need validation and activation. Shopify checkout and existing product ON/OFF settings are unchanged.</s-paragraph>
       {result?.error && <p role="alert">{result.error}</p>}
       <Form method="post" key={`${data.productId}:${data.savedRevision}`}>
         <input type="hidden" name="provider" value={provider} />

@@ -1,5 +1,9 @@
 # Customization architecture and staged delivery
 
+This records the earlier native-discovery increment. The next implemented provider
+foundation and remaining activation gates are in `customization-integration-report.md`
+and `customization-provider-setup.md`.
+
 ## Priorities
 
 1. Keep discovery, merchant intent and preview authorization separate. Discovery
