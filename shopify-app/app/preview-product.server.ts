@@ -9,7 +9,7 @@ export const PREVIEW_PRODUCT_QUERY = `#graphql
   query TryoraPreviewProduct($id: ID!, $after: String) {
     product(id: $id) {
       id title description productType
-      options { name optionValues { name } }
+      options { id name optionValues { id name } }
       variants(first: 250, after: $after) {
         nodes { id availableForSale image { url } selectedOptions { name value } }
         pageInfo { hasNextPage endCursor }
@@ -94,6 +94,7 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
   const urls = [...new Set<string>([variantUrl, ...ids.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
   return {
     urls, optionValue, variantId: selected.id as string,
+    selectedOptions: Object.fromEntries(selected.selectedOptions.map((o: { name: string; value: string }) => [o.name, o.value])) as Record<string, string>,
     referenceVersion: `${choice?.referenceVersion ?? ids.join(",")}:${selected.id}`,
     referenceAngle: choice?.angle ?? config.referenceAngle ?? "front",
     itemNoun: config.itemNoun || defaultNoun(product.productType, product.title),

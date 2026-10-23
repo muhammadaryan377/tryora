@@ -66,6 +66,22 @@ model Shop {
   issues        IssueReport[]
   events        Event[]
   providerUsage ProviderUsage[]
+  customizationConfigs CustomizationConfig[]
+}
+
+/// Opt-in provider settings. productId "__store__" holds the store default.
+/// Mapping JSON contains Shopify IDs and reviewed labels, never credentials or image bytes.
+model CustomizationConfig {
+  shopId String
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  productId String
+  providerId String @default("shopify_native")
+  revision String
+  active Boolean @default(false)
+  mapping Json?
+  updatedAt DateTime @updatedAt
+
+  @@id([shopId, productId])
 }
 
 model QuotaPolicy {

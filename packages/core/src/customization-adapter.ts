@@ -7,6 +7,8 @@ export interface CustomizationScope {
 export interface VerifiedCustomizationSnapshot {
   scope: CustomizationScope;
   providerId: string;
+  providerVersion?: string;
+  nativeOptionCatalog?: { id: string; name: string; values: { id: string; name: string }[] }[];
   /** Version for revalidation/idempotency; never use another merchant's snapshot. */
   revision: string;
   verifiedAt: string;
