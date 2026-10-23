@@ -18,7 +18,7 @@ import {
 import { launchersToRender, type LauncherSettings } from "../../core/src/launcher.js";
 import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
-import { classifyCloudliftOption } from "./cloudlift-events.js";
+import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
 
 interface VariantChoice {
   id: string;
@@ -365,12 +365,9 @@ export class Tryora {
         option,
         variant: variant?.id ?? "",
         mappingRevision: this.cfg.mappingRevision ?? "",
-        // Virtual preservation/fabric fields are display-only and are not Shopify native options.
-        // The source must match exactly one complete native tuple; the server rechecks it.
+        // The server rechecks this complete native tuple and rejects ambiguity.
         sourceVariant: ["manual_mapping", "cloudlift"].includes(this.cfg.providerId ?? "")
-          ? this.cfg.productVariants?.find((v) => Object.keys(this.pageOptions).length > 0 &&
-              Object.keys(v.options).filter((name) => !name.startsWith("__tryora_")).length === Object.keys(this.pageOptions).length &&
-              Object.entries(this.pageOptions).every(([name, value]) => v.options[name] === value))?.id ?? ""
+          ? nativeSourceVariantId(this.pageOptions, this.cfg.productVariants ?? []) ?? ""
           : "",
         visitor: visitorId(),
         key: crypto.randomUUID(),
