@@ -2,6 +2,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import prisma from "./db.server";
 import { defaultPlacement, resolveSwatches, type Placement, type ResolvedSwatch } from "./core/index";
 import { photoColour } from "./photoColour.server";
+import { autoFurnitureCategory, isAutoEligibleProduct } from "./auto-products.server";
 
 export interface ShopProduct {
   id: string;
@@ -82,13 +83,28 @@ function mapProduct(p: any): ShopProduct {
 }
 
 export async function listShopProducts(admin: AdminApiContext): Promise<ShopProduct[]> {
-  const res = await admin.graphql(
-    `#graphql
-    ${PRODUCT_FIELDS}
-    query TryoraProducts { products(first: 100, sortKey: TITLE) { nodes { ...TryoraProduct } } }`,
-  );
-  const json: any = await res.json();
-  return (json.data?.products?.nodes ?? []).map(mapProduct);
+  const out: ShopProduct[] = [];
+  let after: string | null = null;
+  do {
+    const res = await admin.graphql(
+      `#graphql
+      ${PRODUCT_FIELDS}
+      query TryoraProducts($after: String) {
+        products(first: 25, sortKey: TITLE, after: $after) {
+          nodes { ...TryoraProduct }
+          pageInfo { hasNextPage endCursor }
+        }
+      }`,
+      { variables: { after } },
+    );
+    const json: any = await res.json();
+    if (!res.ok || json.errors?.length || !json.data?.products) throw new Error("Could not load Shopify products");
+    out.push(...(json.data.products.nodes ?? []).map(mapProduct));
+    const page = json.data.products.pageInfo;
+    if (page?.hasNextPage && (!page.endCursor || page.endCursor === after)) throw new Error("Shopify product pagination stalled");
+    after = page?.hasNextPage ? page.endCursor : null;
+  } while (after);
+  return out;
 }
 
 export async function getShopProduct(admin: AdminApiContext, id: string): Promise<ShopProduct | null> {
@@ -171,11 +187,13 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
     prisma.shop.findUnique({ where: { id: shopId } }),
   ]);
   const swatchAutoFill = shop?.swatchAutoFill ?? false;
+  const autoEnabled = shop?.autoEnableProducts ?? false;
   const byId = new Map(configs.map((c) => [c.productId, c]));
   return products.map((p) => {
     const c = byId.get(p.id);
-    const enabled = c?.enabled ?? false;
-    const referenceMediaId = c?.referenceMediaId ?? null;
+    const automaticallyEligible = autoEnabled && isAutoEligibleProduct(p);
+    const enabled = c ? (c.autoConfigured ? automaticallyEligible : c.enabled) : automaticallyEligible;
+    const referenceMediaId = c ? c.referenceMediaId : (automaticallyEligible ? p.media[0]?.id ?? null : null);
     const visualOptionName = c ? c.visualOptionName : (p.options.find((o) => /colou?r|fabric|finish/i.test(o.name))?.name ?? null);
     const swatchColours = (c?.swatchColours as Record<string, string>) ?? {};
     const resolvedSwatches = swatchesFor(p, visualOptionName, swatchColours, swatchAutoFill, (c?.photoColours as PhotoCache) ?? {});
@@ -185,7 +203,7 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
       enabled,
       readiness: r.readiness,
       readinessReason: r.reason,
-      itemNoun: c?.itemNoun ?? defaultNoun(p.productType, p.title),
+      itemNoun: c?.itemNoun ?? autoFurnitureCategory(p.productType, p.title) ?? defaultNoun(p.productType, p.title),
       placement: (c?.placement as Placement) ?? defaultPlacement(p.productType || p.title),
       setting: (c?.setting as ProductRow["setting"]) ?? "indoor",
       visualOptionName,
@@ -214,6 +232,7 @@ export async function saveProductConfig(
   const r = readinessOf(input.enabled, input.referenceMediaId, product);
   const data = {
     enabled: input.enabled,
+    autoConfigured: false,
     itemNoun: input.itemNoun.trim() || defaultNoun(product.productType, product.title),
     placement: input.placement,
     setting: input.setting,

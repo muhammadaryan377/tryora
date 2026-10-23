@@ -16,11 +16,11 @@ import {
   type Setting,
 } from "./core/index";
 import { defaultNoun } from "./products.server";
+import { ensureAutoProductConfig } from "./auto-products.server";
 import { abortable, downloadReference, normaliseImage } from "./preview-images.server";
 import { PREVIEW_PRODUCT_QUERY, resolvePreviewProduct, type AdminGraphql } from "./preview-product.server";
 import { remoteJob, workerId } from "./preview-worker.server";
 import { createImageProvider } from "./image-provider.server";
-
 /**
  * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
  * Image bytes are handled in process memory and never written to disk or the database here.
@@ -28,9 +28,7 @@ import { createImageProvider } from "./image-provider.server";
  * cancellation; OpenAI additionally requires an explicit data-policy acknowledgement.
  * Job/cost metadata is persisted; zero retention is not claimed for OpenAI.
  */
-
 export const provider: ImageProvider = createImageProvider();
-
 export interface Swatch {
   value: string;
   image: string | null;
@@ -40,16 +38,17 @@ export interface Swatch {
   /** Available, merchant-eligible Shopify variants for this colour. */
   variants: { id: string; image: string | null; options: Record<string, string> }[];
 }
-
 export async function storefrontConfig(admin: AdminGraphql, shopId: string, productId: string) {
   ensureSweep();
   await cleanupStalePreviews();
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
+  const ensured = await ensureAutoProductConfig(admin, shopId, gid);
+  if (!ensured) return { enabled: false as const };
   const config = await prisma.productPreviewConfig.findUnique({
-    where: { shopId_productId: { shopId, productId: gid } }, include: { choices: true },
+    where: { shopId_productId: { shopId, productId: gid } },
+    include: { choices: true },
   });
   if (!config?.enabled || config.readiness !== "ready") return { enabled: false as const };
-
   const res = await admin.graphql(
     `#graphql
     query TryoraStorefrontProduct($id: ID!) {
@@ -75,7 +74,6 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     p.variants.nodes.push(...variants.nodes);
     page = variants.pageInfo;
   }
-
   const optionName = config.visualOptionName;
   const option = optionName ? p.options.find((o: any) => o.name === optionName) : null;
   // One colour (e.g. just a black sofa) needs no swatches: the product's own photos are used.
@@ -120,7 +118,6 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     s.colour = resolved[i]!.colour;
     s.image = resolved[i]!.image;
   });
-
   const [appearance, shop, campaign, balance] = await Promise.all([
     prisma.appearance.findFirst({ where: { shopId, scope: "store", scopeId: null } }),
     prisma.shop.findUnique({ where: { id: shopId } }),
@@ -137,7 +134,6 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
   const shopName = shopId.replace(".myshopify.com", "").replace(/-/g, " ");
   const itemNoun = config.itemNoun ?? defaultNoun(p.productType, p.title);
   const copy = (campaign?.copy as { headline?: string; details?: string }) ?? {};
-
   return {
     enabled: true as const,
     available: balance.availableTotal > 0,
@@ -167,30 +163,24 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     mock: provider.capabilities().name === "mock",
   };
 }
-
 function cachedPhotoColours(raw: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries((raw as Record<string, { colour?: string | null }>) ?? {})) if (v?.colour) out[k] = v.colour;
   return out;
 }
-
 // ---------- Photo check (no credit used) ----------
-
 function requireProvider() {
   const capabilities = provider.capabilities();
   const acknowledgedOpenAI = capabilities.name === "openai" && process.env.OPENAI_IMAGE_PRIVACY_ACKNOWLEDGED === "true";
   if ((!capabilities.zeroRetentionConfirmed && !acknowledgedOpenAI) || !capabilities.supportsCancel) throw new TryoraError("PROVIDER_UNAVAILABLE");
 }
-
-async function configuredProduct(shopId: string, productId: string) {
+async function configuredProduct(admin: AdminGraphql, shopId: string, productId: string) {
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
-  const config = await prisma.productPreviewConfig.findUnique({
-    where: { shopId_productId: { shopId, productId: gid } }, include: { choices: true },
-  });
+  const config = await ensureAutoProductConfig(admin, shopId, gid);
   if (!config?.enabled || config.readiness !== "ready") throw new TryoraError("NOT_FOUND");
-  return config;
+  const choices = await prisma.visualChoice.findMany({ where: { configId: config.id } });
+  return { ...config, choices };
 }
-
 type UsageMetadata = { costMicros?: number; providerRequestId?: string; model?: string };
 async function measured<T extends UsageMetadata>(shopId: string, jobId: string | undefined, stage: string, work: () => Promise<T>): Promise<T> {
   try {
@@ -209,10 +199,9 @@ async function measured<T extends UsageMetadata>(shopId: string, jobId: string |
     throw e;
   }
 }
-
-export async function checkPhoto(image: Uint8Array, shopId: string, productId: string) {
+export async function checkPhoto(admin: AdminGraphql, image: Uint8Array, shopId: string, productId: string) {
   requireProvider();
-  const config = await configuredProduct(shopId, productId);
+  const config = await configuredProduct(admin, shopId, productId);
   let clean: Uint8Array;
   try { clean = await normaliseImage(image); }
   catch { return { ok: false as const, reason: "dark_or_blurred" as const }; }
@@ -223,9 +212,7 @@ export async function checkPhoto(image: Uint8Array, shopId: string, productId: s
   if (a.outcome === "accepted") return { ok: true as const, detected: a.confidence >= 0.7 ? a.detected : undefined };
   return { ok: false as const, reason: a.reason ?? "unclear_target" };
 }
-
 // ---------- Transient jobs ----------
-
 interface Transient {
   shopId: string;
   stage: "preparing" | "generating" | "checking_result" | "ready" | "failed";
@@ -237,13 +224,11 @@ interface Transient {
   controller: AbortController;
   expiresAt: number;
 }
-
 const jobs = new Map<string, Transient>();
 const TRANSIENT_TTL_MS = 10 * 60_000;
 const GENERATION_TIMEOUT_MS = 3 * 60_000;
 let sweepTimer: NodeJS.Timeout | undefined;
 let sweeping: Promise<unknown> | undefined;
-
 export async function cleanupStalePreviews() {
   if (sweeping) return sweeping;
   sweeping = (async () => {
@@ -252,19 +237,16 @@ export async function cleanupStalePreviews() {
   })().finally(() => { sweeping = undefined; });
   return sweeping;
 }
-
 function ensureSweep() {
   if (sweepTimer) return;
   sweepTimer = setInterval(() => { void cleanupStalePreviews().catch(() => {}); }, 30_000);
   sweepTimer.unref();
 }
-
 async function expire(jobId: string, t: Transient) {
   t.controller.abort();
   drop(jobId);
   await tryora.transition(jobId, "EXPIRED", { reasonCode: "NOT_DELIVERED_IN_TIME" });
 }
-
 function drop(jobId: string) {
   const t = jobs.get(jobId);
   if (!t) return;
@@ -273,11 +255,9 @@ function drop(jobId: string) {
   t.image = undefined;
   jobs.delete(jobId);
 }
-
 export function errorCode(e: unknown): string {
   return e instanceof TryoraError ? e.code : "UNEXPECTED";
 }
-
 export async function startPreview(input: {
   admin: AdminGraphql;
   shopId: string;
@@ -293,7 +273,7 @@ export async function startPreview(input: {
   ensureSweep();
   await cleanupStalePreviews();
   if (!input.idempotencyKey || input.idempotencyKey.length > 128) throw new TryoraError("BAD_REQUEST");
-  const config = await configuredProduct(input.shopId, input.productId);
+  const config = await configuredProduct(input.admin, input.shopId, input.productId);
   const product = await resolvePreviewProduct(input.admin, config, input.optionValue, input.variantId);
   const room = await normaliseImage(input.room);
   const analysisSignal = AbortSignal.timeout(30_000);
@@ -314,7 +294,6 @@ export async function startPreview(input: {
     leadStepDone: input.leadStepDone,
   });
   if (deduplicated) return { jobId: job.id };
-
   const t: Transient = {
     shopId: input.shopId,
     stage: "preparing",
@@ -335,7 +314,6 @@ export async function startPreview(input: {
   });
   return { jobId: job.id };
 }
-
 async function run(
   jobId: string,
   t: Transient,
@@ -385,13 +363,11 @@ async function run(
     await tryora.transition(jobId, "FAILED", { reasonCode: t.error === "RESULT_REJECTED" ? "RESULT_REJECTED" : "PROVIDER_ERROR" }).catch(() => {});
   }
 }
-
 export async function pollPreview(shopId: string, jobId: string) {
   ensureSweep();
   const remote = await remoteJob("poll", shopId, jobId);
   return remote ?? pollLocalPreview(shopId, jobId);
 }
-
 export async function pollLocalPreview(shopId: string, jobId: string) {
   const t = jobs.get(jobId);
   if (!t) {
@@ -415,12 +391,10 @@ export async function pollLocalPreview(shopId: string, jobId: string) {
   }
   return { stage: t.stage };
 }
-
 export async function dropLocalPreview(shopId: string, jobId: string) {
   if (jobs.get(jobId)?.shopId === shopId) drop(jobId);
   return { ok: true };
 }
-
 /** The browser confirms it has shown the image. Only now is the credit used, and the bytes are dropped. */
 export async function acknowledge(shopId: string, jobId: string, token: string) {
   const job = await tryora.getJob(jobId);
@@ -434,11 +408,8 @@ export async function acknowledge(shopId: string, jobId: string, token: string) 
   // Credit settlement is durable even if the owner is temporarily unreachable. Its expiry still drops the bytes.
   await remoteJob("drop", shopId, jobId).catch(() => {});
 }
-
 // ---------- Lead capture ----------
-
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export async function captureLead(
   admin: AdminGraphql,
   input: { shopId: string; email: string; firstName?: string; marketing: boolean; wording: string; productId: string; optionValue?: string },
@@ -449,7 +420,6 @@ export async function captureLead(
   const lead = await prisma.leadDelivery.create({
     data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue, status: "queued" },
   });
-
   let customerRef: string | null = null;
   let saved = false;
   try {
@@ -500,20 +470,17 @@ export async function captureLead(
       lastError: e instanceof Error && e.message === "CONSENT_SAVE_FAILED" ? "CONSENT_SAVE_FAILED" : "CUSTOMER_SAVE_FAILED",
     } });
   }
-
   // Email/name are sent to Shopify, not stored here. Checkbox wording is not retained here.
   // Delivery metadata and the customer reference are retained; consent state is recorded by Shopify.
   if (saved) await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
   // The shopper's preview never waits on Shopify: a failed customer save is logged for the merchant, not shown to them.
   return { ok: true };
 }
-
 export async function reportIssue(shopId: string, jobId: string, category: string) {
   const job = await tryora.getJob(jobId);
   if (!job || job.shopId !== shopId) throw new TryoraError("NOT_FOUND");
   await prisma.issueReport.create({ data: { shopId, jobId, category } });
   return { ok: true };
 }
-
 export const newId = () => randomUUID();
 export { TRIAL_CREDITS };
