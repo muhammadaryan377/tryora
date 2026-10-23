@@ -13,6 +13,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY . .
 
-RUN npm run build
+# Generate the client at build time. Database changes are a separate release step.
+RUN npm run setup && npm run build
 
 CMD ["npm", "run", "docker-start"]

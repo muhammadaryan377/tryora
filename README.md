@@ -21,7 +21,11 @@ Product decisions: `TRYORA/docs/decisions.md` (owner's folder).
 4. In `shopify-app`: `npx tsc --noEmit && npm run build` (Railway runs the same build; a failure = failed deploy)
 5. In `shopify-app`: `npx shopify app deploy` to release the extension, permissions and webhooks
 
-Pushing to `main` redeploys the server on Railway (Docker, `shopify-app/Dockerfile`; schema applied with `prisma db push`).
+Pushing to `main` may redeploy the server on Railway (Docker, `shopify-app/Dockerfile`).
+Docker builds generate Prisma Client; startup only starts the server. `npm run setup`
+also only generates the client. Database creation and schema changes require a separate,
+explicitly authorized database operation; development startup does not apply migrations.
+See `docs/release-safety-review.md` for release gates and the migration/rollback plan.
 
 ## Rules
 - Never store shopper photos, generated images or shopper details (emails go straight to Shopify customers).
