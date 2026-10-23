@@ -272,6 +272,8 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant-launch--bottom-right { right: 18px; }
 .tryora-assistant-launch--bottom-left { left: 18px; }
 .tryora-assistant-launch:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
+/* Sits above a floating "See it in your room" button on the same side instead of covering it. */
+.tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(16px + var(--ta-stack, 56px)); }
 
 @media (max-width: 749px) {
   .tryora-assistant { place-items: end stretch; }
@@ -289,5 +291,6 @@ html.tryora-open { overflow: hidden; }
   .tryora-assistant-launch { bottom: 12px; }
   .tryora-assistant-launch--bottom-right { right: 12px; }
   .tryora-assistant-launch--bottom-left { left: 12px; }
+  .tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(16px + var(--ta-stack, 56px)); }
 }
 @media (prefers-reduced-motion: reduce) { .tryora-assistant__loading span { animation: none; } }
