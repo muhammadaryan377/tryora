@@ -20,6 +20,7 @@ import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
 import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig, wasOpen } from "./assistant.js";
+import { PROXY } from "./proxy.js";
 
 interface VariantChoice {
   id: string;
@@ -62,7 +63,6 @@ interface Config {
   mock: boolean;
 }
 
-const PROXY = "/apps/tryora";
 /** Option value used for products with a single style (no colour choice). Never shown to shoppers. */
 const SINGLE = "__single__";
 const COMPACT_DESKTOP = 12;

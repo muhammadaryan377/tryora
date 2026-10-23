@@ -54,7 +54,7 @@ export const ATTRIBUTE_METAFIELDS: [alias: string, namespace: string, key: strin
 ];
 
 const PRODUCT_FIELDS = `
-  id title handle productType vendor tags onlineStoreUrl status
+  id title handle productType vendor tags onlineStoreUrl publishedAt status
   description(truncateAt: 1500)
   category { fullName }
   featuredMedia { preview { image { url(transform: { maxWidth: 800, maxHeight: 800 }) altText } } }
@@ -219,6 +219,9 @@ function attributeValue(raw: unknown): string | null {
   return clean ? clean.slice(0, 300) : null;
 }
 
+/** Shopify handles are lowercase letters, digits, hyphens (and occasionally underscores or unicode letters). */
+const validHandle = (value: unknown): value is string => typeof value === "string" && /^[\p{L}\p{N}_-]{1,255}$/u.test(value);
+
 /** Only absolute https image URLs from Shopify are passed on to shoppers. */
 export function imageUrl(value: unknown): string | null {
   return typeof value === "string" && /^https:\/\/[^\s"'<>]+$/i.test(value) ? value : null;
@@ -240,9 +243,27 @@ function parseVariant(node: any): CatalogueVariant | null {
   };
 }
 
-/** Parses an Admin product node. Returns null for drafts, archived products and products hidden from the Online Store. */
+/**
+ * Whether a product is published to the Online Store.
+ *
+ * `onlineStoreUrl` alone is not reliable: Shopify returns null for every product on a password-protected store
+ * (common for development stores) even when the product is published. `publishedAt` is the Online Store publication
+ * time, so a past timestamp counts as published; a future one is a scheduled publication and does not.
+ */
+export function publishedToOnlineStore(node: { onlineStoreUrl?: unknown; publishedAt?: unknown }, now = Date.now()): boolean {
+  if (typeof node.onlineStoreUrl === "string" && node.onlineStoreUrl) return true;
+  if (typeof node.publishedAt !== "string") return false;
+  const published = Date.parse(node.publishedAt);
+  return Number.isFinite(published) && published <= now;
+}
+
+/**
+ * Parses an Admin product node. Returns null for drafts, archived products and products not published to the Online
+ * Store. Links are always built from the handle as a relative storefront path, never from onlineStoreUrl, so they work
+ * on password-protected and custom-domain stores alike.
+ */
 export function parseProduct(node: any, variantNodes: any[], variantsComplete: boolean): CatalogueProduct | null {
-  if (typeof node?.id !== "string" || node.status !== "ACTIVE" || !node.onlineStoreUrl || !node.handle) return null;
+  if (typeof node?.id !== "string" || node.status !== "ACTIVE" || !publishedToOnlineStore(node) || !validHandle(node.handle)) return null;
   const variants = variantNodes.map(parseVariant).filter((variant): variant is CatalogueVariant => !!variant);
   const attributes: Record<string, string> = {};
   for (const [alias] of ATTRIBUTE_METAFIELDS) {

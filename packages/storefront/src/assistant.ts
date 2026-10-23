@@ -8,7 +8,7 @@ import type { AssistantConfig } from "./assistant/drawer.js";
 export { RoomAssistant, type AssistantConfig, type AssistantContext } from "./assistant/drawer.js";
 export { wasOpen } from "./assistant/session.js";
 
-const PROXY = "/apps/tryora";
+import { PROXY } from "./proxy.js";
 
 const LAUNCHER_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 016.5 3h11A2.5 2.5 0 0120 5.5v8a2.5 2.5 0 01-2.5 2.5H10l-4.2 3.6c-.5.4-1.3.1-1.3-.6V16A2.5 2.5 0 014 13.5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M12 6.2l.95 2.45 2.45.95-2.45.95L12 13l-.95-2.45-2.45-.95 2.45-.95z" fill="currentColor"/></svg>`;
 

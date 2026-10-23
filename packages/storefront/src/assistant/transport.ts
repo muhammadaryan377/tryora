@@ -7,7 +7,9 @@
  * by polling the same turn from the last event received, so nothing is lost or duplicated.
  */
 
-export const PROXY = "/apps/tryora";
+import { PROXY } from "../proxy.js";
+
+export { PROXY };
 const POLL_TIMEOUT_MS = 20_000;
 const MAX_RECONNECTS = 4;
 

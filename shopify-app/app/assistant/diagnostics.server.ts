@@ -7,6 +7,7 @@ import type { AdminGraphql } from "../preview-product.server";
 import {
   CATALOGUE_QUERY,
   catalogueCacheInfo,
+  publishedToOnlineStore,
   liveSearch,
   parseProduct,
   PRODUCT_COUNT_QUERY,
@@ -32,6 +33,13 @@ const cost = (json: any) => {
   const value = json?.extensions?.cost;
   return value ? `requested ${value.requestedQueryCost ?? "?"}, actual ${value.actualQueryCost ?? "?"}` : "not reported";
 };
+
+function publication(node: { onlineStoreUrl?: string | null; publishedAt?: string | null }) {
+  if (node.onlineStoreUrl) return "published to the Online Store";
+  if (publishedToOnlineStore(node)) return `published to the Online Store at ${node.publishedAt} (no onlineStoreUrl, as on password-protected stores)`;
+  if (node.publishedAt) return `scheduled for the Online Store at ${node.publishedAt} (the assistant ignores it until then)`;
+  return "NOT published to the Online Store (the assistant ignores it)";
+}
 
 const searchQuery = (query: string): ProductQuery => ({
   query, colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: null, availableOnly: false, limit: 10,
@@ -61,11 +69,13 @@ export async function runAssistantDiagnostics(admin: AdminGraphql, shop: string,
   const page = await raw(admin, CATALOGUE_QUERY, { after: null, query: "status:active", sortKey: "ID" });
   const nodes: any[] = page.json?.data?.products?.nodes ?? [];
   const usable = nodes.filter((node) => parseProduct(node, node.variants?.nodes ?? [], false));
+  // Password-protected stores return no onlineStoreUrl even for published products; publication uses publishedAt.
+  const withoutUrl = nodes.filter((node) => !node.onlineStoreUrl && publishedToOnlineStore(node)).length;
   checks.catalogue = {
     ok: !page.error && nodes.length > 0,
     detail: page.error
       ? `The assistant's catalogue query failed (cost ${cost(page.json)}). The assistant cannot see products until this is fixed.`
-      : `First page returned ${nodes.length} active products; ${usable.length} are published to the Online Store and usable. Query cost ${cost(page.json)}.`,
+      : `First page returned ${nodes.length} active products; ${usable.length} are published to the Online Store and usable.${withoutUrl ? ` ${withoutUrl} have no onlineStoreUrl but a publishedAt date (expected while the store is password-protected); they are included.` : ""} Query cost ${cost(page.json)}.`,
     code: page.error,
   };
 
@@ -92,7 +102,7 @@ export async function runAssistantDiagnostics(admin: AdminGraphql, shop: string,
       const usableProduct = parseProduct(node, sample, false);
       checks.product = {
         ok: !!usableProduct,
-        detail: `"${node.title}" — status ${node.status}, ${node.onlineStoreUrl ? "published to the Online Store" : "NOT published to the Online Store (the assistant ignores it)"}, type "${node.productType || "none"}", ${node.variantsCount?.count ?? sample.length} variants (${available} of the first ${sample.length} available to buy).`,
+        detail: `"${node.title}" — status ${node.status}, ${publication(node)}, link /products/${node.handle}, type "${node.productType || "none"}", ${node.variantsCount?.count ?? sample.length} variants (${available} of the first ${sample.length} available to buy).`,
       };
     }
   }

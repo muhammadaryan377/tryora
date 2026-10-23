@@ -23,6 +23,8 @@ export interface FixtureProduct {
   vendor: string;
   tags: string[];
   onlineStoreUrl: string | null;
+  /** Online Store publication time; null when unpublished, in the future when scheduled. */
+  publishedAt: string | null;
   status: "ACTIVE" | "DRAFT" | "ARCHIVED";
   description: string;
   category: { fullName: string } | null;
@@ -48,6 +50,9 @@ export function fixtureProduct(input: {
   description?: string;
   metafields?: Record<string, string>;
   published?: boolean;
+  /** Published, but the store is password-protected, so Shopify returns no onlineStoreUrl. */
+  passwordProtected?: boolean;
+  publishedAt?: string | null;
   status?: FixtureProduct["status"];
   id?: number;
   category?: string;
@@ -86,7 +91,8 @@ export function fixtureProduct(input: {
     productType: input.productType,
     vendor: "Demo Furniture",
     tags: input.tags ?? [],
-    onlineStoreUrl: input.published === false ? null : `https://demo.example/products/${handle}`,
+    onlineStoreUrl: input.published === false || input.passwordProtected || input.publishedAt === null ? null : `https://demo.example/products/${handle}`,
+    publishedAt: input.published === false ? null : input.publishedAt !== undefined ? input.publishedAt : "2026-09-01T10:00:00Z",
     status: input.status ?? "ACTIVE",
     description: input.description ?? `${input.title}. A ${input.productType.toLowerCase()} for modern homes.`,
     category: { fullName: input.category ?? `Home & Garden > Furniture > ${input.productType}` },

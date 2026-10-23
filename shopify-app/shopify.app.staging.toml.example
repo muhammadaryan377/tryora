@@ -1,0 +1,45 @@
+# Isolated STAGING app for Room Assistant testing on test-sofa-site.myshopify.com only.
+#
+# 1. Create a separate app named "Tryora Staging" in the Partner Dashboard (never reuse the production app).
+# 2. Copy this file to shopify.app.staging.toml and set client_id to the STAGING app's client ID,
+#    or run `npx shopify app config link` and choose the staging app.
+# 3. Run with: npx shopify app dev --config staging --store test-sofa-site.myshopify.com
+#
+# Scopes match production exactly. The app proxy uses its own subpath so it cannot collide with a production
+# Tryora install on the same store; build the storefront bundle with TRYORA_PROXY_PATH=/apps/tryora-staging.
+# See docs/staging-room-assistant.md.
+
+client_id = "REPLACE_WITH_STAGING_APP_CLIENT_ID"
+name = "Tryora Staging"
+application_url = "https://example.com"
+embedded = true
+
+[access_scopes]
+scopes = "read_orders,write_customers,write_products,write_metaobjects,write_metaobject_definitions"
+
+[webhooks]
+api_version = "2027-01"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/compliance"
+  compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
+
+[auth]
+redirect_urls = [ "https://example.com/auth/callback" ]
+
+[build]
+# `shopify app dev` replaces example.com with its tunnel URL for the staging app only.
+automatically_update_urls_on_dev = true
+
+[app_proxy]
+url = "https://example.com/proxy"
+subpath = "tryora-staging"
+prefix = "apps"

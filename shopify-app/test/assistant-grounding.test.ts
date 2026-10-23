@@ -242,7 +242,7 @@ describe("merchant catalogue diagnostics", () => {
     expect(report.checks.counts).toMatchObject({ ok: true, detail: "4 active of 4 products (EXACT)." });
     expect(report.checks.catalogue).toMatchObject({ ok: true, detail: expect.stringMatching(/4 active products; 3 are published/) });
     expect(report.checks.search).toMatchObject({ ok: true, detail: expect.stringMatching(/Egerie Curved Headboard Beige Boucle Bed/) });
-    expect(report.checks.product).toMatchObject({ ok: true, detail: expect.stringMatching(/status ACTIVE, published to the Online Store, type "Bed", 3 variants \(3 of the first 3 available to buy\)/) });
+    expect(report.checks.product).toMatchObject({ ok: true, detail: expect.stringMatching(/status ACTIVE, published to the Online Store, link \/products\/egerie-curved-headboard-beige-boucle-bed-9001, type "Bed", 3 variants \(3 of the first 3 available to buy\)/) });
   });
 
   it("surfaces the exact Shopify error when the catalogue query is rejected", async () => {
