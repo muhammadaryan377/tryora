@@ -187,6 +187,24 @@ export class Tryora {
   private configurationNotice: string | null = null;
   private pageOptions: Record<string, string> = {};
   private fabric: string | null = null;
+  private configurationEpoch = 0;
+  private pageWatchTimer: ReturnType<typeof setInterval> | undefined;
+  private readonly pageChangeHandler = () => { if (this.root && this.syncPageConfiguration()) this.render(); };
+
+  private syncPageConfiguration(): boolean {
+    const page = productPageOptions(this.cfg);
+    const same = Object.keys(page).length === Object.keys(this.pageOptions).length && Object.entries(page).every(([name, value]) => this.pageOptions[name] === value);
+    if (same) return false;
+    this.configurationEpoch++;
+    this.pageOptions = page;
+    this.fabric = this.cfg.fabricOptionName ? page[this.cfg.fabricOptionName] ?? this.fabric : null;
+    for (const url of this.images.values()) URL.revokeObjectURL(url);
+    this.images.clear();
+    this.state = { ...this.state, generation: null, results: {}, shownOption: null, notice: null,
+      selectedOption: this.cfg.swatches.length ? this.visibleSwatches().find((x) => this.selectedVariant(x.value))?.value ?? null : SINGLE,
+      step: !this.cfg.available ? "unavailable" : this.state.photo ? "photoReady" : "opening" };
+    return true;
+  }
 
   constructor(private readonly cfg: Config) {
     this.pageOptions = productPageOptions(cfg);
@@ -201,18 +219,7 @@ export class Tryora {
 
   open() {
     if (this.root) return;
-    if (!this.state.generation) {
-      const page = productPageOptions(this.cfg);
-      if (JSON.stringify(page) !== JSON.stringify(this.pageOptions)) {
-        this.pageOptions = page;
-        this.fabric = this.cfg.fabricOptionName ? page[this.cfg.fabricOptionName] ?? this.fabric : null;
-        for (const url of this.images.values()) URL.revokeObjectURL(url);
-        this.images.clear();
-        this.state = { ...this.state, results: {}, shownOption: null, notice: null,
-          selectedOption: this.cfg.swatches.length ? this.visibleSwatches().find((x) => this.selectedVariant(x.value))?.value ?? null : SINGLE,
-          step: !this.cfg.available ? "unavailable" : this.state.photo ? "photoReady" : "opening" };
-      }
-    }
+    this.syncPageConfiguration();
     this.lastFocus = document.activeElement;
     const root = document.createElement("div");
     root.className = "tryora";
@@ -226,6 +233,9 @@ export class Tryora {
     document.body.appendChild(root);
     document.documentElement.classList.add("tryora-open");
     this.root = root;
+    document.addEventListener("change", this.pageChangeHandler);
+    // Some themes change the cart-form ID programmatically without a change event.
+    this.pageWatchTimer = setInterval(this.pageChangeHandler, 750);
     this.render();
     (root.querySelector("[data-autofocus]") as HTMLElement | null)?.focus();
   }
@@ -233,6 +243,9 @@ export class Tryora {
   /** Closing keeps any running job and results; reopening on this page shows them again. */
   close() {
     if (!this.root) return;
+    document.removeEventListener("change", this.pageChangeHandler);
+    clearInterval(this.pageWatchTimer);
+    this.pageWatchTimer = undefined;
     this.root.remove();
     this.root = null;
     document.documentElement.classList.remove("tryora-open");
@@ -297,6 +310,8 @@ export class Tryora {
 
   private async generate(option: string, photoId: string) {
     this.configurationNotice = null;
+    if (this.syncPageConfiguration()) { this.render(); return; }
+    const epoch = this.configurationEpoch;
     const photo = this.photos.get(photoId);
     if (!photo) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
     const variant = this.selectedVariant(option);
@@ -319,6 +334,7 @@ export class Tryora {
       const r = await createWithRetry(() => post("preview", fields));
       jobId = r.jobId;
     } catch (e: any) {
+      if (epoch !== this.configurationEpoch) return;
       const code = e?.code;
       if (code === "BAD_REQUEST" || code === "NOT_FOUND") {
         this.configurationNotice = "This combination or its product reference is no longer available for preview. Choose another available option or review the product page. No credit was used.";
@@ -331,6 +347,7 @@ export class Tryora {
             : "generation_failed";
       return this.dispatch({ type: "JOB_FAILED", reason });
     }
+    if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { this.render(); return; }
     this.dispatch({ type: "JOB_STARTED", jobId });
     this.dispatch({ type: "JOB_STAGE", stage: "preparing" });
 
@@ -338,6 +355,7 @@ export class Tryora {
     let slow = false;
     for (;;) {
       await new Promise((r) => setTimeout(r, 1200));
+      if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { this.render(); return; }
       if (this.state.photo?.id !== photoId) return; // shopper changed room
       if (Date.now() - started > 10 * 60_000) return this.dispatch({ type: "JOB_FAILED", reason: "connection_lost" });
       let r: any;
@@ -348,6 +366,7 @@ export class Tryora {
       } catch {
         continue;
       }
+      if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { this.render(); return; }
       if (r.stage === "generating" || r.stage === "checking_result") this.dispatch({ type: "JOB_STAGE", stage: r.stage });
       if (!slow && Date.now() - started > 45_000) {
         slow = true;
@@ -362,8 +381,10 @@ export class Tryora {
           await decodePreview(url);
         } catch {
           if (url) URL.revokeObjectURL(url);
+          if (epoch !== this.configurationEpoch) return;
           return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
         }
+        if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { URL.revokeObjectURL(url); this.render(); return; }
         this.images.set(jobId, url);
         this.dispatch({ type: "JOB_DELIVERED", result: { option, imageHandle: url, jobId } });
         // Only once the image is on screen is the credit used.
@@ -486,6 +507,24 @@ export class Tryora {
   }
 
   private onKey(e: KeyboardEvent) {
+    if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(e.key)) {
+      const target = e.target as HTMLElement;
+      const group = target.closest('[role="radiogroup"]');
+      if (group) {
+        const buttons = [...group.querySelectorAll<HTMLButtonElement>('button[role="radio"]:not(:disabled)')];
+        const index = buttons.indexOf(target.closest('button') as HTMLButtonElement);
+        if (index >= 0 && buttons.length) {
+          e.preventDefault();
+          const nextIndex = e.key === "Home" ? 0 : e.key === "End" ? buttons.length - 1 :
+            (index + (["ArrowLeft", "ArrowUp"].includes(e.key) ? -1 : 1) + buttons.length) % buttons.length;
+          const next = buttons[nextIndex]!;
+          const value = next.dataset.value;
+          next.click();
+          if (value) this.root?.querySelector<HTMLElement>(`[data-act="swatch"][data-value="${CSS.escape(value)}"]`)?.focus();
+          return;
+        }
+      }
+    }
     if (e.key === "Escape") {
       if (this.panel !== "none") {
         this.panel = "none";
