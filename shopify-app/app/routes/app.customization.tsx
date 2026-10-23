@@ -48,7 +48,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     try {
       const snapshot = await nativeSnapshot(admin, productId);
       catalog = { shopId: session.shop, productId, options: snapshot.product.options, variants: snapshot.variants, media: snapshot.media };
-      if (effective.providerId === "manual_mapping") {
+      if ((effective.providerId === "manual_mapping" || effective.providerId === "cloudlift")) {
         const mapping = parseManualMapping(effective.mapping, session.shop, productId);
         const errors = validateNativeBindings(mapping, snapshot.variants, snapshot.media);
         const boundIds = new Set(mapping.entries.map((e) => e.variantId));
@@ -76,7 +76,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   let mapping: object | null = null;
   let active = provider === "shopify_native";
   try {
-    if (provider === "manual_mapping" && productId !== STORE_DEFAULT) {
+    if ((provider === "manual_mapping" || provider === "cloudlift") && productId !== STORE_DEFAULT) {
       const raw = form.get("mapping") ?? "";
       if (raw.length > 512_000) return { error: "Mapping exceeds 512 KB." };
       if (raw.trim()) mapping = parseManualMapping(JSON.parse(raw), session.shop, productId);
@@ -87,7 +87,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         if (errors.length) return { error: errors.slice(0, 10).join(" ") };
         active = true;
       }
-    } else if (intent === "activate" && provider !== "shopify_native") return { error: "This provider cannot be activated. Cloudlift requires a verified data source; manual mappings require a product scope." };
+    } else if (intent === "activate" && provider !== "shopify_native") return { error: "This provider cannot be activated. External providers require a reviewed product mapping; unsupported options cannot be activated." };
   } catch { return { error: "Mapping is invalid, conflicting, incorrectly scoped, or its native data cannot be verified. No settings were changed." };
   }
   try {
@@ -120,7 +120,7 @@ export default function CustomizationSettings() {
     <s-section heading={data.productId === STORE_DEFAULT ? "Store default" : "Product override"}>
       <s-paragraph>Effective provider: {data.effectiveProvider}. Status: {data.diagnostic}.</s-paragraph>
       {data.coverage && <s-paragraph>{data.coverage.mapped} reviewed bindings out of {data.coverage.total} native variants; {data.coverage.unmapped} unmapped variants are not offered by this profile. Shopify currently reports {data.coverage.available} native variants available for sale.</s-paragraph>}
-      <s-paragraph>Cloudlift and other external sources are not connected. Browser selection events cannot approve a preview. Manual mappings support reviewed native variants only.</s-paragraph>
+      <s-paragraph>Cloudlift native-linked mode supports only merchant-reviewed Shopify variants and full-product references. Independent Cloudlift custom options are NOT supported. Browser events never authorize a preview.</s-paragraph>
       <s-paragraph>Saving a provider that needs setup pauses Tryora previews for products using that setting. A store default affects inheriting products; explicit product overrides remain in effect. Manual drafts need validation and activation. Shopify checkout and existing product ON/OFF settings are unchanged.</s-paragraph>
       {result?.error && <p role="alert">{result.error}</p>}
       <Form method="post" key={`${data.productId}:${data.savedRevision}`}>
@@ -130,8 +130,8 @@ export default function CustomizationSettings() {
           {data.productId !== STORE_DEFAULT && <s-option value="inherit">Use store default</s-option>}
           {PROVIDERS.map((id) => <s-option key={id} value={id}>{PROVIDER_LABELS[id]}</s-option>)}
         </s-select>
-        {provider === "manual_mapping" && data.productId !== STORE_DEFAULT && <>
-          <s-paragraph>Paste a reviewed mapping profile. Every entry needs an exact native variant/options tuple, explicit preserved configuration dimensions, and approved full-product media IDs. No raw image URLs or delimiter rules are accepted.</s-paragraph>
+        {(provider === "manual_mapping" || provider === "cloudlift") && data.productId !== STORE_DEFAULT && <>
+          <s-paragraph>Paste a reviewed native-variant mapping profile. Cloudlift may display these Shopify variants, but Cloudlift-only custom properties are not supported. Every entry requires exact native options, preserved dimensions and an approved full-product reference. No external URLs or inferred colour associations.</s-paragraph>
           <details><summary>Mapping format and review requirements</summary>
             <s-paragraph>This is an inactive template, not verified product data. Replace every placeholder using the complete native evidence below. Remove optional roles that do not exist. Include every native option in each tuple. Use the same preservation-dimension names in every entry, and review all composite suffix fields before approving equivalent configurations.</s-paragraph>
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify({ schemaVersion: 1, providerId: "manual_mapping", shopId: data.shopId, productId: data.productId, reviewed: false,
@@ -146,7 +146,7 @@ export default function CustomizationSettings() {
         </>}
         <s-stack direction="inline" gap="base">
           <button type="submit" name="intent" value="save" disabled={!data.enabled || nav.state !== "idle"}>Save setting / draft</button>
-          {provider === "manual_mapping" && data.productId !== STORE_DEFAULT && <button type="submit" name="intent" value="activate" disabled={!data.enabled || nav.state !== "idle"}>Validate and activate mapping</button>}
+          {(provider === "manual_mapping" || provider === "cloudlift") && data.productId !== STORE_DEFAULT && <button type="submit" name="intent" value="activate" disabled={!data.enabled || nav.state !== "idle"}>Validate and activate mapping</button>}
         </s-stack>
         {nav.state !== "idle" && <p role="status">Validating or saving customization settings…</p>}
       </Form>
