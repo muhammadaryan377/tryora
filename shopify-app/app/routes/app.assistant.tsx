@@ -179,6 +179,13 @@ export default function AssistantSettings() {
         </s-section>
       </Form>
 
+      <s-section slot="aside" heading="Catalogue connection">
+        <s-paragraph>
+          See exactly which products the assistant can find in your store, and any Shopify errors.
+        </s-paragraph>
+        <s-link href="/app/assistant-diagnostics?q=bed">Check catalogue connection</s-link>
+      </s-section>
+
       <s-section slot="aside" heading="Data and safety">
         <s-paragraph>
           Room photos are normalized in memory and sent to the configured AI provider for the active request. Tryora

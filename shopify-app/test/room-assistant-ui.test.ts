@@ -537,3 +537,77 @@ describe("conversation history", () => {
     expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Still here.");
   });
 });
+
+describe("product images in cards", () => {
+  async function showCards(items: Record<string, unknown>[]) {
+    const assistant = makeAssistant();
+    proxy.script([{ type: "recommendations", items }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await type("Show me available beds");
+    click("[data-ta='send']");
+    await settle(60);
+    return assistant;
+  }
+
+  it("renders the real Shopify thumbnail with alt text, a loading state and a loaded state", async () => {
+    await showCards([card({ image: "https://cdn.shopify.com/s/files/chelsea.jpg", imageAlt: "Chelsea Luxe Bed in grey", imageSource: "product", variantRef: null })]);
+    const thumb = $(".tryora-assistant__card .tryora-assistant__thumb")!;
+    const image = thumb.querySelector("img")!;
+    expect(image.getAttribute("src")).toBe("https://cdn.shopify.com/s/files/chelsea.jpg");
+    expect(image.getAttribute("alt")).toBe("Chelsea Luxe Bed in grey");
+    expect(image.getAttribute("loading")).toBe("lazy");
+    expect(thumb.dataset.state).toBe("loading");
+    image.dispatchEvent(new Event("load"));
+    expect(thumb.dataset.state).toBe("loaded");
+    // A product-level card's featured photo needs no caveat.
+    expect(thumb.querySelector(".tryora-assistant__thumb-note")).toBeNull();
+  });
+
+  it("replaces a failed image with a text state, and shows text, never stock art, when there is no image", async () => {
+    await showCards([card(), card({ id: "2:", productRef: "2", variantRef: null, title: "Thames Bed Frame", image: null, imageSource: null, previewAvailable: false, previewStatus: "not_configured", optionValue: null })]);
+    const [first, second] = $$(".tryora-assistant__card .tryora-assistant__thumb");
+    first!.querySelector("img")!.dispatchEvent(new Event("error"));
+    expect(first!.dataset.state).toBe("error");
+    expect(first!.textContent).toBe("Image unavailable");
+    expect(first!.getAttribute("aria-label")).toMatch(/^Image unavailable/);
+    expect(second!.classList.contains("is-missing")).toBe(true);
+    expect(second!.textContent).toBe("No image");
+    expect(second!.querySelector("svg, img")).toBeNull();
+  });
+
+  it("labels a general product photo shown for a specific option and the preview reference", async () => {
+    await showCards([
+      card({ id: "3:31", title: "Egerie Bed", options: { Fabric: "Grey Velvet" }, image: "https://cdn.shopify.com/featured.jpg", imageSource: "product", previewAvailable: false, previewStatus: "unavailable", optionValue: null }),
+      card({ id: "3:32", title: "Egerie Bed", options: { Fabric: "Grey Velvet" }, image: "https://cdn.shopify.com/approved.jpg", imageSource: "reference", referenceImage: "https://cdn.shopify.com/approved.jpg" }),
+    ]);
+    const [general, reference] = $$(".tryora-assistant__card");
+    expect(general!.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Product photo");
+    expect(general!.textContent).toContain("Photo shows the product; your selected option may look different.");
+    // Not verifiable for a preview: the action is shown disabled, with the reason.
+    const disabled = general!.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions button")!;
+    expect(disabled.disabled).toBe(true);
+    expect(general!.querySelector(`#${CSS.escape(disabled.getAttribute("aria-describedby")!)}`)!.textContent).toBe("This exact option can't be verified for an AI preview.");
+    expect(reference!.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Preview reference");
+    expect(reference!.querySelector("[data-ta='preview']")).not.toBeNull();
+  });
+
+  it("shows the approved reference on the preview card and never sends image URLs for generation", async () => {
+    const assistant = makeAssistant();
+    const item = card({ image: "https://cdn.shopify.com/variant.jpg", imageSource: "variant", referenceImage: "https://cdn.shopify.com/approved-reference.jpg" });
+    proxy.script([{ type: "visualise", item }], [{ type: "final", reply: { message: "Confirm to preview.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await attachFile();
+    await type("Show it in my room");
+    click("[data-ta='send']");
+    await settle(60);
+    const visual = $(".tryora-assistant__visualise")!;
+    expect(visual.querySelector("img")!.getAttribute("src")).toBe("https://cdn.shopify.com/approved-reference.jpg");
+    expect(visual.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Preview reference");
+    click(".tryora-assistant__visualise [data-ta='preview']");
+    await settle(1500);
+    const start = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!;
+    // The server re-resolves the approved reference itself; the browser only names the exact product and variant.
+    expect([...start.body!.keys()].sort()).toEqual(["key", "leadDone", "mappingRevision", "option", "photo", "product", "sourceVariant", "variant", "visitor"]);
+    expect(JSON.stringify([...start.body!.entries()].filter(([, value]) => typeof value === "string"))).not.toContain("cdn.shopify.com");
+  });
+});

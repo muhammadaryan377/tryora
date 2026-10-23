@@ -50,8 +50,9 @@ setAssistantLogSink((line) => { if (process.env.TRYORA_E2E_DEBUG) console.error(
 const aria = fixtureProduct({ id: 1, title: "Aria Upholstered Bed", productType: "Bed", options: { Colour: ["Cream", "Grey"], Size: ["King"] }, price: 899, tags: ["modern", "upholstered"] });
 const products = [aria, ...furnitureCatalogue(40)];
 for (const product of products) {
-  product.featuredMedia = { preview: { image: { url: `/img/${product.handle}.jpg` } } };
-  product.variants.forEach((variant, index) => { variant.image = { url: `/img/${product.handle}-${index}.jpg` }; });
+  // Realistic Shopify CDN URLs; the browser context serves them locally (see routeImages).
+  product.featuredMedia = { preview: { image: { url: `https://cdn.shopify.com/s/files/e2e/${product.handle}.jpg`, altText: product.title } } };
+  product.variants.forEach((variant, index) => { variant.image = { url: `https://cdn.shopify.com/s/files/e2e/${product.handle}-${index}.jpg` }; });
 }
 state.configs = [{
   id: "c1", shopId: SHOP, productId: aria.id, enabled: true, autoConfigured: false, visualOptionName: "Colour", itemNoun: "bed",
@@ -197,6 +198,9 @@ let server: Server;
 let origin = "";
 let browser: any;
 
+/** Serves Shopify CDN image URLs from the harness so the browser loads real JPEG thumbnails offline. */
+const routeImages = (context: any) => context.route("https://cdn.shopify.com/**", (route: any) => route.fulfill({ status: 200, contentType: "image/jpeg", body: previewImage }));
+
 /** Waits for the drawer's open transition, so measurements reflect the final layout. */
 const settled = (page: any) => page.waitForFunction(() => document.getAnimations().every((animation) => animation.playState !== "running"));
 
@@ -228,7 +232,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
   });
 
   it("desktop: launchers coexist, drawer streams grounded answers, modes and history work", async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
     const page = await context.newPage();
     const errors: string[] = [];
     page.on("pageerror", (error: Error) => errors.push(error.message));
@@ -307,7 +311,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
   }, 90_000);
 
   it("desktop: uploads a room photo in chat, keeps the analysis and previews a verified product in the conversation", async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
     const page = await context.newPage();
     await page.goto(origin);
     await page.locator(".tryora-assistant-launch").click();
@@ -342,7 +346,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
   }, 90_000);
 
   it("SSE transport delivers incrementally over a real HTTP connection", async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
     const page = await context.newPage();
     await page.goto(`${origin}/sse`);
     await page.locator(".tryora-assistant-launch").click();
@@ -366,7 +370,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
   }, 60_000);
 
   it("mobile: fullscreen layout, fixed header and composer, no horizontal overflow", async () => {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 }); await routeImages(context);
     const page = await context.newPage();
     await page.goto(origin);
     const launcher = page.locator(".tryora-assistant-launch");

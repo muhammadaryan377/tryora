@@ -23,9 +23,15 @@ import {
 } from "./text";
 import { errorShape, logAssistant } from "./log.server";
 
-export const CATALOGUE_PAGE_SIZE = 20;
-export const MAX_INDEXED_PRODUCTS = 1000;
-const INDEX_VARIANTS = 20;
+/**
+ * Shopify rejects any query whose requested cost exceeds 1,000 (MAX_COST_EXCEEDED) before running it. The index page
+ * is sized well below that: 15 products x (5-variant sample without images, 4 collections, 10 metafields...) ~ 590.
+ * The previous page (20 products x 20 variants with images, requested cost 1,782) made every catalogue and
+ * live-search request fail on real stores. test/assistant-catalogue.test.ts enforces the budget.
+ */
+export const CATALOGUE_PAGE_SIZE = 15;
+export const MAX_INDEXED_PRODUCTS = 600;
+const INDEX_VARIANTS = 5;
 const DETAIL_VARIANT_PAGE = 100;
 const MAX_DETAIL_VARIANTS = 500;
 const FRESH_MS = 5 * 60_000;
@@ -48,26 +54,34 @@ export const ATTRIBUTE_METAFIELDS: [alias: string, namespace: string, key: strin
 ];
 
 const PRODUCT_FIELDS = `
-  id title handle productType vendor tags onlineStoreUrl status
+  id title handle productType vendor tags onlineStoreUrl publishedAt status
   description(truncateAt: 1500)
   category { fullName }
-  featuredMedia { preview { image { url(transform: { maxWidth: 800, maxHeight: 800 }) } } }
+  featuredMedia { preview { image { url(transform: { maxWidth: 800, maxHeight: 800 }) altText } } }
   priceRangeV2 { minVariantPrice { amount currencyCode } maxVariantPrice { amount currencyCode } }
   variantsCount { count }
   options { name optionValues { name } }
   collections(first: 4) { nodes { title handle } }
   ${ATTRIBUTE_METAFIELDS.map(([alias, namespace, key]) => `${alias}: metafield(namespace: "${namespace}", key: "${key}") { value }`).join("\n  ")}`;
 
-const VARIANT_FIELDS = `id title availableForSale price compareAtPrice image { url(transform: { maxWidth: 800, maxHeight: 800 }) } selectedOptions { name value }`;
+const VARIANT_FIELDS = `id title availableForSale price compareAtPrice image { url(transform: { maxWidth: 800, maxHeight: 800 }) altText } selectedOptions { name value }`;
+/** The index samples variants without images; exact variants and images come from PRODUCT_DETAIL_QUERY. */
+const INDEX_VARIANT_FIELDS = `id title availableForSale price compareAtPrice selectedOptions { name value }`;
 
 export const CATALOGUE_QUERY = `#graphql
   query TryoraAssistantCatalogue($after: String, $query: String, $sortKey: ProductSortKeys) {
     products(first: ${CATALOGUE_PAGE_SIZE}, after: $after, query: $query, sortKey: $sortKey) {
       nodes { ${PRODUCT_FIELDS}
-        variants(first: ${INDEX_VARIANTS}) { nodes { ${VARIANT_FIELDS} } pageInfo { hasNextPage } }
+        variants(first: ${INDEX_VARIANTS}) { nodes { ${INDEX_VARIANT_FIELDS} } pageInfo { hasNextPage } }
       }
       pageInfo { hasNextPage endCursor }
     }
+  }`;
+
+/** Authoritative count of active products matching a Shopify search query. */
+export const PRODUCT_COUNT_QUERY = `#graphql
+  query TryoraAssistantCount($query: String) {
+    productsCount(query: $query, limit: null) { count precision }
   }`;
 
 export const PRODUCT_DETAIL_QUERY = `#graphql
@@ -85,7 +99,9 @@ export interface CatalogueVariant {
   price: string;
   compareAtPrice: string | null;
   available: boolean;
+  /** This exact variant's own Shopify image, when the merchant assigned one. Never a product-level fallback. */
   image: string | null;
+  imageAlt: string | null;
 }
 
 export interface CatalogueProduct {
@@ -99,7 +115,9 @@ export interface CatalogueProduct {
   category: string | null;
   tags: string[];
   description: string;
+  /** The product's featured media image (Shopify CDN). Represents the product, not any particular variant. */
   image: string | null;
+  imageAlt: string | null;
   currencyCode: string;
   minPrice: number;
   maxPrice: number;
@@ -142,6 +160,12 @@ export class ShopifyBudget {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Shopify's machine-readable error code (MAX_COST_EXCEEDED, ACCESS_DENIED...), never the message text. */
+export function shopifyErrorCode(json: any): string | undefined {
+  const code = Array.isArray(json?.errors) ? json.errors.map((entry: any) => entry?.extensions?.code).find((value: unknown) => typeof value === "string") : undefined;
+  return typeof code === "string" && /^[A-Z_]{2,40}$/.test(code) ? code : undefined;
+}
+
 export async function adminQuery(admin: AdminGraphql, query: string, variables: Record<string, unknown>, stage: string, budget?: ShopifyBudget): Promise<any> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     budget?.spend();
@@ -151,7 +175,9 @@ export async function adminQuery(admin: AdminGraphql, query: string, variables: 
       response = await admin.graphql(query, { variables });
       json = await response.json();
     } catch (error) {
-      logAssistant("shopify_failure", { stage, ...errorShape(error) });
+      // The Shopify library throws GraphqlQueryError with the response body attached.
+      const body = (error as any)?.body ?? (error as any)?.response?.body;
+      logAssistant("shopify_failure", { stage, ...errorShape(error), code: shopifyErrorCode(body) ?? errorShape(error).code });
       throw new TryoraError("PROVIDER_UNAVAILABLE");
     }
     const throttled = Array.isArray(json?.errors) && json.errors.some((entry: any) => entry?.extensions?.code === "THROTTLED");
@@ -160,7 +186,12 @@ export async function adminQuery(admin: AdminGraphql, query: string, variables: 
       continue;
     }
     if (!response.ok || json?.errors?.length || !json?.data) {
-      logAssistant("shopify_failure", { stage, status: response.status, code: throttled ? "THROTTLED" : "GRAPHQL_ERROR" });
+      logAssistant("shopify_failure", {
+        stage,
+        status: response.status,
+        code: throttled ? "THROTTLED" : shopifyErrorCode(json) ?? "GRAPHQL_ERROR",
+        reason: typeof json?.extensions?.cost?.requestedQueryCost === "number" ? `requested_cost_${json.extensions.cost.requestedQueryCost}` : undefined,
+      });
       throw new TryoraError("PROVIDER_UNAVAILABLE");
     }
     return json.data;
@@ -188,6 +219,15 @@ function attributeValue(raw: unknown): string | null {
   return clean ? clean.slice(0, 300) : null;
 }
 
+/** Shopify handles are lowercase letters, digits, hyphens (and occasionally underscores or unicode letters). */
+const validHandle = (value: unknown): value is string => typeof value === "string" && /^[\p{L}\p{N}_-]{1,255}$/u.test(value);
+
+/** Only absolute https image URLs from Shopify are passed on to shoppers. */
+export function imageUrl(value: unknown): string | null {
+  return typeof value === "string" && /^https:\/\/[^\s"'<>]+$/i.test(value) ? value : null;
+}
+const altText = (value: unknown) => typeof value === "string" && value.trim() ? value.trim().slice(0, 200) : null;
+
 function parseVariant(node: any): CatalogueVariant | null {
   if (typeof node?.id !== "string") return null;
   return {
@@ -198,13 +238,32 @@ function parseVariant(node: any): CatalogueVariant | null {
     price: String(node.price ?? "0"),
     compareAtPrice: node.compareAtPrice ? String(node.compareAtPrice) : null,
     available: node.availableForSale === true,
-    image: node.image?.url ?? null,
+    image: imageUrl(node.image?.url),
+    imageAlt: altText(node.image?.altText),
   };
 }
 
-/** Parses an Admin product node. Returns null for drafts, archived products and products hidden from the Online Store. */
+/**
+ * Whether a product is published to the Online Store.
+ *
+ * `onlineStoreUrl` alone is not reliable: Shopify returns null for every product on a password-protected store
+ * (common for development stores) even when the product is published. `publishedAt` is the Online Store publication
+ * time, so a past timestamp counts as published; a future one is a scheduled publication and does not.
+ */
+export function publishedToOnlineStore(node: { onlineStoreUrl?: unknown; publishedAt?: unknown }, now = Date.now()): boolean {
+  if (typeof node.onlineStoreUrl === "string" && node.onlineStoreUrl) return true;
+  if (typeof node.publishedAt !== "string") return false;
+  const published = Date.parse(node.publishedAt);
+  return Number.isFinite(published) && published <= now;
+}
+
+/**
+ * Parses an Admin product node. Returns null for drafts, archived products and products not published to the Online
+ * Store. Links are always built from the handle as a relative storefront path, never from onlineStoreUrl, so they work
+ * on password-protected and custom-domain stores alike.
+ */
 export function parseProduct(node: any, variantNodes: any[], variantsComplete: boolean): CatalogueProduct | null {
-  if (typeof node?.id !== "string" || node.status !== "ACTIVE" || !node.onlineStoreUrl || !node.handle) return null;
+  if (typeof node?.id !== "string" || node.status !== "ACTIVE" || !publishedToOnlineStore(node) || !validHandle(node.handle)) return null;
   const variants = variantNodes.map(parseVariant).filter((variant): variant is CatalogueVariant => !!variant);
   const attributes: Record<string, string> = {};
   for (const [alias] of ATTRIBUTE_METAFIELDS) {
@@ -229,7 +288,8 @@ export function parseProduct(node: any, variantNodes: any[], variantsComplete: b
     category,
     tags,
     description: String(node.description ?? "").replace(/\s+/g, " ").trim(),
-    image: node.featuredMedia?.preview?.image?.url ?? null,
+    image: imageUrl(node.featuredMedia?.preview?.image?.url),
+    imageAlt: altText(node.featuredMedia?.preview?.image?.altText),
     currencyCode: String(node.priceRangeV2?.minVariantPrice?.currencyCode ?? "GBP"),
     minPrice: Number(node.priceRangeV2?.minVariantPrice?.amount ?? 0),
     maxPrice: Number(node.priceRangeV2?.maxVariantPrice?.amount ?? 0),
@@ -382,6 +442,14 @@ export async function getCatalogue(admin: AdminGraphql, shopId: string, waitMs: 
   return { snapshot: null, cache: "cold" };
 }
 
+/** Read-only view of a shop's cached index, for merchant diagnostics. */
+export function catalogueCacheInfo(shopId: string) {
+  const snapshot = cache.get(shopId)?.snapshot;
+  return snapshot && snapshot.shopId === shopId
+    ? { products: snapshot.products.length, complete: snapshot.complete, ageSeconds: Math.round((now() - snapshot.loadedAt) / 1000) }
+    : null;
+}
+
 /** Starts loading a shop's catalogue without waiting, so the first shopper question is fast. */
 export function warmAssistantCatalogue(admin: AdminGraphql, shopId: string) {
   const entry = entryFor(shopId);
@@ -468,14 +536,33 @@ export function searchCatalogue(snapshot: Pick<CatalogueSnapshot, "index">, quer
     .slice(0, limit);
 }
 
+/** Every indexed product matching the query's furniture kind, terms, colour and material (no limit). For counting. */
+export function countCatalogue(snapshot: Pick<CatalogueSnapshot, "index">, query: Pick<ProductQuery, "query" | "colour" | "material">) {
+  const terms = expandQuery([query.query, query.colour, query.material].filter(Boolean).join(" "));
+  const kinds = terms.filter((term) => term.weight === 1 && CATEGORY_TERMS.has(term.term)).map((term) => term.term);
+  const constraints = [query.colour, query.material].filter((value): value is string => !!value?.trim());
+  return scoreIndex(snapshot.index, terms)
+    .filter(({ score }) => !terms.length || score > 0)
+    .filter(({ item }) => !kinds.length || kinds.some((kind) => item.kinds.has(kind)))
+    .filter(({ item }) => constraints.every((value) => productHas(item, value)))
+    .map(({ item }) => item);
+}
+
+const STOP_SEARCH = new Set(["the", "and", "for", "any", "you", "have", "with", "your", "how", "many", "what", "does", "store", "products", "product", "do", "sell", "items"]);
+
+/** Shopify search words for a shopper query, including canonical synonyms ("couch" also searches "sofa"). */
+export function shopifySearchWords(text: string) {
+  return [...new Set([
+    ...normaliseText(text).split(" "),
+    ...expandQuery(text).filter((term) => term.weight === 1).map((term) => term.term),
+  ])].filter((word) => SEARCH_WORD.test(word) && !/^\d+$/.test(word) && !STOP_SEARCH.has(word)).slice(0, 10);
+}
+
 const SEARCH_WORD = /^[a-z0-9]{2,30}$/;
 
 /** Shopify-side search used when the cached index is cold or incomplete. */
 export async function liveSearch(admin: AdminGraphql, shopId: string, query: ProductQuery, budget: ShopifyBudget): Promise<CatalogueSnapshot> {
-  const words = [...new Set([
-    ...normaliseText([query.query, query.colour, query.material].filter(Boolean).join(" ")).split(" "),
-    ...expandQuery([query.query, query.colour].filter(Boolean).join(" ")).filter((term) => term.weight === 1).map((term) => term.term),
-  ])].filter((word) => SEARCH_WORD.test(word) && !/^\d+$/.test(word)).slice(0, 10);
+  const words = shopifySearchWords([query.query, query.colour, query.material].filter(Boolean).join(" "));
   const search = words.length ? `status:active AND (${words.join(" OR ")})` : "status:active";
   const data = await adminQuery(admin, CATALOGUE_QUERY, { after: null, query: search, sortKey: "RELEVANCE" }, "live_search", budget);
   const products = (data.products?.nodes ?? [])

@@ -134,6 +134,8 @@ describe("catalogue loading and caching", () => {
 
   it("caps very large stores and uses live Shopify search for the rest", async () => {
     const products = furnitureCatalogue(1200);
+    // A uniquely named product beyond the index cap, as a shopper would search for it.
+    products.at(-1)!.title = "Zephyrine Linen Daybed";
     const admin = fixtureAdmin(products);
     const { snapshot } = await getCatalogue(admin, "huge.myshopify.com", 20_000);
     expect(snapshot!.products).toHaveLength(MAX_INDEXED_PRODUCTS);

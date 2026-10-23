@@ -93,6 +93,28 @@ If Shopify fails, tools return `store_data_temporarily_unavailable` with an inst
 
 Catalogue awareness, search (synonyms, BM25, constraints, live Shopify fallback) and store knowledge are unchanged from 1.x; see `app/assistant/catalogue.server.ts`, `text.ts` and `knowledge.server.ts`.
 
+## Catalogue grounding and the October 2026 incident
+
+**Incident:** on `test-sofa-site.myshopify.com`, a shopper viewing the *Egerie Curved Headboard Beige Boucle Bed* was told "This store currently does not have any beds available for sale".
+
+**Root cause:** the catalogue index and live-search query asked for 20 products × 20 variants (with images), 4 collections and 10 metafields per page. That is a requested cost of **1,782**, and Shopify rejects any query above 1,000 (`MAX_COST_EXCEEDED`) before running it. Every product search failed, the model saw no products, and it invented an absence claim. The simulated Shopify used in tests did not enforce query cost, so this was not caught.
+
+**Fixes:**
+- **Cheaper query:** the index query now asks for 15 products × a 5-variant sample without images (cost about 590). Exact variants and images come from the per-product detail query (cost 329). `test/assistant-grounding.test.ts` asserts every assistant query stays at or below 80% of the limit. The fixture now rejects over-cost queries exactly like Shopify, and the previous query is shown to fail.
+- **Current product:** the product the shopper is viewing is read fresh at the start of each turn. It is given to the model as verified context and stays searchable even if the catalogue is down.
+- **Counts:** `count_products` answers "how many" and "do you sell any" questions. It counts across the complete index when one is loaded, otherwise uses Shopify `productsCount`; it never infers totals from a capped search page.
+- **Honest empty results:** if nothing meets every filter, search returns related products of the requested kind (for example a sold-out bed) and says the store does sell them. "None" is only reported as verified after a complete catalogue check.
+- **Absence guard:** any final-message sentence claiming the store has none of a product kind is replaced unless a complete check proved it. The replacement says the range could not be verified and mentions the viewed product. Policy sentences such as "no delivery charge" are left alone.
+- **Logging:** Shopify failures are logged with Shopify's own error code (`MAX_COST_EXCEEDED`, `ACCESS_DENIED`, `THROTTLED`) and the requested cost when Shopify reports it.
+
+**Real-store verification:** in the Shopify admin, open **Tryora › Room assistant › Check catalogue connection** (`/app/assistant-diagnostics?q=bed&handle=<product-handle>`). This read-only page runs the assistant's own queries against the store and shows:
+- the shop and granted scopes
+- active and total product counts
+- whether the catalogue query succeeds, with Shopify's reported cost
+- how many products are published to the Online Store
+- what a search returns
+- one product's status, publication and variant availability
+
 ## Previews inside the conversation
 
 A *See it in my room* or *Generate preview* button appears only when the server's strict check passed for that exact variant. That check is the same `loadProviderSetting` → adapter → `resolveConfiguredPreview` chain that `startPreview` uses. Cloudlift and manual-mapping products show "choose options on the product page" instead.

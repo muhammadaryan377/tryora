@@ -1,3 +1,5 @@
+import { requestedQueryCost, SHOPIFY_MAX_QUERY_COST } from "./query-cost";
+
 /**
  * A simulated Shopify Admin GraphQL endpoint for Room Assistant tests: realistic furniture catalogues, cursor
  * pagination, product search, variant paging, shop policies, optional latency and per-query call counts.
@@ -9,7 +11,7 @@ export interface FixtureVariant {
   availableForSale: boolean;
   price: string;
   compareAtPrice: string | null;
-  image: { url: string } | null;
+  image: { url: string; altText?: string | null } | null;
   selectedOptions: { name: string; value: string }[];
 }
 
@@ -21,14 +23,18 @@ export interface FixtureProduct {
   vendor: string;
   tags: string[];
   onlineStoreUrl: string | null;
+  /** Online Store publication time; null when unpublished, in the future when scheduled. */
+  publishedAt: string | null;
   status: "ACTIVE" | "DRAFT" | "ARCHIVED";
   description: string;
   category: { fullName: string } | null;
-  featuredMedia: { preview: { image: { url: string } } } | null;
+  featuredMedia: { preview: { image: { url: string; altText?: string | null } } } | null;
   options: { name: string; optionValues: { name: string }[] }[];
   collections: { nodes: { title: string; handle: string }[] };
   metafields: Record<string, string>;
   variants: FixtureVariant[];
+  /** Product media (MediaImage) that a merchant can approve as preview references. */
+  media: { id: string; url: string }[];
 }
 
 let nextId = 1000;
@@ -44,9 +50,17 @@ export function fixtureProduct(input: {
   description?: string;
   metafields?: Record<string, string>;
   published?: boolean;
+  /** Published, but the store is password-protected, so Shopify returns no onlineStoreUrl. */
+  passwordProtected?: boolean;
+  publishedAt?: string | null;
   status?: FixtureProduct["status"];
   id?: number;
   category?: string;
+  /** Featured image URL; null for a product without media. */
+  featuredImage?: string | null;
+  /** Per-variant image URL; null when the merchant assigned none. */
+  variantImage?: (options: Record<string, string>, index: number) => string | null;
+  media?: { id: string; url: string }[];
 }): FixtureProduct {
   const id = input.id ?? nextId++;
   const handle = input.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") + `-${id}`;
@@ -63,7 +77,10 @@ export function fixtureProduct(input: {
       availableForSale: input.available ? input.available(options) : true,
       price: price.toFixed(2),
       compareAtPrice: null,
-      image: { url: `https://cdn.shopify.com/${handle}-${index}.jpg` },
+      image: (() => {
+        const url = input.variantImage ? input.variantImage(options, index) : `https://cdn.shopify.com/${handle}-${index}.jpg`;
+        return url ? { url, altText: `${input.title} ${Object.values(options).join(" ")}` } : null;
+      })(),
       selectedOptions: names.map((name) => ({ name, value: options[name]! })),
     };
   });
@@ -74,15 +91,17 @@ export function fixtureProduct(input: {
     productType: input.productType,
     vendor: "Demo Furniture",
     tags: input.tags ?? [],
-    onlineStoreUrl: input.published === false ? null : `https://demo.example/products/${handle}`,
+    onlineStoreUrl: input.published === false || input.passwordProtected || input.publishedAt === null ? null : `https://demo.example/products/${handle}`,
+    publishedAt: input.published === false ? null : input.publishedAt !== undefined ? input.publishedAt : "2026-09-01T10:00:00Z",
     status: input.status ?? "ACTIVE",
     description: input.description ?? `${input.title}. A ${input.productType.toLowerCase()} for modern homes.`,
     category: { fullName: input.category ?? `Home & Garden > Furniture > ${input.productType}` },
-    featuredMedia: { preview: { image: { url: `https://cdn.shopify.com/${handle}.jpg` } } },
+    featuredMedia: input.featuredImage === null ? null : { preview: { image: { url: input.featuredImage ?? `https://cdn.shopify.com/${handle}.jpg`, altText: `${input.title} product photo` } } },
     options: names.map((name) => ({ name, optionValues: input.options[name]!.map((value) => ({ name: value })) })),
     collections: { nodes: (input.collections ?? [input.productType + "s"]).map((title) => ({ title, handle: title.toLowerCase().replace(/[^a-z0-9]+/g, "-") })) },
     metafields: input.metafields ?? {},
     variants,
+    media: input.media ?? [],
   };
 }
 
@@ -119,7 +138,7 @@ export function furnitureCatalogue(count: number): FixtureProduct[] {
 
 function productNode(product: FixtureProduct, variants: FixtureVariant[], hasNextPage: boolean, endCursor: string | null) {
   const prices = product.variants.map((variant) => Number(variant.price));
-  const { metafields, variants: _all, ...rest } = product;
+  const { metafields, variants: _all, media: _media, ...rest } = product;
   const aliases = Object.fromEntries(["dimensions", "width", "depth", "height", "material", "materials", "fabric", "care", "assembly", "warranty"]
     .map((alias) => [alias, metafields[alias] ? { value: metafields[alias] } : null]));
   return {
@@ -139,10 +158,13 @@ export interface FixtureShop {
   contactEmail?: string;
   policies?: { type: string; title: string; url: string; body: string }[];
   pages?: { title: string; handle: string; body: string; isPublished: boolean }[] | "denied";
+  scopes?: string[];
 }
 
 /** Shopify-like search: any OR'd word appearing in title, type, tags or option values. */
 function shopifySearch(products: FixtureProduct[], query: string, relevance: boolean) {
+  const handle = query.match(/handle:([a-z0-9-]+)/i)?.[1];
+  if (handle) return products.filter((product) => product.handle === handle);
   const words = query.replace(/^status:active( AND )?/, "").replace(/[()]/g, " ").split(/\s+OR\s+|\s+/).map((word) => word.trim().toLowerCase()).filter(Boolean);
   if (!words.length) return products;
   const scored = products.map((product) => {
@@ -153,14 +175,26 @@ function shopifySearch(products: FixtureProduct[], query: string, relevance: boo
   return scored.map((entry) => entry.product);
 }
 
-export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {}, options: { latencyMs?: number; throttleFirst?: boolean; fail?: (query: string) => boolean } = {}) {
+export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {}, options: { latencyMs?: number; throttleFirst?: boolean; fail?: (query: string) => boolean; failCode?: string } = {}) {
   const calls: Record<string, number> = {};
   let throttled = !options.throttleFirst;
   const graphql = async (query: string, init?: { variables?: Record<string, unknown> }) => {
     const name = query.match(/query (\w+)/)?.[1] ?? "unknown";
     calls[name] = (calls[name] ?? 0) + 1;
     if (options.latencyMs) await new Promise((resolve) => setTimeout(resolve, options.latencyMs));
-    if (options.fail?.(name)) return Response.json({ errors: [{ message: "Internal error" }] }, { status: 500 });
+    if (options.fail?.(name)) {
+      return options.failCode
+        ? Response.json({ errors: [{ message: "Failed", extensions: { code: options.failCode } }] })
+        : Response.json({ errors: [{ message: "Internal error" }] }, { status: 500 });
+    }
+    // Like Shopify, refuse any query whose requested cost exceeds the single-query limit before running it.
+    const cost = requestedQueryCost(query, init?.variables ?? {});
+    if (cost > SHOPIFY_MAX_QUERY_COST) {
+      return Response.json({
+        errors: [{ message: `Query cost is ${cost}, which exceeds the single query max cost limit (${SHOPIFY_MAX_QUERY_COST}).`, extensions: { code: "MAX_COST_EXCEEDED", cost, maxCost: SHOPIFY_MAX_QUERY_COST } }],
+        extensions: { cost: { requestedQueryCost: cost } },
+      });
+    }
     if (!throttled) {
       throttled = true;
       return Response.json({ errors: [{ message: "Throttled", extensions: { code: "THROTTLED" } }] });
@@ -169,13 +203,22 @@ export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {},
     const visible = products.filter((product) => product.status === "ACTIVE");
     if (name === "TryoraAssistantCatalogue") {
       const pool = shopifySearch(visible, String(vars.query ?? "status:active"), vars.sortKey === "RELEVANCE");
+      const size = Number(query.match(/products\(first: (\d+)/)?.[1] ?? 20);
+      const variantSize = Number(query.match(/variants\(first: (\d+)/)?.[1] ?? 20);
       const start = vars.after ? Number(vars.after) : 0;
-      const page = pool.slice(start, start + 20);
-      const next = start + 20 < pool.length ? String(start + 20) : null;
+      const page = pool.slice(start, start + size);
+      const next = start + size < pool.length ? String(start + size) : null;
       return Response.json({ data: { products: {
-        nodes: page.map((product) => productNode(product, product.variants.slice(0, 20), product.variants.length > 20, null)),
+        nodes: page.map((product) => productNode(product, product.variants.slice(0, variantSize), product.variants.length > variantSize, null)),
         pageInfo: { hasNextPage: !!next, endCursor: next },
       } } });
+    }
+    if (name === "TryoraAssistantCount") {
+      const pool = vars.query ? shopifySearch(visible, String(vars.query), false) : products;
+      return Response.json({ data: { productsCount: { count: pool.length, precision: "EXACT" } } });
+    }
+    if (name === "TryoraAssistantScopes") {
+      return Response.json({ data: { currentAppInstallation: { accessScopes: (shop.scopes ?? ["read_orders", "write_products"]).map((handle) => ({ handle })) } } });
     }
     if (name === "TryoraAssistantProductDetail") {
       const product = products.find((entry) => entry.id === vars.id);
@@ -202,6 +245,14 @@ export function fixtureAdmin(products: FixtureProduct[], shop: FixtureShop = {},
         options: product.options.map((option, index) => ({ id: `option-${index}`, name: option.name, optionValues: option.optionValues.map((value, i) => ({ id: `value-${index}-${i}`, name: value.name })) })),
         variants: { nodes: product.variants.map((variant) => ({ id: variant.id, availableForSale: variant.availableForSale, image: variant.image, selectedOptions: variant.selectedOptions })), pageInfo: { hasNextPage: false, endCursor: null } },
       } } });
+    }
+    if (name === "TryoraPreviewMedia") {
+      const product = products.find((entry) => entry.id === vars.id);
+      if (!product) return Response.json({ data: { product: null } });
+      return Response.json({ data: { product: { media: {
+        nodes: product.media.map((media) => ({ id: media.id, image: { url: media.url } })),
+        pageInfo: { hasNextPage: false, endCursor: null },
+      } } } });
     }
     throw new Error(`Unexpected query: ${name}`);
   };
