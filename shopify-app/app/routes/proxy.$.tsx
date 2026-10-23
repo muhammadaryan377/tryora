@@ -14,9 +14,15 @@ import { guardAssistant, guardPhotoCheck, guardPreview } from "../guard.server";
 import {
   answerRoomAssistant,
   assistantStorefrontConfig,
-  normaliseAssistantHistory,
   requireAssistantEnabled,
 } from "../room-assistant.server";
+import {
+  assistantInputFrom,
+  cancelAssistantTurn,
+  readAssistantTurn,
+  startAssistantTurn,
+  streamAssistantTurn,
+} from "../assistant/turn-routes.server";
 import { warmAssistantCatalogue } from "../assistant/catalogue.server";
 import { logAssistant } from "../assistant/log.server";
 
@@ -62,6 +68,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     if (config.enabled) warmAssistantCatalogue(admin, session.shop);
     return json(config);
   }
+  const turn = path.match(/^assistant\/turn\/([\w-]+)$/);
+  if (turn) {
+    try {
+      return json(await readAssistantTurn(session.shop, url.searchParams.get("visitor") ?? "", turn[1]!, Number(url.searchParams.get("after") ?? 0)));
+    } catch (e) {
+      const code = errorCode(e);
+      return json({ error: code === "NOT_FOUND" ? "NOT_FOUND" : "TEMPORARILY_UNAVAILABLE" }, code === "NOT_FOUND" ? 404 : 503);
+    }
+  }
   const poll = path.match(/^preview\/([\w-]+)$/);
   if (poll) {
     try { return json(await pollPreview(session.shop, poll[1]!)); }
@@ -79,6 +94,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const field = (k: string) => String(form.get(k) ?? "");
 
   try {
+    const cancel = path.match(/^assistant\/turn\/([\w-]+)\/cancel$/);
+    if (cancel) return json(await cancelAssistantTurn(shopId, field("visitor"), cancel[1]!));
     switch (path) {
       case "check": {
         guardPhotoCheck(shopId, field("visitor"));
@@ -123,32 +140,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
       case "issue":
         return json(await reportIssue(shopId, field("job"), field("category")));
+      case "assistant/turn":
+        return json(await startAssistantTurn(admin, shopId, form));
+      case "assistant/stream":
+        return await streamAssistantTurn(admin, shopId, form);
       case "assistant/message": {
+        // JSON, non-streaming: kept for storefront bundles published before streamed turns.
         guardAssistant(shopId, field("visitor"));
         const settings = await requireAssistantEnabled(shopId);
-        let history: unknown;
-        let room: unknown = null;
-        let shown: unknown = [];
-        if (field("history").length > 16_000 || field("room").length > 2_000 || field("shown").length > 2_000) {
-          return json({ error: "BAD_REQUEST" }, 400);
-        }
-        try {
-          history = JSON.parse(field("history"));
-          if (field("room")) room = JSON.parse(field("room"));
-          if (field("shown")) shown = JSON.parse(field("shown"));
-        } catch { return json({ error: "BAD_REQUEST" }, 400); }
-        const photo = form.has("photo") ? await photoFrom(form) : undefined;
-        if (form.has("photo") && !photo) return json({ error: "BAD_PHOTO" }, 400);
-        return json(await answerRoomAssistant({
-          admin,
-          shopId,
-          history: normaliseAssistantHistory(history),
-          currentProductId: field("product") || undefined,
-          roomPhoto: photo ?? undefined,
-          room,
-          shown,
-          settings,
-        }));
+        return json(await answerRoomAssistant({ ...await assistantInputFrom(form, admin, shopId), settings }));
       }
       default:
         return json({ error: "NOT_FOUND" }, 404);

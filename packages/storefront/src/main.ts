@@ -19,7 +19,7 @@ import { launchersToRender, type LauncherSettings } from "../../core/src/launche
 import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
-import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig } from "./assistant.js";
+import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig, wasOpen } from "./assistant.js";
 
 interface VariantChoice {
   id: string;
@@ -1068,8 +1068,14 @@ async function bootAssistant(root: HTMLElement, productId: string | undefined, p
   // The preview config request runs in parallel; it only decides whether "Preview this product" is offered.
   const current = await preview.catch(() => null);
   let assistant: RoomAssistant | null = null;
+  let launcher: HTMLElement | null = null;
   const openAssistant = () => {
-    assistant ??= new RoomAssistant(config, { productId, openCurrentPreview: current?.open });
+    assistant ??= new RoomAssistant(config, {
+      productId,
+      openCurrentPreview: current?.open,
+      launcher,
+      currentVariantId: () => document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value ?? null,
+    });
     assistant.open();
   };
   (window as any).TryoraAssistant = { open: openAssistant };
@@ -1080,10 +1086,11 @@ async function bootAssistant(root: HTMLElement, productId: string | undefined, p
       openAssistant();
     }
   });
-  const launcher = buildAssistantLauncher(config, openAssistant);
+  launcher = buildAssistantLauncher(config, openAssistant);
   document.body.appendChild(launcher);
   arrangeLaunchers(current?.launcher ?? null, launcher);
-  if (location.hash === "#tryora-assistant") openAssistant();
+  // Continue an open conversation after the shopper navigates within this tab.
+  if (location.hash === "#tryora-assistant" || (config.shop && wasOpen(config.shop))) openAssistant();
 }
 
 export async function boot() {

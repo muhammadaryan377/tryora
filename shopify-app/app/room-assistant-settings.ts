@@ -11,6 +11,8 @@ export interface RoomAssistantSettings {
   excludedCollections: string[];
   /** Merchant-written facts for shoppers (delivery areas, showroom, warranty…). Quoted only when relevant. */
   knowledge: string;
+  /** How the assistant opens: a right-side drawer (default) or fullscreen. Shoppers can switch either way. */
+  defaultView: "side" | "fullscreen";
 }
 
 export const MAX_ASSISTANT_KNOWLEDGE = 8000;
@@ -26,13 +28,14 @@ export interface AssistantPageContext {
 export const DEFAULT_ROOM_ASSISTANT_SETTINGS: RoomAssistantSettings = {
   enabled: false,
   greeting: "Hi, how can I help today?",
-  launcherLabel: "Room assistant",
+  launcherLabel: "Room Assistant",
   launcherPosition: "bottom-right",
   launcherColour: "#6f7046",
   pages: { home: false, product: true, collection: false, other: false },
   excludedProducts: [],
   excludedCollections: [],
   knowledge: "",
+  defaultView: "side",
 };
 
 const cleanTokens = (value: unknown) => Array.isArray(value)
@@ -64,6 +67,7 @@ export function roomAssistantSettings(copy: unknown): RoomAssistantSettings {
     excludedProducts: cleanTokens(source.excludedProducts),
     excludedCollections: cleanTokens(source.excludedCollections),
     knowledge: typeof source.knowledge === "string" ? source.knowledge.trim().slice(0, MAX_ASSISTANT_KNOWLEDGE) : "",
+    defaultView: source.defaultView === "fullscreen" ? "fullscreen" : "side",
   };
 }
 

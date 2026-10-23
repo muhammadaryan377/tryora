@@ -43,6 +43,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     excludedProducts: parseExclusionList(form.get("excludedProducts")),
     excludedCollections: parseExclusionList(form.get("excludedCollections")),
     knowledge: String(form.get("knowledge") ?? "").trim(),
+    defaultView: form.get("defaultView") === "fullscreen" ? "fullscreen" : "side",
   };
   const errors: string[] = [];
   if (!settings.greeting || settings.greeting.length > 120) errors.push("Greeting must be between 1 and 120 characters.");
@@ -104,6 +105,8 @@ export default function AssistantSettings() {
         <input type="hidden" name="launcherColour" value={settings.launcherColour} />
         <input type="hidden" name="excludedProducts" value={settings.excludedProducts.join("\n")} />
         <input type="hidden" name="excludedCollections" value={settings.excludedCollections.join("\n")} />
+        <input type="hidden" name="knowledge" value={settings.knowledge} />
+        <input type="hidden" name="defaultView" value={settings.defaultView} />
 
         <s-section heading="Availability">
           <s-switch
@@ -162,6 +165,11 @@ export default function AssistantSettings() {
           <s-select label="Launcher position" value={settings.launcherPosition} onChange={(event: any) => update("launcherPosition", value(event) === "bottom-left" ? "bottom-left" : "bottom-right")}>
             <s-option value="bottom-right">Bottom right</s-option>
             <s-option value="bottom-left">Bottom left</s-option>
+          </s-select>
+          <s-select label="Assistant opens as" value={settings.defaultView} onChange={(event: any) => update("defaultView", value(event) === "fullscreen" ? "fullscreen" : "side")}
+            details="Shoppers can switch between the side panel and fullscreen at any time. Phones always use fullscreen.">
+            <s-option value="side">Side panel (recommended)</s-option>
+            <s-option value="fullscreen">Fullscreen</s-option>
           </s-select>
           <s-text-field label="Launcher colour" value={settings.launcherColour} onInput={(event: any) => update("launcherColour", value(event))} details="Six-digit hex colour, for example #6F7046." />
         </s-section>

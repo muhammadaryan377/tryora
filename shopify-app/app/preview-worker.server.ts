@@ -24,14 +24,19 @@ export function workerAuthorised(header: string | null) {
 }
 
 export async function remoteJob(operation: "poll" | "drop", shopId: string, jobId: string): Promise<any | undefined> {
-  const owner = jobId.includes("__") ? jobId.split("__")[0]!.split("_")[0]! : nodeId;
+  return remoteWorker(operation, jobId, { shopId, jobId });
+}
+
+/** Sends an operation to the worker that owns `id` (preview job or assistant turn). Undefined when it is local. */
+export async function remoteWorker(operation: string, id: string, body: Record<string, unknown>, timeoutMs = 5000): Promise<any | undefined> {
+  const owner = id.includes("__") ? id.split("__")[0]!.split("_")[0]! : nodeId;
   if (owner === nodeId) return undefined;
   const origin = origins[owner];
   if (!origin) throw new Error("Preview owner is unavailable");
   const res = await fetch(new URL("/internal/tryora-worker", origin), {
-    method: "POST", signal: AbortSignal.timeout(5000),
+    method: "POST", signal: AbortSignal.timeout(timeoutMs),
     headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ operation, shopId, jobId }),
+    body: JSON.stringify({ operation, ...body }),
   });
   if (!res.ok) throw new Error("Preview owner is unavailable");
   return res.json();
