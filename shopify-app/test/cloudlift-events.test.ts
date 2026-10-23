@@ -32,6 +32,19 @@ describe("source native variant mapping", () => {
     expect(nativeSourceVariantId({ Size: "King", Fabric: "Velvet" }, variants))
       .toBe("gid://shopify/ProductVariant/11");
   });
+  it("accepts a complete original variant with validated Tryora virtual projection fields", () => {
+    const page = { Size: "King", Fabric: "Velvet", "__tryora_mapped_fabric__": "Velvet",
+      "__tryora_preserved_configuration__": "reviewed-preservation" };
+    const projected = [
+      { ...variants[0]!, options: { ...variants[0]!.options,
+        "__tryora_preserved_configuration__": "reviewed-preservation" } },
+      variants[1]!,
+    ];
+    expect(nativeSourceVariantId(page, projected)).toBe("gid://shopify/ProductVariant/11");
+    expect(nativeSourceVariantId({ ...page, "__tryora_preserved_configuration__": "tampered" }, projected)).toBeNull();
+    expect(nativeSourceVariantId({ ...page, "__tryora_unknown__": "injected" }, projected)).toBeNull();
+  });
+
   it("rejects missing, unknown, or ambiguous variant context", () => {
     expect(nativeSourceVariantId({}, variants)).toBeNull();
     expect(nativeSourceVariantId({ "__unsupported_variant__": "999" }, variants)).toBeNull();
