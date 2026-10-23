@@ -184,6 +184,7 @@ export class Tryora {
   private marketing = false;
   private emailError = "";
   private copied = false;
+  private configurationNotice: string | null = null;
   private pageOptions: Record<string, string> = {};
   private fabric: string | null = null;
 
@@ -295,10 +296,14 @@ export class Tryora {
   }
 
   private async generate(option: string, photoId: string) {
+    this.configurationNotice = null;
     const photo = this.photos.get(photoId);
     if (!photo) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
     const variant = this.selectedVariant(option);
-    if ((this.cfg.swatches.length || this.cfg.singleVariants) && !variant) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+    if ((this.cfg.swatches.length || this.cfg.singleVariants) && !variant) {
+      this.configurationNotice = "This combination cannot be previewed. Choose another available option or review the product page. No credit was used.";
+      return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
+    }
     this.dispatch({ type: "JOB_STAGE", stage: "checking_photo" });
     let jobId: string;
     try {
@@ -315,6 +320,9 @@ export class Tryora {
       jobId = r.jobId;
     } catch (e: any) {
       const code = e?.code;
+      if (code === "BAD_REQUEST" || code === "NOT_FOUND") {
+        this.configurationNotice = "This combination or its product reference is no longer available for preview. Choose another available option or review the product page. No credit was used.";
+      }
       const reason =
         code === "QUOTA_PRODUCT" || code === "QUOTA_STORE" || code === "RATE_LIMITED"
           ? "quota_reached"
@@ -595,7 +603,8 @@ export class Tryora {
   private side(): string {
     const s = this.state;
     const c = this.cfg;
-    const notice = s.notice ? `<p class="tryora__notice" role="status">${esc(NOTICES[s.notice] ?? "")}</p>` : "";
+    const noticeText = s.notice === "generation_failed" && this.configurationNotice ? this.configurationNotice : s.notice ? NOTICES[s.notice] : "";
+    const notice = s.notice ? `<p class="tryora__notice" role="status">${esc(noticeText ?? "")}</p>` : "";
     switch (s.step) {
       case "opening":
         return `
