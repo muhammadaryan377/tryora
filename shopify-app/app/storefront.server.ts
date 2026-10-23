@@ -92,9 +92,16 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     return { ...selection, available: variants.length > 0, variants };
   });
   let manualData: Awaited<ReturnType<typeof manualStorefrontData>> | undefined;
-  if (providerSetting.providerId === "manual_mapping") {
-    try { manualData = await manualStorefrontData({ admin, config, setting: providerSetting }, { product: p, variants: p.variants.nodes }); }
-    catch { return { enabled: false as const }; }
+  if (providerSetting.providerId === "manual_mapping" || providerSetting.providerId === "cloudlift") {
+    try {
+      // Cloudlift native-linked mode uses the exact same reviewed native tuples.
+      // Browser events never authorize a source variant or a product reference.
+      const mappingSetting = providerSetting.providerId === "cloudlift"
+        ? { ...providerSetting, providerId: "manual_mapping" }
+        : providerSetting;
+      manualData = await manualStorefrontData({ admin, config, setting: mappingSetting }, { product: p, variants: p.variants.nodes });
+      if (providerSetting.providerId === "cloudlift") manualData = { ...manualData, providerId: "cloudlift" };
+    } catch { return { enabled: false as const }; }
     swatches = manualData.swatches;
   }
   const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
