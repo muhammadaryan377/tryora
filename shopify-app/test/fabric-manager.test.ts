@@ -237,6 +237,38 @@ describe("authenticated two-mode admin", () => {
     expect(await action({ request: request({}, "gid://shopify/Product/999") } as any)).toHaveProperty("error");
     expect(state.writes).toEqual([]);
   });
+  it("allows an authorized merchant to upload a fabric swatch before the first Manual Setup save", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+    const original = state.admin.graphql;
+    let marker = "";
+    state.admin.graphql = async (query: string, variables: any) => {
+      if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: {
+        stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/sample.jpg", parameters: [] }],
+        userErrors: [],
+      } } });
+      if (query.includes("TryoraAttachFabricImage")) {
+        marker = variables.variables.media[0].alt;
+        return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } });
+      }
+      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: {
+        nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/sample.jpg" } }],
+      } } } });
+      return original(query, variables);
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+    const form = new FormData();
+    form.set("intent", "upload"); form.set("mode", "manual"); form.set("revision", "");
+    form.set("image", new Blob([image], { type: "image/png" }), "fabric.png");
+    const result = await action({ request: new Request(
+      `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`,
+      { method: "POST", body: form },
+    ) } as any);
+    expect(result).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991" } });
+    expect(state.rows).toEqual([]); // Upload does not activate Manual Setup or authorize previews.
+    expect(state.config.enabled).toBe(false);
+    expect(state.writes).toEqual([]);
+  });
   it("blocks native-mode image uploads before any Shopify mutation", async () => {
     state.rows = [{ shopId, productId, providerId: "shopify_native", revision: "r", active: true, mapping: null }];
     const result = await action({ request: request({ intent: "upload", revision: "r" }) } as any);
