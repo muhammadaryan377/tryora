@@ -128,6 +128,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await page.selectOption('[aria-label="Shopify product"]', productId);
 
       await page.locator('summary:has-text("Edit sample image")').first().waitFor();
+       expect(await page.locator(".fabric-media-sample .fabric-existing-images .fabric-media-choices img").count()).toBeLessThan(state.media.length);
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await page.locator('.fabric-manager').textContent()).toContain("Velvet");
       expect(await page.locator('.fabric-list-item[aria-pressed=true]').textContent()).toContain("Velvet");
@@ -150,7 +151,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
       await row.locator('input[type=file]').setInputFiles({ name: "actual-swatch.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(1);
-      await expect.poll(() => row.locator('select').inputValue()).toBe("gid://shopify/MediaImage/901");
+      await expect(row.locator(".fabric-media-sample .fabric-selected-image img")).toHaveAttribute("src", /upload-1\.jpg/);
       await savePage(page);
 
       await page.locator('summary:has-text("Edit sample image")').last().click();
@@ -170,14 +171,14 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(3);
       expect(state.rows[0].mapping.draft.fabrics.at(-1)).toMatchObject({ name: "Loft Linen", description: "Merchant-provided fabric description", enabled: true });
       await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
-      await page.locator('.fabric-editor summary').click();
+      if (await page.locator(".fabric-editor").getAttribute("open") === null) await page.locator(".fabric-editor summary").click();
       const newFabric = page.locator('.fabric-editor');
       await newFabric.locator('input[type=checkbox]').uncheck();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.at(-1).enabled).toBe(false);
       page.on("dialog", (d: any) => d.accept());
       await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
-      await page.locator('.fabric-editor summary').click();
+      if (await page.locator(".fabric-editor").getAttribute("open") === null) await page.locator(".fabric-editor summary").click();
       await page.locator('.fabric-editor button:has-text("Remove fabric")').click();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(2);
