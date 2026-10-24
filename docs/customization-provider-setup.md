@@ -151,3 +151,11 @@ unsupported/current unmapped variants, profile changes during generation, all
 templates, mobile/desktop keyboard interaction, themes with dynamic variant forms,
 delivery/expiry/credits, and Add to Cart/checkout non-interference. Source metadata
 and synthetic fixtures do not prove visual accuracy of merchant-approved images.
+
+## Scoped installation enablement
+
+See [customization-installation-enablement.md](customization-installation-enablement.md).
+The master rollout flag remains required. Configure `TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS`
+before enabling it for a restricted rollout. Empty denies all; unset retains the existing
+global opt-in behavior for backward compatibility. The list is server-only and is checked
+against the authenticated installation, never a submitted shop value.

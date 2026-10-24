@@ -5,7 +5,7 @@ import { FabricColourManager } from "../components/fabric-colour-manager";
 import { FabricConfigError, emptyFabricDraft } from "../customization/fabric-manager";
 import { fabricProducts, draftFromMapping, compileFabricDocument, saveFabricConfiguration } from "../customization/fabric-manager.server";
 import { fabricForm, uploadFabricMedia } from "../customization/fabric-media.server";
-import { effectiveSetting, providerSettingsEnabled, STORE_DEFAULT } from "../customization/provider-config.server";
+import { effectiveSetting, providerSettingsEnabled, providerAccess, STORE_DEFAULT } from "../customization/provider-config.server";
 import { nativeSnapshot } from "../customization/reference-resolver.server";
 import { nativeSelections } from "../core/customization";
 import { discoverNativeOptions } from "../core/native-option-discovery";
@@ -21,8 +21,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url), productId = productScope(request);
   const products = await fabricProducts(admin, url.searchParams.get("after") ?? undefined);
-  const installationReady = providerSettingsEnabled();
-  if (!productId) return { products, installationReady, selected: null };
+  const access = providerAccess(session.shop), installationReady = access.enabled;
+  const manualSetupReason = access.reason === "rollout_disabled" ? "The app administrator must complete the reviewed provider-table rollout and enable the server feature gate. Shopify-native previews continue to work."
+    : access.reason === "invalid_allowlist" ? "The server customization allowlist is invalid. The app administrator must correct it before enabling Manual Setup. Shopify-native previews continue to work."
+    : access.reason ? "The app administrator must authorize this Shopify installation in the server customization allowlist. Shopify-native previews continue to work." : "";
+  if (!productId) return { products, installationReady, manualSetupReason, selected: null };
   let snapshot: Awaited<ReturnType<typeof nativeSnapshot>>;
   try { snapshot = await nativeSnapshot(admin, productId); }
   catch { throw new Response("This product could not be refreshed from Shopify. Return to Products or refresh to try again. Saved configuration is unchanged.", { status: 502 }); }
@@ -38,7 +41,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!importBlocked) try { diagnostics = compileFabricDocument(draft, session.shop, productId, snapshot).diagnostics; }
   catch { warning = "Saved mapping or product media needs review. Existing settings were preserved. Re-select stale variants/references, or inspect existing integration settings."; }
   const model = nativeSelections(snapshot.product.options ?? [], config ? config.visualOptionName : discoverNativeOptions(snapshot.product.options ?? []).recommendedName, snapshot.variants);
-  return { products, installationReady, selected: {
+  return { products, installationReady, manualSetupReason, selected: {
     productId, title: String(snapshot.product.title), image: snapshot.media[0]?.image?.url ?? null,
     mode: effective.providerId === "shopify_native" ? "native" as const : "manual" as const,
     providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, importBlocked,
@@ -54,7 +57,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (request.method !== "POST") throw new Response("Method not allowed", { status: 405 });
   const productId = productScope(request);
   if (!productId) throw new Response("Select a product", { status: 400 });
-  if (!providerSettingsEnabled()) return { error: "Manual/mode settings need the reviewed existing provider-table rollout and server opt-in. Native previews remain unchanged." };
+  if (!providerSettingsEnabled(session.shop)) return { error: "Manual/mode settings require the reviewed provider-table rollout and server authorization for this installation. Native previews remain unchanged." };
   const form = await fabricForm(request);
   const revision = String(form.get("revision") ?? "");
   try {

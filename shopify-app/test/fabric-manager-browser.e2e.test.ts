@@ -89,8 +89,29 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)); origin = `http://127.0.0.1:${server.address().port}`;
     const { chromium } = await import("playwright-core"); browser = await chromium.launch({ executablePath: browserPath, headless: true });
   });
-  beforeEach(() => fixture());
+  beforeEach(() => { fixture(); vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true"); vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId); });
   afterAll(async () => { await browser?.close(); await new Promise<void>((resolve) => server?.close(resolve)); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+  it.each(["rollout-off", "other-installation", "invalid-policy"])("locks manual controls and rejects forged actions for %s", async (condition) => {
+    if (condition === "rollout-off") vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "false");
+    else vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", condition === "invalid-policy" ? "*" : "another.myshopify.com");
+    const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
+    await context.route("https://cdn.shopify.com/**", (r: any) => r.fulfill({ contentType: r.request().url().endsWith("polaris.js") ? "application/javascript" : "image/jpeg", body: r.request().url().endsWith("polaris.js") ? polaris : jpeg }));
+    const page = await context.newPage(); const original = structuredClone(state.rows);
+    try {
+      await page.goto(`${origin}/app/fabrics?product=${encodeURIComponent(productId)}`);
+      await page.locator('[aria-label="Configuration mode"]').waitFor();
+      expect(await page.locator('[aria-label="Configuration mode"]').inputValue()).toBe("native");
+      expect(await page.locator('[aria-label="Configuration mode"] option[value=manual]').getAttribute("disabled")).not.toBeNull();
+      expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
+      expect(await page.locator('button:has-text("+ Add fabric")').isDisabled()).toBe(true);
+      expect(await page.locator('.fabric-workspace').count()).toBe(0);
+      expect(await page.locator('s-banner[heading="Manual setup is not enabled"]').count()).toBe(1);
+      expect(await page.locator('.fabric-manager').textContent()).toContain("Shopify-native previews continue to work");
+      const response = await page.evaluate(async () => (await fetch(location.href, { method: 'POST', body: new URLSearchParams({ intent: 'save', mode: 'manual', shop: 'another.myshopify.com', draft: '{}' }) })).json());
+      expect(response.error).toContain("authorization"); expect(state.rows).toEqual(original); expect(state.uploads).toBe(0);
+      await screenshot(page, `manager-disabled-${condition}`);
+    } finally { await context.close(); }
+  });
   it.each([1280, 390])("native/manual modes, colour edits and real image upload/save at %ipx", async (width) => {
     const context = await browser.newContext({ viewport: { width, height: 1000 } });
     await context.route("https://cdn.shopify.com/**", (r: any) => r.fulfill({ contentType: r.request().url().endsWith("polaris.js") ? "application/javascript" : "image/jpeg", body: r.request().url().endsWith("polaris.js") ? polaris : jpeg }));

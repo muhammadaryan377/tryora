@@ -71,6 +71,13 @@ describe("authenticated merchant provider configuration", () => {
     await expect(act(request({ provider: "cloudlift" }))).rejects.toMatchObject({ status: 503 });
     expect(state.create).not.toHaveBeenCalled();
   });
+  it("cannot bypass installation authorization through advanced provider settings", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "approved.myshopify.com");
+    const view = await loader({ request: new Request("https://tryora.example/app/customization") } as any);
+    expect(view.enabled).toBe(false);
+    await expect(act(request({ provider: "manual_mapping", shopId: "approved.myshopify.com" }))).rejects.toMatchObject({ status: 503 });
+    expect(state.create).not.toHaveBeenCalled(); expect(state.updateMany).not.toHaveBeenCalled();
+  });
   it("requires authentication and checks product ownership before saving", async () => {
     state.authenticate.mockRejectedValue(new Response("Unauthorized", { status: 401 }));
     await expect(act(request({ provider: "shopify_native" }))).rejects.toMatchObject({ status: 401 });

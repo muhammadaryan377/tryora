@@ -23,6 +23,7 @@ import { nativeSelections } from "../app/core/customization";
 import { manualStorefrontData } from "../app/customization/validation.server";
 import { resolveConfiguredPreview } from "../app/customization/registry.server";
 import { action, loader } from "../app/routes/app.fabrics";
+import { loadProviderSetting } from "../app/customization/provider-config.server";
 const snapshot = () => { const f = providerFixture(); return { ...f, product: { id: productId }, draft: draftFromMapping(f.mapping, shopId, productId) }; };
 const request = (fields: Record<string, string>, product = productId) => new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(product)}`, { method: "POST", body: new URLSearchParams({ intent: "save", revision: "", mode: "manual", draft: JSON.stringify(emptyFabricDraft()), ...fields }) });
 beforeEach(() => {
@@ -193,6 +194,41 @@ describe("authenticated two-mode admin", () => {
     expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
     expect(await action({ request: request({ mode: "manual" }) } as any)).toHaveProperty("error");
     expect(state.writes).toEqual([]);
+  });
+  it("blocks unapproved installations before reading mappings, saving or uploading, regardless of submitted shop", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "approved.myshopify.com");
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false); expect(view.manualSetupReason).toContain("authorize this Shopify installation");
+    expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
+    for (const intent of ["save", "upload"]) expect(await action({ request: request({ intent, shop: "approved.myshopify.com", mode: "manual" }) } as any)).toHaveProperty("error");
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft: snapshot().draft })).rejects.toThrow(/authorization/);
+    expect(prisma.customizationConfig.findUnique).not.toHaveBeenCalled(); expect(state.writes).toEqual([]);
+  });
+  it("reports malformed operator policy without exposing its contents or reading provider data", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "secret-approved.myshopify.com,*");
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false); expect(view.manualSetupReason).toContain("allowlist is invalid");
+    expect(JSON.stringify(view)).not.toContain("secret-approved.myshopify.com");
+    expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
+  });
+  it("applies scoped grants to runtime provider reads as well as admin writes", async () => {
+    state.rows = [{ shopId, productId, providerId: "manual_mapping", revision: "r", active: true, mapping: {} }];
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "another.myshopify.com");
+    expect((await loadProviderSetting(shopId, productId)).providerId).toBe("shopify_native");
+    expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    expect((await loadProviderSetting(shopId, productId)).providerId).toBe("manual_mapping");
+    expect(prisma.customizationConfig.findMany).toHaveBeenCalledOnce();
+  });
+  it("persists reviewed fabrics/colours/exact references for an approved installation without enabling previews", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const { draft } = snapshot();
+    const response = await action({ request: request({ mode: "manual", draft: JSON.stringify(draft) }) } as any);
+    expect(response).toBeInstanceOf(Response);
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(true); expect(view.selected?.explicitlyOff).toBe(true);
+    expect(view.selected?.draft).toEqual(draft); expect(state.rows[0].mapping.published.entries).toHaveLength(4);
+    expect(state.config.enabled).toBe(false);
   });
   it("requires authentication and authenticated product ownership", async () => {
     state.authenticate.mockRejectedValue(new Response("Unauthorized", { status: 401 }));

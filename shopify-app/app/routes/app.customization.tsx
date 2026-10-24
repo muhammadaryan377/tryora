@@ -37,7 +37,7 @@ async function boundedForm(request: Request) {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const productId = await scopeFor(request, admin);
-  const enabled = providerSettingsEnabled();
+  const enabled = providerSettingsEnabled(session.shop);
   const rows = enabled ? await prisma.customizationConfig.findMany({ where: { shopId: session.shop, productId: { in: [STORE_DEFAULT, productId] } } }) : [];
   const saved = rows.find((r) => r.productId === productId);
   const effective = effectiveSetting(session.shop, productId, rows);
@@ -66,7 +66,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   if (request.method !== "POST") throw new Response("Method not allowed", { status: 405 });
-  if (!providerSettingsEnabled()) throw new Response("Provider settings are not enabled on this installation", { status: 503 });
+  if (!providerSettingsEnabled(session.shop)) throw new Response("Provider settings are not enabled on this installation", { status: 503 });
   const productId = await scopeFor(request, admin);
   const form = await boundedForm(request);
   const provider = form.get("provider") ?? "";

@@ -2,7 +2,8 @@ import prisma from "../db.server";
 import { STORE_DEFAULT } from "./provider-catalog";
 
 export { STORE_DEFAULT } from "./provider-catalog";
-export const providerSettingsEnabled = () => process.env.TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED === "true";
+import { providerSettingsEnabled } from "./provider-access.server";
+export { providerSettingsEnabled, providerAccess } from "./provider-access.server";
 export { PROVIDERS, isProviderId, providerSummary } from "./provider-catalog";
 export type { ProviderId } from "./provider-catalog";
 export interface ProviderSetting {
@@ -15,7 +16,7 @@ export function effectiveSetting(shopId: string, productId: string, rows: Provid
 }
 export async function loadProviderSetting(shopId: string, productId: string) {
   // Backward compatibility: no new-table reads before the explicit schema rollout.
-  const rows = providerSettingsEnabled() ? await prisma.customizationConfig.findMany({
+  const rows = providerSettingsEnabled(shopId) ? await prisma.customizationConfig.findMany({
     where: { shopId, productId: { in: [STORE_DEFAULT, productId] } },
   }) : [];
   return effectiveSetting(shopId, productId, rows);

@@ -193,7 +193,7 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
   ]);
   const swatchAutoFill = shop?.swatchAutoFill ?? false;
   const autoEnabled = shop?.autoEnableProducts ?? false;
-  const providerRows = providerSettingsEnabled() ? (await prisma.customizationConfig.findMany({
+  const providerRows = providerSettingsEnabled(shopId) ? (await prisma.customizationConfig.findMany({
     where: { shopId }, select: { shopId: true, productId: true, providerId: true, active: true, revision: true },
   })).map((r) => ({ ...r, mapping: null })) : [];
   const byId = new Map(configs.map((c) => [c.productId, c]));
