@@ -27,7 +27,7 @@ let browser: any, server: any, origin: string, bundle: string, polaris: string, 
 const browserPath = [process.env.TRYORA_E2E_BROWSER, "C:/Program Files/Google/Chrome/Application/chrome.exe", "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"].find((p) => p && existsSync(p));
 const originalFetch = globalThis.fetch;
 async function savePage(page: any) {
-  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.locator('button:has-text("Save configuration")').click()]);
+  await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), page.locator('button:has-text("Save changes")').click()]);
   await page.locator('[aria-label="Configuration mode"]').waitFor();
 }
 async function screenshot(page: any, name: string) { if (!SHOTS) return; mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `${name}.png`), fullPage: true }); }
@@ -105,43 +105,69 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await screenshot(page, `manager-native-${width}`);
       expect(state.rows).toHaveLength(1); // read-only native view
       await page.selectOption('[aria-label="Shopify product"]', productId);
-      await page.locator('button:has-text("2. Colours")').click();
-      await page.locator('summary:has-text("Edit colour and sample")').first().waitFor();
+
+      await page.locator('summary:has-text("Edit sample image")').first().waitFor();
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await page.locator('.fabric-manager').textContent()).toContain("Velvet");
-      await page.locator('button:has-text("Add another colour")').click();
+      expect(await page.locator('.fabric-list-item[aria-pressed=true]').textContent()).toContain("Velvet");
+      await page.locator('.fabric-list-item', { hasText: 'Teddy Boucle' }).click();
+      expect(await page.locator('input[aria-label^="Colour name"]').count()).toBe(1);
+      expect(await page.locator('input[aria-label^="Colour name"]').inputValue()).toBe("Ascot");
+      await page.locator('.fabric-list-item', { hasText: 'Velvet' }).click();
+      expect(await page.locator('input[aria-label^="Colour name"]').count()).toBe(2);
+      await page.locator('button:has-text("+ Add colour")').click();
       const colour = page.locator('input[aria-label^="Colour name"]').last(); await colour.fill("Ascot");
-      const row = colour.locator('xpath=ancestor::div[contains(@class,"fabric-card")][1]');
+      const row = colour.locator('xpath=ancestor::tr[1]');
+      await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
+      expect(await row.locator('input[aria-label^="RGB "]').inputValue()).toBe("170, 187, 204");
+      await row.locator('input[aria-label^="RGB "]').fill("999, 2, 3");
+      expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
+      expect(await row.locator('[role=alert]').textContent()).toContain("0 to 255");
+      await row.locator('input[aria-label^="RGB "]').fill("12, 34, 56");
+      expect(await page.locator('button:has-text("Save changes")').isEnabled()).toBe(true);
+      expect(await row.locator('input[aria-label^="HEX "]').inputValue()).toBe("#0c2238");
       await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
       await row.locator('input[type=file]').setInputFiles({ name: "actual-swatch.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(1);
       await expect.poll(() => row.locator('select').inputValue()).toBe("gid://shopify/MediaImage/901");
       await savePage(page);
-      await page.locator('button:has-text("2. Colours")').click();
-      await page.locator('summary:has-text("Edit colour and sample")').last().click();
+
+      await page.locator('summary:has-text("Edit sample image")').last().click();
       expect(await page.locator('input[aria-label^="Colour name"]').last().inputValue()).toBe("Ascot");
       const saved = state.rows[0].mapping.draft.fabrics[0].colours.at(-1);
       expect(saved).toMatchObject({ name: "Ascot", hex: "#aabbcc", swatchMediaId: "gid://shopify/MediaImage/901" });
       expect(state.rows[0].mapping.published.entries).toHaveLength(4);
-      await page.locator('button:has-text("3. Mapping")').click();
+
       expect(await page.locator('select[aria-label^="Variant "]').count()).toBe(4);
       await screenshot(page, `manager-mapping-${width}`);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-      await page.locator('button:has-text("1. Fabric")').click();
-      await page.locator('button:has-text("+ Add Fabric")').click();
+
+      await page.locator('button:has-text("+ Add fabric")').click();
       await page.locator('input[aria-label^="Fabric name"]').last().fill("Loft Linen");
-      await page.locator('.fabric-card textarea').last().fill("Merchant-provided fabric description");
+      await page.locator('.fabric-editor textarea').fill("Merchant-provided fabric description");
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(3);
       expect(state.rows[0].mapping.draft.fabrics.at(-1)).toMatchObject({ name: "Loft Linen", description: "Merchant-provided fabric description", enabled: true });
-      const newFabric = page.locator('.fabric-card', { has: page.locator('h3', { hasText: "Loft Linen" }) });
+      await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
+      await page.locator('.fabric-editor summary').click();
+      const newFabric = page.locator('.fabric-editor');
       await newFabric.locator('input[type=checkbox]').uncheck();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.at(-1).enabled).toBe(false);
       page.on("dialog", (d: any) => d.accept());
-      await page.locator('.fabric-card', { has: page.locator('h3', { hasText: "Loft Linen" }) }).locator('button:has-text("Remove fabric")').click();
+      await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
+      await page.locator('.fabric-editor summary').click();
+      await page.locator('.fabric-editor button:has-text("Remove fabric")').click();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(2);
+      expect(state.rows[0].mapping.published.entries).toHaveLength(4);
+      await page.locator('button:has-text("+ Add mapping")').click();
+      const incomplete = page.locator('.fabric-mapping tbody tr').last();
+      expect(await incomplete.textContent()).toContain("Needs mapping");
+      expect(await incomplete.locator('select[aria-label^="Variant "]').inputValue()).toBe("");
+      await screenshot(page, `manager-incomplete-mapping-${width}`);
+      await savePage(page);
+      expect(state.rows[0].mapping.draft.bindings.at(-1).variantId).toBeNull();
       expect(state.rows[0].mapping.published.entries).toHaveLength(4);
       expect(errors).toEqual([]);
     } finally { await context.close(); }

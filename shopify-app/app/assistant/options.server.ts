@@ -128,7 +128,7 @@ export function optionModel(product: Pick<CatalogueProduct, "options" | "variant
 
 const REASONS = {
   notOffered: "AI room preview isn't offered for this product.",
-  productPage: "Choose this product's options on its product page to preview it.",
+  productPage: "This configuration is not verified for an in-chat preview. Choose another verified appearance or product.",
   paused: "New AI previews are temporarily unavailable.",
 };
 

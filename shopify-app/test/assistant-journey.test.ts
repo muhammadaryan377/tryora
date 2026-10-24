@@ -136,7 +136,7 @@ describe("preview eligibility matches the product page", () => {
       finalAnswer("Option 1."),
     ]);
     const [card] = (await ask(fixtureAdmin([egerie]), client, [{ role: "user", content: "Egerie?" }])).recommendations;
-    expect(card).toMatchObject({ variantRef: null, hasOptions: true, variantCount: 8, previewStatus: "choose_options", previewReason: "Choose the fabric, colour and size to check AI room preview." });
+    expect(card).toMatchObject({ variantRef: null, hasOptions: true, variantCount: 8, previewStatus: "choose_options", previewReason: "Choose a fabric or colour to check AI room preview." });
   });
 });
 
@@ -164,7 +164,7 @@ describe("conversation memory", () => {
     const { client, requests } = scriptedModel([toolCall("request_visualisation", { productRef: ref(egerie.id), variantRef: null }), finalAnswer("Pick a fabric first.")]);
     const reply = await ask(fixtureAdmin([egerie]), client, [{ role: "user", content: "Show it in my room" }], { selected: { productRef: ref(egerie.id), variantRef: null } });
     expect(reply.visualise).toBeNull();
-    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "Choose the fabric, colour and size to check AI room preview." });
+    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "Choose a fabric or colour to check AI room preview." });
   });
 
   it("keeps shopper-stated room facts and earlier preferences in later turns", async () => {
@@ -245,7 +245,7 @@ describe("product options for the card selector", () => {
   it("never offers chat previews for Cloudlift or unconfigured products, and isolates merchants", async () => {
     state.storefront.set(egerie.id, { enabled: true, available: true, providerId: "cloudlift", lead: null, swatches: [], singleVariants: [] });
     const cloudlift = await productOptionsForAssistant(fixtureAdmin([egerie]), SHOP, egerie.id);
-    expect(cloudlift.preview).toEqual({ offered: false, reason: "Choose this product's options on its product page to preview it." });
+    expect(cloudlift.preview).toEqual({ offered: false, reason: "This configuration is not verified for an in-chat preview. Choose another verified appearance or product." });
     expect(cloudlift.variants.every((variant) => variant.previewOption === null)).toBe(true);
     const plain = await productOptionsForAssistant(fixtureAdmin([thames]), SHOP, thames.id);
     expect(plain).toMatchObject({ singleVariant: true, attributes: [], preview: { offered: false, reason: "AI room preview isn't offered for this product." } });
