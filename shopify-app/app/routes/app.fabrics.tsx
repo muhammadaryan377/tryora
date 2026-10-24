@@ -70,9 +70,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const saved = await prisma.customizationConfig.findUnique({ where: { shopId_productId: { shopId: session.shop, productId } } });
       if ((saved?.revision ?? "") !== revision) throw new FabricConfigError("Product settings changed in another session. Reload before uploading.");
       if (saved && !["shopify_native", "manual_mapping", "cloudlift"].includes(saved.providerId)) throw new FabricConfigError("Review this product's existing provider before uploading samples.");
+      const purpose = form.get("purpose");
+      if (purpose !== "sample" && purpose !== "reference") throw new FabricConfigError("Choose fabric sample or full-product reference image.");
       const file = form.get("image");
       if (!(file instanceof Blob)) throw new FabricConfigError("Choose an image to upload.");
-      return await uploadFabricMedia(admin, productId, file);
+      return await uploadFabricMedia(admin, productId, file, purpose);
     }
     if (form.get("intent") !== "save") throw new FabricConfigError("Choose a supported configuration action.");
     const raw = String(form.get("draft") ?? "");
@@ -89,8 +91,8 @@ export default function FabricsPage() {
   const data = useLoaderData<typeof loader>(), actionData = useActionData<typeof action>(), navigation = useNavigation(), submit = useSubmit();
   return <FabricColourManager data={data} error={actionData && "error" in actionData ? actionData.error : undefined} busy={navigation.state !== "idle"}
     save={(mode, draft) => submit({ intent: "save", mode, revision: data.selected?.revision ?? "", draft: JSON.stringify(draft) }, { method: "post" })}
-    upload={async (file) => {
-      const form = new FormData(); form.set("intent", "upload"); form.set("mode", "manual"); form.set("revision", data.selected?.revision ?? ""); form.set("image", file);
+    upload={async (file, purpose) => {
+      const form = new FormData(); form.set("intent", "upload"); form.set("mode", "manual"); form.set("purpose", purpose); form.set("revision", data.selected?.revision ?? ""); form.set("image", file);
       const response = await fetch(window.location.href, { method: "POST", body: form, credentials: "same-origin" });
       const result = await response.json();
       if (!response.ok || result.error) throw new Error(result.error ?? "Upload failed. Please try again.");
