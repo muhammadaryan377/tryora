@@ -1,3 +1,4 @@
+import type { PopupPreviewDelivery, PopupPreviewHandoff } from "../preview-handoff.js";
 /**
  * Room Assistant 2.0: a right-side chat drawer (fullscreen on phones, optional fullscreen on desktop).
  *
@@ -36,6 +37,7 @@ export interface AssistantContext {
   productNoun?: string;
   /** Opens the existing product popup when this product is preview-enabled. */
   openCurrentPreview?: () => void;
+  openAssistantPreview?: (handoff: PopupPreviewHandoff) => void;
   launcher?: HTMLElement | null;
   /** The variant currently selected in the product form, if any. */
   currentVariantId?: () => string | null;
@@ -78,7 +80,7 @@ function roomIllustration(bed: boolean) {
   </svg>`;
 }
 
-const SUGGESTIONS = ["Show me grey beds", "Do you have velvet sofas?", "What is your returns policy?"];
+
 
 function storedVisitorId() {
   try {
@@ -104,9 +106,12 @@ export class RoomAssistant {
   private attachment: PreparedPhoto | null = null;
   private preparing = false;
   private photoEpoch = 0;
+  private conversationEpoch = 0;
   private photoScreen: "visualise" | "recommend" | null = null;
   private showWelcome = false;
   private cameraNotice = "";
+  private suggestions: string[] = [];
+  private suggestionsRequested = false;
   private composerError = "";
   /** The most recent room photo the shopper sent, kept in memory for previews only. */
   private roomPhoto: PreparedPhoto | null = null;
@@ -150,6 +155,7 @@ export class RoomAssistant {
     if (this.state.entries.length) this.scrollToEnd(false);
     else if (this.scroller()) this.scroller()!.scrollTop = 0;
     this.textarea()?.focus();
+    void this.loadSuggestions();
   }
 
   /** Hides the drawer but keeps everything, including a running answer or preview. */
@@ -184,6 +190,7 @@ export class RoomAssistant {
 
   /** Starts a new conversation but keeps the room analysis and photo. */
   newChat() {
+    this.conversationEpoch++;
     this.abortAll();
     this.photoScreen = null;
     this.showWelcome = false;
@@ -227,6 +234,7 @@ export class RoomAssistant {
 
   /** Drops the room notes and the in-memory room photo. Messages stay. */
   forgetRoom(render = true) {
+    this.conversationEpoch++;
     this.photoEpoch++;
     this.preparing = false;
     this.pendingIntent = null;
@@ -596,14 +604,70 @@ export class RoomAssistant {
 
   // ---------- welcome actions ----------
 
+  private receivePopupPreview(result: PopupPreviewDelivery, epoch: number): boolean {
+    if (epoch !== this.conversationEpoch || result.productId !== gid(this.context.productId)) return false;
+    const id = `popup-${result.jobId}`;
+    if (this.previewUrls.has(id)) return true;
+    const item: Recommendation = {
+      id: `${numeric(result.productId)}:${numeric(result.variantId)}`,
+      productRef: numeric(result.productId), variantRef: numeric(result.variantId) || null,
+      productId: result.productId, variantId: result.variantId, title: result.title,
+      url: typeof location !== "undefined" ? location.pathname : "/",
+      image: null, price: null, maxPrice: null, currencyCode: "GBP",
+      options: result.selectedOptions, purchaseAvailable: true, previewAvailable: true,
+      previewStatus: "available", optionValue: result.optionValue, reason: "",
+    };
+    // Keep the actual current product URL; never invent a Shopify handle from a product title.
+    if (result.variantId) item.url += `?variant=${encodeURIComponent(numeric(result.variantId))}`;
+    this.photoScreen = null;
+    this.showWelcome = false;
+    this.menu = "none";
+    this.pendingIntent = null;
+    if (this.attachment && this.attachment.url !== this.roomPhoto?.url) URL.revokeObjectURL(this.attachment.url);
+    this.attachment = null;
+    this.state.room = null; // The popup may have captured a different room; old observations are not this photo.
+    const roomUrl = URL.createObjectURL(result.room);
+    const userId = uid();
+    this.photoUrls.set(userId, roomUrl);
+    this.roomPhoto = { blob: result.room, url: roomUrl, name: "Room photo" };
+    this.state.entries.push({ id: userId, kind: "user", text: `Preview ${result.title}${result.selectionLabel ? ` / ${result.selectionLabel}` : ""} in my room.`, photo: true, at: Date.now() });
+    this.previewUrls.set(id, URL.createObjectURL(result.image));
+    this.state.entries.push({ id, kind: "preview", item, status: "ready", at: Date.now() });
+    this.state.selected = { productRef: item.productRef, variantRef: item.variantRef, source: "options" };
+    if (result.leadDone) this.state.lead.done = true;
+    this.state.previewsDelivered++;
+    this.save();
+    this.open();
+    this.renderAll();
+    this.scrollToEnd(true);
+    const displayed = !!this.visible && !!this.root?.querySelector(`[data-entry="${CSS.escape(id)}"] img`);
+    if (displayed && this.config.lead?.mode !== "off" && this.config.lead?.timing === "after" && !this.state.lead.done) {
+      this.openLeadForm(item, true);
+    }
+    return displayed;
+  }
+
   private welcomeAction(action: string) {
+    if (action === "visualise" && (!this.context.productId ||
+      !(this.context.openAssistantPreview || this.context.openCurrentPreview))) {
+      this.pendingIntent = null;
+      this.photoScreen = null;
+      this.showWelcome = false;
+      this.addNotice("Please select a furniture product from this store with room preview available, then choose Preview in my room. You can ask me to show products from this store.");
+      this.textarea()?.focus();
+      return;
+    }
+    if (action === "visualise" && this.context.openAssistantPreview) {
+      const epoch = this.conversationEpoch;
+      this.minimise();
+      this.context.openAssistantPreview({
+        deliver: (result) => this.receivePopupPreview(result, epoch),
+        closed: () => this.open(),
+        leadDone: () => this.state.lead.done,
+      });
+      return;
+    }
     if (action === "visualise" || action === "recommend") {
-      if (action === "visualise" && !this.context.productId) {
-        this.pendingIntent = null;
-        this.showWelcome = false;
-        void this.send("Show me products from this store that I can preview in my room.");
-        return;
-      }
       this.pendingIntent = action;
       this.photoScreen = action;
       this.cameraNotice = "";
@@ -933,6 +997,27 @@ export class RoomAssistant {
     return STAGE_LABELS[stage ?? ""] ?? "Thinking…";
   }
 
+  private suggestionsHtml() {
+    return this.suggestions.map((text) => `<button type="button" class="tryora-assistant__suggestion" data-ta="suggest" data-text="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("");
+  }
+
+  private async loadSuggestions() {
+    if (this.suggestionsRequested) return;
+    this.suggestionsRequested = true;
+    const params = new URLSearchParams({ visitor: storedVisitorId() });
+    if (this.context.productId) params.set("product", this.context.productId);
+    try {
+      const response = await fetch(`${PROXY}/assistant/suggestions?${params}`, { credentials: "same-origin", signal: AbortSignal.timeout(8_000) });
+      if (!response.ok) return;
+      const body = await response.json();
+      this.suggestions = Array.isArray(body.suggestions)
+        ? [...new Set(body.suggestions.filter((value: unknown): value is string => typeof value === "string" && value.length > 0 && value.length <= 120))].slice(0, 4) as string[]
+        : [];
+      const box = this.root?.querySelector<HTMLElement>("[data-ta-suggestions]");
+      if (box) box.innerHTML = this.suggestionsHtml();
+    } catch { /* Suggestions are optional; never replace unavailable catalogue data with invented prompts. */ }
+  }
+
   private productNoun() {
     return this.context.productNoun?.trim().slice(0, 60) || "product";
   }
@@ -969,6 +1054,7 @@ export class RoomAssistant {
   private welcomeHtml() {
     const noun = this.productNoun();
     const beds = noun === "bed";
+    const currentPreview = !!this.context.productId && !!(this.context.openAssistantPreview || this.context.openCurrentPreview);
     const productPreview = this.context.openCurrentPreview
       ? `<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>` : "";
     const actionIcon = (icon: string) => `<span class="tryora-assistant__action-icon">${icon}<i>${ICONS.camera}</i></span>`;
@@ -979,20 +1065,16 @@ export class RoomAssistant {
       <div class="tryora-assistant__actions-grid">
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
           ${actionIcon(ICONS.photo)}
-          <span><strong>${this.context.productId ? `Preview this ${escapeHtml(noun)} in my room` : "Choose a product to preview"}</strong><small>${this.context.productId ? `See the ${escapeHtml(noun)} you are viewing in your own space.` : "Find a verified store product for your room."}</small></span><b aria-hidden="true">&rsaquo;</b>
+          <span><strong>${currentPreview ? `Preview this ${escapeHtml(noun)} in my room` : "Select furniture to preview"}</strong><small>${currentPreview ? `See the ${escapeHtml(noun)} you are viewing in your own space.` : "Choose a furniture product with room preview available."}</small></span><b aria-hidden="true">&rsaquo;</b>
         </button>
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="recommend">
           ${actionIcon(beds ? BED_ICON : ICONS.sofa)}
           <span><strong>${beds ? "Recommend a bed for my room" : "Recommend furniture for my room"}</strong><small>Upload a photo of your room and get tailored store recommendations.</small></span><b aria-hidden="true">&rsaquo;</b>
         </button>
-        <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="ask">
-          <span class="tryora-assistant__action-icon">${ICONS.chat}</span>
-          <span><strong>Ask about products</strong><small>Fabrics, sizes, prices, delivery and returns</small></span><b aria-hidden="true">&rsaquo;</b>
-        </button>
       </div>
       ${productPreview}
-      <div class="tryora-assistant__suggestions" aria-label="Suggested questions">
-        ${SUGGESTIONS.map((text) => `<button type="button" class="tryora-assistant__suggestion" data-ta="suggest" data-text="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}
+      <div class="tryora-assistant__suggestions" data-ta-suggestions aria-label="Suggested questions">
+        ${this.suggestionsHtml()}
       </div>
     </div>`;
   }

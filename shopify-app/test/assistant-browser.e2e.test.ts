@@ -12,7 +12,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({ configs: [] as any[], copy: { assistant: { enabled: true, pages: { product: true, home: true } } } as any }));
 vi.mock("../app/db.server", () => ({
@@ -41,6 +41,7 @@ vi.mock("../app/storefront.server", () => ({
   }),
 }));
 
+import { loadCatalogueSuggestions } from "../app/assistant/suggestions.server";
 import { cancelAssistantTurn, readAssistantTurn, startAssistantTurn, streamAssistantTurn } from "../app/assistant/turn-routes.server";
 import { setAssistantClientForTests } from "../app/room-assistant.server";
 import { productOptionsForAssistant } from "../app/assistant/options.server";
@@ -184,6 +185,9 @@ async function route(req: IncomingMessage): Promise<Response> {
   if (path === "/apps/tryora/config") {
     return json({
       enabled: true, available: true, productId: aria.id, product: aria.title, productImage: null, itemNoun: "bed", placement: "replace", setting: "indoor",
+      productVariants: aria.variants.map((v) => ({ id: v.id, image: v.image?.url ?? null, options: Object.fromEntries(v.selectedOptions.map((o) => [o.name, o.value])) })),
+      singleVariants: aria.variants.filter((v) => v.availableForSale).map((v) => ({ id: v.id, image: v.image?.url ?? null, options: Object.fromEntries(v.selectedOptions.map((o) => [o.name, o.value])) })),
+      selectionOptionNames: [],
       optionName: null, swatches: [], style: { template: "gallery", accent: null, useThemeFont: false }, lead: { mode: "off", timing: "before", showOptIn: false, optInWording: "" },
       offer: null, mock: true,
       launcher: { mode: "tryora", type: "floating", wording: "See it in your room", showIcon: true, background: "#111111", text: "#FFFFFF", radiusPx: 999, position: "bottom-right", offsetPx: { x: 20, y: 20 }, showOnMobile: true, showOnDesktop: true },
@@ -195,6 +199,10 @@ async function route(req: IncomingMessage): Promise<Response> {
       ? { lead: { mode: "required", timing: "before", showOptIn: true, optInWording: "Email me offers and updates from Demo Furniture." }, previewsAvailable: true } : {};
     return json({ enabled: true, configured: true, providerReady: true, greeting: "Hi, how can I help today?", shop: SHOP, defaultView: "side", transport, ...lead, launcher: { label: "Room Assistant", position: "bottom-right", colour: "#6f7046" } });
   }
+  if (path === "/apps/tryora/assistant/suggestions") {
+    return json({ suggestions: await loadCatalogueSuggestions(admin, SHOP, url.searchParams.get("product") ?? undefined) });
+  }
+  if (path === "/apps/tryora/check") return json({ ok: true, detected: "empty_space" });
   const request = await webRequest(req);
   try {
     if (path === "/apps/tryora/assistant/turn") {
@@ -249,6 +257,14 @@ async function shot(page: any, name: string) {
 }
 
 describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
+  beforeEach(() => {
+    // Each journey owns its counters; new popup journeys must not inflate another test's delivery count.
+    seen.turnsWithPhoto = 0;
+    seen.previewStarts.length = 0;
+    seen.acks = 0;
+    seen.leads.length = 0;
+  });
+
   beforeAll(async () => {
     if (!BROWSERS.length) throw new Error("No Chrome or Edge found; set TRYORA_E2E_BROWSER");
     process.env.OPENAI_API_KEY = "e2e-not-a-real-key";
@@ -282,27 +298,30 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(await page.locator("[data-action='visualise']").textContent()).toContain("Preview this bed in my room");
       expect(await page.locator(".tryora-assistant__actions-grid [data-ta='upload']").count()).toBe(0);
       expect(await page.locator("[data-ta-scroll]").evaluate((element: HTMLElement) => element.scrollTop)).toBe(0);
+      await page.locator(".tryora-assistant__suggestion").first().waitFor();
+      expect(await page.locator(".tryora-assistant__suggestion").count()).toBe(4);
+      expect(await page.locator(".tryora-assistant__suggestion").first().textContent()).toContain(aria.title);
       await shot(page, `approved-${width}-welcome`);
       await page.locator("[data-action='visualise']").click();
-      expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo to preview this bed");
-      expect(await page.locator(".tryora-assistant__composer").isVisible()).toBe(false);
-      expect(await page.locator(".tryora-assistant__photo-actions button").count()).toBe(2);
-      await shot(page, `approved-${width}-preview-photo`);
+      await page.locator(".tryora__dialog").waitFor();
+      expect(await page.locator(".tryora__h").textContent()).toBe("See this bed in your room");
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(false);
+      await shot(page, `approved-${width}-preview-popup`);
+      await page.locator(".tryora__x[data-act=close]").click();
+      await page.locator(".tryora-assistant__welcome").waitFor();
+      await page.locator("[data-action='recommend']").click();
+      expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo of your room");
+      await shot(page, `approved-${width}-recommend-photo`);
       if (width === 390) {
         const chooserPromise = page.waitForEvent("filechooser");
         await page.locator("[data-ta='camera']").click();
         const chooser = await chooserPromise;
         expect(await chooser.element().getAttribute("capture")).toBe("environment");
-        // No photograph is provided: cancelling must not create an attachment.
         expect(await page.locator("[data-ta-attachment] img").count()).toBe(0);
       } else {
         await page.locator("[data-ta='camera']").click();
         expect(await page.locator(".tryora-assistant__camera-notice").textContent()).toContain("Choose Upload photo");
       }
-      await page.locator("[data-ta='photo-back']").click();
-      await page.locator("[data-action='recommend']").click();
-      expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo of your room");
-      await shot(page, `approved-${width}-recommend-photo`);
       const layout = await page.locator(".tryora-assistant__photo-frame").evaluate((element: HTMLElement) => ({
         fits: element.scrollWidth <= element.clientWidth,
         choices: [...element.querySelectorAll("button")].map((button) => { const b = button.getBoundingClientRect(); return { x: b.x, right: b.right, y: b.y, height: b.height }; }),
@@ -327,6 +346,80 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       await shot(page, `approved-${width}-photo-draft`);
       expect(await page.locator("form[action='/cart/add'] [name='id']").inputValue()).toBe(aria.variants[0]!.id.split("/").pop());
       expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
+
+
+  it.each(["home", "unsupported-product"])("asks for furniture selection on %s without opening the preview popup", async (kind) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    const pageTab = await context.newPage();
+    try {
+      if (kind === "home") {
+        await pageTab.route("**/without-product", (route: any) => route.fulfill({
+          contentType: "text/html",
+          body: page("poll").replace('data-page-type="product" data-product-id="1"', 'data-page-type="index"'),
+        }));
+      } else {
+        await pageTab.route("**/apps/tryora/config?*", (route: any) => route.fulfill({ json: { enabled: false } }));
+      }
+      const modelRequests: string[] = [];
+      pageTab.on("request", (request: any) => {
+        if (new URL(request.url()).pathname === "/apps/tryora/assistant/turn") modelRequests.push(request.url());
+      });
+      await pageTab.goto(kind === "home" ? `${origin}/without-product` : origin);
+      await pageTab.locator(".tryora-assistant-launch").click();
+      expect(await pageTab.locator("[data-action=visualise]").textContent()).toContain("Select furniture to preview");
+      await pageTab.locator("[data-action=visualise]").click();
+      await pageTab.locator(".tryora-assistant__notice").waitFor();
+      expect(await pageTab.locator(".tryora-assistant__notice").textContent()).toContain("Please select a furniture product");
+      expect(await pageTab.locator(".tryora__dialog").count()).toBe(0);
+      expect(await pageTab.locator(".tryora-assistant__photo-screen").count()).toBe(0);
+      expect(await pageTab.locator("textarea").isVisible()).toBe(true);
+      expect(seen.previewStarts).toHaveLength(0);
+      expect(modelRequests).toEqual([]);
+      await shot(pageTab, `guard-${kind}`);
+    } finally { await context.close(); }
+  }, 30_000);
+
+  it.each([1280, 390])("only the chat-card popup delivers its generated image to chat at %ipx", async (width) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+    await routeImages(context);
+    const page = await context.newPage();
+    try {
+      await page.goto(origin);
+      await page.locator(".tryora-assistant-launch").click();
+      await page.locator("[data-action='visualise']").click();
+      await page.locator(".tryora__dialog").waitFor();
+      const before = seen.previewStarts.length, acksBefore = seen.acks;
+      await page.locator("[data-file=upload]").setInputFiles({ name: "room.jpg", mimeType: "image/jpeg", buffer: previewImage });
+      await page.locator("[data-act=generate]:not(:disabled)").waitFor();
+      await page.locator("[data-act=generate]").click();
+      await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
+      expect(await page.locator(".tryora__dialog").count()).toBe(0);
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(true);
+      expect(seen.previewStarts).toHaveLength(before + 1);
+      expect(seen.previewStarts.at(-1)!.variant).toBe(aria.variants[0]!.id);
+      expect(await page.locator(".tryora-assistant__preview [download]").count()).toBe(1);
+      await expect.poll(() => seen.acks).toBe(acksBefore + 1);
+      await shot(page, `handoff-${width}-chat-result`);
+
+      // Original store launcher: starts with its own state and keeps the image in its own popup.
+      await page.locator("[data-ta=minimise]").click();
+      await page.locator(".tryora-launch").click();
+      await page.locator(".tryora__dialog [data-act=upload]").waitFor();
+      await page.locator("[data-file=upload]").setInputFiles({ name: "room-2.jpg", mimeType: "image/jpeg", buffer: previewImage });
+      await page.locator("[data-act=generate]:not(:disabled)").waitFor();
+      await page.locator("[data-act=generate]").click();
+      await expect.poll(() => page.locator(".tryora__h").textContent(), { timeout: 15_000 }).toContain("Your room, with");
+      expect(await page.locator(".tryora__dialog .tryora__img").count()).toBe(1);
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(false);
+      await expect.poll(() => seen.acks).toBe(acksBefore + 2);
+      await shot(page, `handoff-${width}-original-popup-result`);
+      await page.locator(".tryora__x[data-act=close]").click();
+      await page.locator(".tryora-assistant-launch").click();
+      expect(await page.locator(".tryora-assistant__preview img").count()).toBe(1);
+      expect(await page.locator("form[action='/cart/add'] [name='id']").inputValue()).toBe(aria.variants[0]!.id.split("/").pop());
     } finally { await context.close(); }
   }, 60_000);
 
@@ -355,7 +448,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     expect(Math.round(box.width)).toBe(440);
     expect(Math.round(box.x + box.width)).toBe(1280 - 12);
     expect(await page.locator(".tryora-assistant__backdrop").isVisible()).toBe(false);
-    expect(await page.locator("[data-ta='welcome']").count()).toBe(3);
+    expect(await page.locator("[data-ta='welcome']").count()).toBe(2);
     expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("TEXTAREA");
     await shot(page, "02-desktop-welcome");
 

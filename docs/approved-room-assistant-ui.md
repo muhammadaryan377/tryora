@@ -115,3 +115,32 @@ directory, using npx vitest run test/assistant-browser.e2e.test.ts.
    rollback is required for this patch.
 
 Nothing has been pushed, merged, deployed or released, and no production settings changed.
+
+## Local follow-up: popup result routing (24 October 2026)
+
+The welcome preview card now opens the existing product-preview UI using a separate
+Tryora instance. Only this instance hands its decoded generated result to the chat.
+The ordinary product launcher, window.Tryora.open, #tryora links and "Use product preview
+instead" retain their normal popup-result behavior.
+
+The handoff contains in-memory image/room Blobs and the exact variant/options already
+validated by the normal generation pipeline. The chat owns separate object URLs and
+renders its existing preview/download card. No new generation endpoint or client image
+URL authorization was added. Delivery acknowledgement stays with the popup and occurs
+only after the chat confirms that it displayed the result; rejected/stale deliveries are
+not acknowledged. Jobs cannot be retargeted by reopening a popup.
+
+New chat/Clear conversation/Forget room invalidate older chat destinations. The latest
+popup room photo replaces any previous draft attachment and stale room observations.
+The existing before/after email gates remain in force; the first "after" email step
+appears in chat following the delivered image.
+
+Regression coverage includes exact identity, independent normal popup delivery,
+deduplication, no acknowledgement on rejection, stale conversation rejection and email
+gates. Desktop/mobile Chrome tests exercise both launcher paths and verify separate
+result destinations and one acknowledgement per delivery. Screenshots are local synthetic
+QA artifacts under tools/storefront-harness/shots/chat-popup-handoff/:
+handoff-390-chat-result.png and handoff-390-original-popup-result.png (also 1280px versions).
+
+This is local work only: no production deployment, migration, push or merchant settings
+change. Real-store validation still requires the actual approved product/reference mapping.

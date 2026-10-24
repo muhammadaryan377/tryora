@@ -1,3 +1,4 @@
+import type { PopupPreviewHandoff } from "./preview-handoff.js";
 /**
  * Tryora storefront popup. Bundled into the theme app extension as assets/tryora.js.
  * Follows the approved flow in packages/core/src/flow.ts. Room photos and generated images stay in this
@@ -155,6 +156,8 @@ const NOTICES: Record<string, string> = {
 
 export class Tryora {
   private state: FlowState;
+  private handoff?: PopupPreviewHandoff;
+  private assistantDelivered = false;
   private root: HTMLElement | null = null;
   private lastFocus: Element | null = null;
   private photos = new Map<string, { blob: Blob; url: string }>();
@@ -221,6 +224,16 @@ export class Tryora {
     if (!cfg.available) this.state = reduce(this.state, { type: "PREVIEWS_UNAVAILABLE" }).state;
   }
 
+  /** Only the assistant's separate popup instance uses this delivery destination. */
+  openForAssistant(handoff: PopupPreviewHandoff) {
+    if (!this.state.generation) {
+      this.handoff = handoff;
+      this.state.leadDone = this.cfg.lead.mode === "off" || handoff.leadDone();
+      if (this.assistantDelivered && this.state.leadTiming === "after" && !this.state.leadDone) this.state.leadTiming = "before";
+    }
+    this.open();
+  }
+
   open() {
     if (this.root) return;
     this.syncPageConfiguration();
@@ -262,6 +275,7 @@ export class Tryora {
     this.root = null;
     document.documentElement.classList.remove("tryora-open");
     (this.lastFocus as HTMLElement | null)?.focus?.();
+    this.handoff?.closed();
   }
 
   private dispatch(event: FlowEvent) {
@@ -329,6 +343,7 @@ export class Tryora {
       return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
     }
     const epoch = this.configurationEpoch;
+    const handoff = this.handoff; // Capture the destination for this job; reopening cannot retarget it.
     const photo = this.photos.get(photoId);
     if (!photo) return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
     const variant = this.selectedVariant(option);
@@ -397,8 +412,10 @@ export class Tryora {
       if (r.stage === "failed" || r.stage === "expired") return this.dispatch({ type: "JOB_FAILED", reason: r.error === "RESULT_REJECTED" ? "result_rejected" : "generation_failed" });
       if (r.stage === "ready") {
         let url: string | undefined;
+        let resultBlob: Blob;
         try {
           const blob = await (await fetch(r.image)).blob();
+          resultBlob = blob;
           url = URL.createObjectURL(blob);
           await decodePreview(url);
         } catch {
@@ -407,6 +424,27 @@ export class Tryora {
           return this.dispatch({ type: "JOB_FAILED", reason: "generation_failed" });
         }
         if (epoch !== this.configurationEpoch || this.syncPageConfiguration()) { URL.revokeObjectURL(url); this.render(); return; }
+        if (handoff) {
+          URL.revokeObjectURL(url); // The chat owns its own object URLs, independent of popup invalidation.
+          this.state = { ...this.state, generation: null, step: "photoReady", shownOption: null, results: {} };
+          this.close();
+          let displayed = false;
+          try {
+            displayed = handoff.deliver({
+              jobId, productId: this.cfg.productId, title: this.cfg.product, variantId: variant?.id ?? null,
+              optionValue: option, selectionLabel: this.optionLabel(option),
+              selectedOptions: Object.fromEntries(Object.entries(variant?.options ?? this.pageOptions)
+                .filter(([name]) => !name.startsWith("__tryora_"))),
+              image: resultBlob!, room: photo.blob, leadDone: this.state.leadDone,
+            });
+          } catch { /* Undelivered results are never acknowledged or charged as delivered. */ }
+          if (displayed) {
+            this.assistantDelivered = true;
+            void acknowledgeWithRetry(() => post("ack", { job: jobId, token: r.token }), r.expiresAt ?? Date.now() + 5 * 60_000);
+            void tagBasket(this.cfg.productId);
+          }
+          return;
+        }
         this.images.set(jobId, url);
         this.dispatch({ type: "JOB_DELIVERED", result: { option, imageHandle: url, jobId } });
         // Only once the image is on screen is the credit used.
@@ -999,8 +1037,15 @@ function mountPreviewLauncher(cfg: Config, open: () => void): HTMLElement | null
   return btn;
 }
 
+interface ProductPreviewHandle {
+  open: () => void;
+  openForAssistant: (handoff: PopupPreviewHandoff) => void;
+  launcher: HTMLElement | null;
+  itemNoun?: string;
+}
+
 /** Product previews: only for products the server reports as enabled and ready. */
-async function bootPreview(productId: string | undefined): Promise<{ open: () => void; launcher: HTMLElement | null; itemNoun?: string } | null> {
+async function bootPreview(productId: string | undefined): Promise<ProductPreviewHandle | null> {
   if (!productId) return null;
   let cfg: Config;
   try {
@@ -1013,6 +1058,7 @@ async function bootPreview(productId: string | undefined): Promise<{ open: () =>
   }
 
   let popup: Tryora | null = null;
+  let assistantPopup: Tryora | null = null;
   const open = () => {
     popup ??= new Tryora(cfg);
     popup.open();
@@ -1028,7 +1074,12 @@ async function bootPreview(productId: string | undefined): Promise<{ open: () =>
     }
   });
   if (location.hash === "#tryora") open();
-  return { open, launcher: mountPreviewLauncher(cfg, open), itemNoun: cfg.itemNoun };
+  return { open, launcher: mountPreviewLauncher(cfg, open), itemNoun: cfg.itemNoun,
+    openForAssistant: (handoff) => {
+      assistantPopup ??= new Tryora(cfg);
+      assistantPopup.openForAssistant(handoff);
+    },
+  };
 }
 
 /** Keeps the assistant launcher clear of a floating preview launcher on the same side of the screen. */
@@ -1042,7 +1093,7 @@ export function arrangeLaunchers(preview: HTMLElement | null, assistant: HTMLEle
 }
 
 /** Room assistant: independent of product previews, so it also works on home and collection pages. */
-async function bootAssistant(root: HTMLElement, productId: string | undefined, preview: Promise<{ open: () => void; launcher: HTMLElement | null; itemNoun?: string } | null>) {
+async function bootAssistant(root: HTMLElement, productId: string | undefined, preview: Promise<ProductPreviewHandle | null>) {
   const config = await fetchAssistantConfig(root);
   if (!config?.enabled) return;
   // The preview config request runs in parallel; it only decides whether "Preview this product" is offered.
@@ -1053,6 +1104,7 @@ async function bootAssistant(root: HTMLElement, productId: string | undefined, p
     assistant ??= new RoomAssistant(config, {
       productId,
       openCurrentPreview: current?.open,
+      openAssistantPreview: current?.openForAssistant,
       productNoun: current?.itemNoun,
       launcher,
       currentVariantId: () => document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value ?? null,
