@@ -6,7 +6,8 @@ describe("bounded native option discovery", () => {
   it.each([
     [" Select Your Upholstery-Fabric: ", "fabric"], ["FABRIC_TYPE", "fabric"],
     ["Choose Fabric Color", "colour"], ["Upholstery Colour", "colour"], ["Wood Finish", "finish"],
-    ["Material", null], ["Colour surcharge", null], ["Fabric care", null], ["Size", null], ["Shade", null],
+    ["2. Choose Your Fabric", "fabric"], ["3) Choose Your Colour", "colour"],
+    ["2. Fabric care", null], ["Other bed choices", null], ["Material", null], ["Colour surcharge", null], ["Fabric care", null], ["Size", null], ["Shade", null],
   ])("classifies %s without substring guesses", (name, expected) => expect(nativeOptionRole(name!)).toBe(expected));
 
   it("is independent of option order and retains original Shopify names", () => {

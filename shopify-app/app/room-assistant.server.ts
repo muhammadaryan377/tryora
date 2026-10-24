@@ -34,6 +34,18 @@ import {
   type ProductQuery,
 } from "./assistant/catalogue.server";
 import { loadStoreKnowledge, retrieveKnowledge } from "./assistant/knowledge.server";
+import {
+  EMPTY_CONSTRAINTS,
+  isChildrensProduct,
+  mentionsProduct,
+  nextConstraints,
+  resolveReference,
+  type Candidate,
+  type Constraints,
+  type Resolution,
+  type Selection,
+  type SelectionSource,
+} from "./assistant/references.server";
 import { errorShape, logAssistant } from "./assistant/log.server";
 import {
   roomAssistantSettings,
@@ -146,7 +158,8 @@ export type AssistantEvent =
   | { type: "reset_text" }
   | { type: "recommendations"; items: AssistantRecommendation[] }
   | { type: "visualise"; item: AssistantRecommendation }
-  | { type: "selected"; item: AssistantRecommendation }
+  | { type: "selected"; item: AssistantRecommendation; source: SelectionSource }
+  | { type: "constraints"; constraints: Constraints }
   | { type: "room"; room: RoomObservations }
   | { type: "preferences"; preferences: ShopperPreferences }
   | { type: "final"; reply: AssistantReply };
@@ -158,6 +171,10 @@ export interface AssistantReply {
   recommendations: AssistantRecommendation[];
   visualise: AssistantRecommendation | null;
   selected: AssistantRecommendation | null;
+  /** The authoritative selection after this turn (product + variant + how it was chosen). */
+  selection: Selection | null;
+  /** Budget and audience in force after this turn; the browser stores and returns them. */
+  constraints: Constraints;
   model: string;
 }
 
@@ -266,6 +283,31 @@ export function normalisePreferences(raw: unknown): ShopperPreferences | null {
     roomNotes: plain(value.roomNotes, 240),
   };
   return Object.values(preferences).some((entry) => Array.isArray(entry) ? entry.length : entry !== null && entry !== "") ? preferences : null;
+}
+
+const SOURCES = new Set<SelectionSource>(["card", "options", "conversation"]);
+
+/** The browser's selection. Only refs are trusted; every use re-verifies them against Shopify. */
+export function normaliseSelection(raw: unknown): Selection | null {
+  const value = raw as Partial<Selection> | null;
+  if (!value || !isRef(value.productRef)) return null;
+  return {
+    productRef: value.productRef,
+    variantRef: isRef(value.variantRef) ? value.variantRef : null,
+    source: SOURCES.has(value.source as SelectionSource) ? value.source as SelectionSource : "conversation",
+  };
+}
+
+export function normaliseConstraints(raw: unknown): Constraints {
+  const value = raw as Partial<Constraints> | null;
+  if (!value || typeof value !== "object") return EMPTY_CONSTRAINTS;
+  const money = (entry: unknown) => typeof entry === "number" && Number.isFinite(entry) && entry > 0 && entry < 10_000_000 ? entry : null;
+  return {
+    budgetMax: money(value.budgetMax),
+    budgetMin: money(value.budgetMin),
+    budgetCurrency: typeof value.budgetCurrency === "string" && /^[$£€]$/.test(value.budgetCurrency) ? value.budgetCurrency : null,
+    forChildren: value.forChildren === true,
+  };
 }
 
 /** Older shopper messages beyond the verbatim history window, as short reminders (shopper statements, not facts). */
@@ -566,6 +608,19 @@ interface RequestContext {
   selected: AssistantRecommendation | null;
   /** Products whose preview configuration was checked (and auto-configured, like the product page) this request. */
   autoChecked: Set<string>;
+  /** Budget and audience for this turn (persisted, updated from the latest message). */
+  constraints: Constraints;
+  /** What the latest shopper message refers to, resolved deterministically before the model runs. */
+  resolution: Resolution;
+  /** The selection the browser sent (card clicks are authoritative). */
+  selection: Selection | null;
+  /** Latest recommendations, in order, as the shopper sees them. */
+  shownRefs: string[];
+  candidates: Map<string, Candidate>;
+  /** The shopper's latest message, for checking a tool's product against what they actually said. */
+  latestMessage: string;
+  /** Set by tools; returned to the browser. */
+  selectionSource: SelectionSource | null;
   room: RoomObservations | null;
   preferences: ShopperPreferences | null;
   /** The product page the shopper is on, read fresh from Shopify (null if unknown or unverifiable). */
@@ -629,7 +684,16 @@ function merged(pools: CatalogueSnapshot[], query: ProductQuery, currentProductI
   return [...byRef.values()].sort((a, b) => b.score - a.score).slice(0, query.limit);
 }
 
-async function runSearch(ctx: RequestContext, query: ProductQuery) {
+async function runSearch(ctx: RequestContext, requested: ProductQuery) {
+  // The shopper's budget is a standing constraint: applied even when the model forgets it.
+  const budget = ctx.constraints.budgetMax;
+  const query = budget !== null && (requested.maxPrice === null || requested.maxPrice > budget) ? { ...requested, maxPrice: budget } : requested;
+  const applied = { budgetMax: budget, childrensProductsExcluded: 0 };
+  const fits = (match: ProductMatch) => {
+    const issue = !ctx.constraints.forChildren && isChildrensProduct(match.product) && !namedInLatest(ctx, match.product.ref);
+    if (issue) applied.childrensProductsExcluded += 1;
+    return !issue;
+  };
   const pools: CatalogueSnapshot[] = [];
   if (ctx.snapshot) pools.push(ctx.snapshot);
   let liveFailed = false;
@@ -648,20 +712,43 @@ async function runSearch(ctx: RequestContext, query: ProductQuery) {
         : liveFailed ? "searched a partial index only; Shopify search was unavailable"
           : ctx.snapshot ? "searched a partial index plus Shopify's own search"
             : "searched with Shopify's own search only";
-  const matches = merged(pools, query, ctx.currentProductId);
+  const allMatches = merged(pools, query, ctx.currentProductId);
+  const matches = allMatches.filter(fits);
   matches.forEach((match) => ctx.allowed.add(match.product.ref));
   if (matches.length) {
-    return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete } };
+    return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete }, appliedConstraints: applied };
   }
-  // Nothing met every filter. Look for products of the right kind before anyone concludes the store has none.
-  const relaxed = merged(pools, { ...query, colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: null, availableOnly: false, limit: 6 }, ctx.currentProductId);
-  relaxed.forEach((match) => ctx.allowed.add(match.product.ref));
-  if (relaxed.length) {
+  if (allMatches.length) {
+    // Only children's products matched: say so instead of recommending them for an adult bedroom.
     return {
       results: [],
-      relatedProducts: relaxed.map((match) => summary(match, ctx)),
+      appliedConstraints: applied,
       catalogue: { coverage, complete },
-      note: "No product met every requested filter (colour, size, material, budget or in-stock), but these products of the requested kind exist. The store does sell them: say which filter was not met and offer them. Use get_product_details to confirm stock.",
+      note: "Only children's products matched these filters, and the shopper has not said they are shopping for a child. Say plainly that no other product fits (for example within their budget), and ask whether this is for a child before showing children's products.",
+    };
+  }
+  // Nothing met every filter. Look for products of the right kind before anyone concludes the store has none.
+  const relaxedAll = merged(pools, { ...query, colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: null, availableOnly: false, limit: 6 }, ctx.currentProductId);
+  const relaxed = relaxedAll.filter(fits);
+  relaxed.forEach((match) => ctx.allowed.add(match.product.ref));
+  if (relaxed.length) {
+    const overBudget = budget !== null && relaxed.every((match) => match.product.minPrice > budget);
+    return {
+      results: [],
+      relatedProducts: relaxed.map((match) => ({ ...summary(match, ctx), overBudget: budget !== null && match.product.minPrice > budget })),
+      appliedConstraints: applied,
+      catalogue: { coverage, complete },
+      note: overBudget
+        ? `No suitable product is within the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${budget}. Say so honestly. These related products exist above the budget; offer them only as over-budget options, with their price difference. Never call them budget matches.`
+        : "No product met every requested filter (colour, size, material, budget or in-stock), but these products of the requested kind exist. The store does sell them: say which filter was not met and offer them. Use get_product_details to confirm stock.",
+    };
+  }
+  if (relaxedAll.length) {
+    return {
+      results: [],
+      appliedConstraints: applied,
+      catalogue: { coverage, complete },
+      note: "Only children's products exist for this request, and the shopper has not said they are shopping for a child. Say so and ask whether this is for a child.",
     };
   }
   if (complete && !liveFailed) {
@@ -782,6 +869,61 @@ function runCollections(ctx: RequestContext) {
   };
 }
 
+const titleOf = (ctx: RequestContext, ref: string) => ctx.candidates.get(ref)?.title ?? ctx.fresh.get(ref)?.title ?? `productRef ${ref}`;
+const namedInLatest = (ctx: RequestContext, ref: string) => ctx.resolution.kind === "named" && ctx.resolution.productRef === ref;
+
+/** The product the latest message unambiguously refers to, if any. */
+function targetRef(ctx: RequestContext): string | null {
+  const resolution = ctx.resolution;
+  return resolution.kind === "named" || resolution.kind === "ordinal" || resolution.kind === "selected" ? resolution.productRef : null;
+}
+
+/**
+ * Why a product does not fit the shopper's stated constraints, or null. A product the shopper named in the latest
+ * message is always allowed (they asked for it); over-budget is then reported, not hidden.
+ */
+function constraintIssue(ctx: RequestContext, product: Pick<CatalogueProduct, "title" | "productType" | "tags" | "collections"> & { ref: string }, price: number | null, allowNamed = true): "over_budget" | "childrens_product" | null {
+  if (allowNamed && namedInLatest(ctx, product.ref)) return null;
+  if (ctx.constraints.budgetMax !== null && price !== null && price > ctx.constraints.budgetMax) return "over_budget";
+  if (!ctx.constraints.forChildren && isChildrensProduct(product)) return "childrens_product";
+  return null;
+}
+
+const ISSUE_TEXT = {
+  over_budget: (ctx: RequestContext) => `over the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${ctx.constraints.budgetMax}`,
+  childrens_product: () => "a children's product, and the shopper has not said they are shopping for a child",
+};
+
+/** Refuses a product choice that contradicts what the shopper's latest message refers to. */
+function referenceGuard(ctx: RequestContext, productRef: string, tool: "select_product" | "request_visualisation"): Record<string, unknown> | null {
+  const resolution = ctx.resolution;
+  if (resolution.kind === "ambiguous") {
+    logAssistant("tool_validation_failure", { shop: ctx.shopId, tool, reason: `ambiguous_${resolution.reason}` });
+    return {
+      error: "ambiguous_reference",
+      instruction: `Ask the shopper which product they mean, in one short question: ${resolution.candidates.map((ref, index) => `${index + 1}. ${titleOf(ctx, ref)}`).join("; ")}.${resolution.reason === "selection_conflicts_with_constraints" ? ` Their earlier selection (${titleOf(ctx, ctx.selection!.productRef)}) no longer fits their latest budget or needs.` : ""} Do not choose for them.`,
+    };
+  }
+  let target = targetRef(ctx);
+  // "Generate the preview" (no reference words) means the current selection when there is one.
+  if (!target && tool === "request_visualisation" && resolution.kind !== "choose_for_me") {
+    if (ctx.selection) target = ctx.selection.productRef;
+    // Guessing among the cards on screen is ambiguous; a product the model found for this message is not.
+    else if (ctx.shownRefs.length > 1 && ctx.shownRefs.includes(productRef) && !mentionsProduct(ctx.latestMessage, titleOf(ctx, productRef))) {
+      return { error: "ambiguous_reference", instruction: `Ask which product to preview: ${ctx.shownRefs.slice(0, 3).map((ref, index) => `${index + 1}. ${titleOf(ctx, ref)}`).join("; ")}.` };
+    }
+  }
+  if (target && productRef !== target) {
+    logAssistant("tool_validation_failure", { shop: ctx.shopId, tool, reason: "reference_mismatch" });
+    return {
+      error: "reference_mismatch",
+      expectedProductRef: target,
+      instruction: `The shopper's latest message refers to productRef ${target} ("${titleOf(ctx, target)}"). Call ${tool} with that product. Never substitute another product.`,
+    };
+  }
+  return null;
+}
+
 const cardSummary = (item: AssistantRecommendation, index: number) => ({
   option: index + 1,
   productRef: item.productRef,
@@ -800,7 +942,22 @@ const cardSummary = (item: AssistantRecommendation, index: number) => ({
 });
 
 async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendation[] }) {
-  const verified = await verifiedRecommendations(ctx, args.items);
+  const excluded: { title: string; reason: string }[] = [];
+  // Drop known misfits before the three-card cap, so they never crowd out products that do fit.
+  const items = (Array.isArray(args.items) ? args.items : []).filter((entry) => {
+    const known = isRef(entry?.productRef) ? ctx.fresh.get(entry.productRef) ?? ctx.snapshot?.byRef.get(entry.productRef) : undefined;
+    const issue = known ? constraintIssue(ctx, known, known.minPrice) : null;
+    if (issue) excluded.push({ title: known!.title, reason: ISSUE_TEXT[issue](ctx) });
+    return !issue;
+  });
+  const all = await verifiedRecommendations(ctx, items);
+  // Fresh prices can differ from the index: check again.
+  const verified = all.filter((item) => {
+    const product = ctx.fresh.get(item.productRef);
+    const issue = product ? constraintIssue(ctx, product, Number(item.price)) : null;
+    if (issue) excluded.push({ title: item.title, reason: ISSUE_TEXT[issue](ctx) });
+    return !issue;
+  });
   if (verified.length) {
     ctx.recommendations = verified;
     ctx.emit({ type: "recommendations", items: verified });
@@ -809,20 +966,36 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   return {
     shown: verified.map(cardSummary),
     dropped: args.items.length - verified.length,
+    excludedForShopperConstraints: excluded,
     note: verified.length
       ? "These cards are now visible with verified price, stock and AI preview status. Refer to them as option 1, 2, 3; do not contradict them."
-      : "None could be verified. Do not describe them as available; search again or explain.",
+      : excluded.length
+        ? "None of these fit the shopper's stated budget or needs, so no cards were shown. Say so honestly; do not present them as matches."
+        : "None could be verified. Do not describe them as available; search again or explain.",
   };
 }
 
 async function runSelect(ctx: RequestContext, args: { productRef: string; variantRef: string | null }) {
-  const [item] = await verifiedRecommendations(ctx, [{ ...args, reason: "" }]);
+  const refused = referenceGuard(ctx, args.productRef, "select_product");
+  if (refused) return refused;
+  // Keep the exact variant the shopper chose on the card unless they named a different one.
+  const keep = ctx.selection && ctx.selection.productRef === args.productRef && !args.variantRef ? ctx.selection.variantRef : args.variantRef;
+  const [item] = await verifiedRecommendations(ctx, [{ productRef: args.productRef, variantRef: keep, reason: "" }]);
   if (!item) return { selected: false, reason: "This product or variant could not be verified." };
-  ctx.selected = item;
-  ctx.emit({ type: "selected", item });
   const product = ctx.fresh.get(item.productRef);
+  if (ctx.resolution.kind === "choose_for_me" && product) {
+    const issue = constraintIssue(ctx, product, Number(item.price));
+    if (issue) return { selected: false, error: "does_not_fit", instruction: `That product is ${ISSUE_TEXT[issue](ctx)}. Choose a verified product that fits, or say honestly that none does.` };
+  }
+  ctx.selected = item;
+  ctx.selectionSource = ctx.selection?.productRef === item.productRef ? ctx.selection.source : "conversation";
+  // Showing a product means showing its real card (photo, price, View product), whether or not it can be previewed.
+  ctx.emit({ type: "selected", item, source: ctx.selectionSource });
+  const issue = product ? constraintIssue(ctx, product, Number(item.price), false) : null;
   return {
     selected: true,
+    cardShown: true,
+    ...(issue ? { constraintNote: `This product is ${ISSUE_TEXT[issue](ctx)}; say so briefly.` } : {}),
     ...cardSummary(item, 0),
     options: product ? Object.fromEntries(realOptions(product.options).map((option) => [option.name, option.values.slice(0, 25)])) : {},
     note: item.hasOptions && !item.variantRef
@@ -831,18 +1004,47 @@ async function runSelect(ctx: RequestContext, args: { productRef: string; varian
   };
 }
 
+/** Up to two other recent products that fit the shopper's constraints and can be previewed. */
+async function previewableAlternatives(ctx: RequestContext, exclude: string) {
+  const refs = [...new Set([...ctx.recommendations.map((item) => item.productRef), ...ctx.shownRefs])].filter((ref) => ref !== exclude).slice(0, 3);
+  if (!refs.length) return [];
+  const verified = await verifiedRecommendations(ctx, refs.map((productRef) => ({ productRef, variantRef: null, reason: "" })));
+  return verified.filter((item) => {
+    const product = ctx.fresh.get(item.productRef);
+    return item.previewAvailable && product && !constraintIssue(ctx, product, Number(item.price), false);
+  }).slice(0, 2).map((item) => ({ productRef: item.productRef, variantRef: item.variantRef, title: item.title, price: item.price, currency: item.currencyCode }));
+}
+
 async function runVisualise(ctx: RequestContext, args: { productRef: string; variantRef: string | null }) {
-  const [item] = await verifiedRecommendations(ctx, [{ ...args, reason: "" }]);
+  const refused = referenceGuard(ctx, args.productRef, "request_visualisation");
+  if (refused) return { offered: false, ...refused };
+  // Preview the exact variant the shopper chose on the card unless the model was given another explicitly.
+  const keep = ctx.selection && ctx.selection.productRef === args.productRef && !args.variantRef ? ctx.selection.variantRef : args.variantRef;
+  const [item] = await verifiedRecommendations(ctx, [{ productRef: args.productRef, variantRef: keep, reason: "" }]);
   if (!item) return { offered: false, reason: "This exact product or variant could not be verified. Ask the shopper to choose from verified options." };
   ctx.selected = item;
+  ctx.selectionSource = ctx.selection?.productRef === item.productRef ? ctx.selection.source : "conversation";
   if (!item.previewAvailable) {
-    // The card shows the same reason; mention it once, briefly.
-    return { offered: false, reason: item.previewReason, productUrl: item.url, cardShown: false };
+    // Still show the product itself; a missing AI preview never hides the real product.
+    ctx.emit({ type: "selected", item, source: ctx.selectionSource });
+    const alternatives = await previewableAlternatives(ctx, item.productRef);
+    return {
+      offered: false,
+      reason: item.previewReason,
+      cardShown: true,
+      previewableAlternatives: alternatives,
+      instruction: alternatives.length
+        ? "Say once, briefly, that this product can't be previewed yet; its card with real photos is shown. Offer these previewable alternatives (call recommend_products if the shopper wants them)."
+        : "Say once, briefly, that this product can't be previewed yet; its card with real photos is shown. Do not repeat this in later replies.",
+    };
   }
+  const product = ctx.fresh.get(item.productRef);
+  const overBudget = product && ctx.constraints.budgetMax !== null && Number(item.price) > ctx.constraints.budgetMax;
   ctx.visualise = item;
   ctx.emit({ type: "visualise", item });
   return {
     offered: true,
+    ...(overBudget ? { budgetNote: `This is above the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${ctx.constraints.budgetMax}; mention the difference once.` } : {}),
     needsPhoto: !ctx.hasPhoto,
     note: ctx.hasPhoto
       ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Tryora places the item automatically; do not promise exact positions."
@@ -973,7 +1175,11 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
     const product = ctx.fresh.get(pick.productRef);
     if (!product || ctx.previewProducts.has(product.id) || ctx.autoChecked.has(product.id)) return;
     ctx.autoChecked.add(product.id);
-    const config = await ensureAutoProductConfig(ctx.admin, ctx.shopId, product.id).catch(() => null);
+    const config = await ensureAutoProductConfig(ctx.admin, ctx.shopId, product.id).catch((error: unknown) => {
+      // Logged so a transient failure is not mistaken for "not configured" when cards disagree.
+      logAssistant("auto_config_failure", { shop: ctx.shopId, errorClass: error instanceof Error ? error.name : "unknown" });
+      return null;
+    });
     if (config?.enabled && config.readiness === "ready" && config.shopId === ctx.shopId) ctx.previewProducts.add(product.id);
   }));
   const ids = [...new Set(picks.map((pick) => ctx.fresh.get(pick.productRef)?.id).filter((id): id is string => !!id && ctx.previewProducts.has(id)))];
@@ -1094,17 +1300,73 @@ Grounding:
 - Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. Otherwise say the store has not published it and suggest contacting the store.
 - You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or the store's contact details.
 Conversation:
+- The "Authoritative conversation state" in the context is computed by the server from the shopper's own actions and latest message. Follow it over anything said earlier: the product it says the latest message refers to is the product to use, and the budget and audience it lists are standing constraints. Tools refuse choices that contradict it.
 - "The second one", "it", "that bed" and similar refer to the numbered recommendations or the selected product in the conversation context. Do not ask which product they mean when the context establishes it.
+- "Show me X" means show that product: call select_product (its card with real photos appears). "Show X in my room" means an AI preview: call request_visualisation.
+- If the shopper asks you to choose, pick the verified product that best fits their room, budget and needs, call select_product, and give one reason.
+- Never recommend children's furniture unless the shopper says they are shopping for a child. Never present over-budget products as budget matches.
 - When the shopper shows interest in one product ("I like the first one"), call select_product. Use get_product_details to check another colour or size of the selected product.
 - When the shopper states a budget, colours, materials, sizes, room dimensions or facts about their room, call update_shopper_context, and apply saved preferences to later searches.
 Room photos and visualisation:
 - When a photo is attached, first call record_room_observations with broad visible colours, walls, floor, style, lighting, furniture, layout and plausible placement areas. Do not identify people or infer sensitive traits.
 - Never claim an exact fit from a photo; ask for measurements when size matters.
-- When the shopper wants to see a product in their room ("show it in my room", "generate the preview"), call request_visualisation for the selected product without asking for confirmation. Only if several products are equally likely, ask one short question. The shopper confirms on the card; you never generate images. Tryora places the item automatically: do not promise exact positions, moving existing furniture or custom colours that are not real variants.
+- When the shopper wants to see a product in their room ("show it in my room", "generate the preview"), call request_visualisation for the selected product without asking for confirmation. Never end a reply by asking "Would you like a preview?": the card offers it. Only if several products are equally likely, ask one short question. The shopper confirms on the card; you never generate images. Tryora places the item automatically: do not promise exact positions, moving existing furniture or custom colours that are not real variants.
 - The chat handles room photos and any email the store needs for previews. Do not ask for an email, and mention a missing room photo at most once.
 Room match:
 - Explain fit with what is visible or stated: style, wall and floor colours, lighting, existing furniture. Never give match percentages or scores, and never estimate exact dimensions from a photo.
 Style: short, warm and natural, in plain text. With product cards, write one or two sentences (under about 50 words) that explain why they suit the shopper, without repeating card details. Otherwise at most about 100 words. No repeated greetings.`;
+
+/** Loads the candidate titles and prices, then resolves what the latest message refers to. */
+async function resolveLatestReference(ctx: RequestContext, message: string) {
+  const candidates = new Map<string, Candidate>();
+  const add = (product: CatalogueProduct) => candidates.set(product.ref, {
+    productRef: product.ref, title: product.title, minPrice: product.minPrice, children: isChildrensProduct(product),
+  });
+  // Recent and selected products first (fresh if not indexed), then the whole published catalogue for names.
+  const recent = [...ctx.shownRefs, ...(ctx.selection ? [ctx.selection.productRef] : [])];
+  const missing = [...new Set(recent)].filter((ref) => !ctx.snapshot?.byRef.has(ref) && !ctx.fresh.has(ref)).slice(0, 3);
+  if (missing.length) {
+    try { for (const [ref, product] of await getProductDetails(ctx.admin, missing, new ShopifyBudget(3))) ctx.fresh.set(ref, product); }
+    catch { /* Unknown refs simply cannot be named; they are still verified before use. */ }
+  }
+  for (const ref of recent) {
+    const product = ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref);
+    if (product) add(product);
+  }
+  if (ctx.currentProduct) add(ctx.currentProduct);
+  const named = new Map(candidates);
+  for (const product of ctx.snapshot?.products ?? []) if (!named.has(product.ref)) named.set(product.ref, {
+    productRef: product.ref, title: product.title, minPrice: product.minPrice, children: isChildrensProduct(product),
+  });
+  ctx.candidates = named;
+  ctx.resolution = resolveReference(message, { shown: ctx.shownRefs, selected: ctx.selection, constraints: ctx.constraints, candidates: [...candidates.values(), ...[...named.values()].filter((entry) => !candidates.has(entry.productRef))] });
+  if (targetRef(ctx)) ctx.allowed.add(targetRef(ctx)!);
+}
+
+/** The server-verified state the model must follow; rebuilt every turn from structured data, never from prose. */
+function stateMessage(ctx: RequestContext) {
+  const lines = ["Authoritative conversation state (server-verified; follow it over anything earlier in the chat):"];
+  const budget = ctx.constraints;
+  if (budget.budgetMax !== null || budget.budgetMin !== null) {
+    lines.push(`- Budget: ${budget.budgetMin !== null ? `from ${budget.budgetMin} ` : ""}${budget.budgetMax !== null ? `up to ${budget.budgetMax}` : ""}${budget.budgetCurrency ? ` (the shopper wrote "${budget.budgetCurrency}")` : ""}. Compare with verified prices; the store's prices are in its own currency.`);
+  }
+  lines.push(budget.forChildren
+    ? "- The shopper is shopping for a child."
+    : "- The shopper has not said they are shopping for a child: do not recommend children's furniture.");
+  if (ctx.selection) {
+    const how = ctx.selection.source === "conversation" ? "earlier in the conversation" : "by the shopper on its card";
+    lines.push(`- Selected product: productRef ${ctx.selection.productRef}${ctx.selection.variantRef ? `, variantRef ${ctx.selection.variantRef}` : ""} ("${titleOf(ctx, ctx.selection.productRef)}"), chosen ${how}.`);
+  }
+  const resolution = ctx.resolution;
+  if (resolution.kind === "named") lines.push(`- The latest message names productRef ${resolution.productRef} ("${titleOf(ctx, resolution.productRef)}"). Use exactly this product.`);
+  if (resolution.kind === "ordinal") lines.push(`- The latest message refers to option ${resolution.position}: productRef ${resolution.productRef} ("${titleOf(ctx, resolution.productRef)}").`);
+  if (resolution.kind === "selected") lines.push(`- The latest message refers to the selected product: productRef ${resolution.productRef} ("${titleOf(ctx, resolution.productRef)}").`);
+  if (resolution.kind === "choose_for_me") lines.push("- The shopper asked you to choose one: pick the best verified fit for their room, budget and needs, call select_product, and give one reason.");
+  if (resolution.kind === "ambiguous") {
+    lines.push(`- The latest message is ambiguous between: ${resolution.candidates.map((ref, index) => `${index + 1}. "${titleOf(ctx, ref)}"`).join("; ")}. Ask one short question; do not choose and do not offer a preview yet.`);
+  }
+  return lines.join("\n");
+}
 
 function contextMessage(ctx: RequestContext, shown: ShownRecommendation[], room: RoomObservations | null, preferences: ShopperPreferences | null, selected: ShownRecommendation | null, earlier: string[] = []) {
   const lines: string[] = [];
@@ -1193,6 +1455,8 @@ export interface AssistantTurnInput {
   preferences?: unknown;
   /** Older shopper messages beyond the verbatim history window. */
   earlier?: unknown;
+  /** Budget and audience persisted from earlier turns. */
+  constraints?: unknown;
   settings?: RoomAssistantSettings;
   client?: OpenAI;
   env?: NodeJS.ProcessEnv;
@@ -1232,7 +1496,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const room = normaliseRoomContext(input.room);
   const preferences = normalisePreferences(input.preferences);
   const shown = normaliseShownRecommendations(input.shown);
-  const [selected = null] = normaliseShownRecommendations(input.selected ? [input.selected] : []);
+  const selection = normaliseSelection(input.selected);
+  const selected: ShownRecommendation | null = selection ? { productRef: selection.productRef, variantRef: selection.variantRef } : null;
   const currentProductId = typeof input.currentProductId === "string" && /^gid:\/\/shopify\/Product\/\d{1,20}$/.test(input.currentProductId)
     ? input.currentProductId : undefined;
   emit({ type: "status", stage: input.roomPhoto ? "analysing_room" : "understanding" });
@@ -1267,12 +1532,21 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     visualise: null,
     selected: null,
     autoChecked: new Set(),
+    constraints: nextConstraints(normaliseConstraints(input.constraints), history.at(-1)!.content),
+    resolution: { kind: "none" },
+    selection,
+    shownRefs: shown.map((entry) => entry.productRef),
+    candidates: new Map(),
+    latestMessage: history.at(-1)!.content,
+    selectionSource: null,
     room: null,
     preferences: null,
     currentProduct: current,
     zeroVerified: false,
   };
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
+  await resolveLatestReference(ctx, history.at(-1)!.content);
+  emit({ type: "constraints", constraints: ctx.constraints });
   if (current) {
     ctx.fresh.set(current.ref, current);
     notePrices(ctx, current.minPrice, current.maxPrice, ...current.variants.map((variant) => variant.price));
@@ -1286,7 +1560,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   }
   const conversation: any[] = [
     ...history.slice(0, -1).map((message) => ({ role: message.role, content: message.content })),
-    { role: "developer", content: contextMessage(ctx, shown, room, preferences, selected, normaliseEarlier(input.earlier)) },
+    { role: "developer", content: `${contextMessage(ctx, shown, room, preferences, selected, normaliseEarlier(input.earlier))}\n${stateMessage(ctx)}` },
     { role: "user", content },
   ];
 
@@ -1405,6 +1679,10 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     recommendations: ctx.recommendations,
     visualise: ctx.visualise,
     selected: ctx.selected,
+    selection: ctx.selected
+      ? { productRef: ctx.selected.productRef, variantRef: ctx.selected.variantRef, source: ctx.selectionSource ?? "conversation" }
+      : ctx.selection,
+    constraints: ctx.constraints,
     model,
   };
   logAssistant("assistant_request", {
