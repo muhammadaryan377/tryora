@@ -24,20 +24,56 @@ function Sample({ url, hex, label, round = true }: { url?: string | null; hex?: 
     {url ? <img src={url} alt={label} /> : <span>{hex ? "" : "No image"}</span>}
   </span>;
 }
-function MediaField({ label, value, media, change, upload, disabled }: { label: string; value: string | null; media: Media[]; change: (id: string | null) => void; upload: (file: File) => Promise<Media | null>; disabled: boolean }) {
+function MediaField({ label, value, media, change, upload, disabled, kind, sampleIds }: {
+  label: string; value: string | null; media: Media[]; change: (id: string | null) => void;
+  upload: (file: File) => Promise<Media | null>; disabled: boolean;
+  kind: "sample" | "reference"; sampleIds: ReadonlySet<string>;
+}) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [imagePage, setImagePage] = useState(0);
-  return <div style={field}>
-    <label>{label}<select aria-label={label} style={control} value={value ?? ""} onChange={(e) => change(e.currentTarget.value || null)} disabled={busy}>
-      <option value="">No image selected</option>{value && !media.some((m) => m.id === value) && <option value={value}>Removed image - select again</option>}
-      {media.map((m) => <option key={m.id} value={m.id}>{m.id.split("/").pop()}</option>)}
-    </select></label>
-    <div className="fabric-media-choices">{media.slice(imagePage * 24, (imagePage + 1) * 24).map((m) => <button key={m.id} type="button" aria-label={`Use image ${m.id.split("/").pop()} for ${label}`} aria-pressed={m.id === value} onClick={() => change(m.id)}>
-      <img src={m.url} alt="Product media" loading="lazy" /></button>)}</div>
-    {media.length > 24 && <div className="fabric-actions"><button type="button" disabled={imagePage === 0} onClick={() => setImagePage(imagePage - 1)}>Previous images</button><button type="button" disabled={(imagePage + 1) * 24 >= media.length} onClick={() => setImagePage(imagePage + 1)}>Next images</button></div>}
-    <label className="fabric-upload">{busy ? "Uploading image..." : "Upload actual image"}<input aria-label={`Upload ${label}`} type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled || busy} onChange={async (e) => {
-      const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (!file) return;
-      setBusy(true); setError(""); try { const m = await upload(file); if (m) change(m.id); } catch (err) { setError(err instanceof Error ? err.message : "Upload failed."); } finally { setBusy(false); }
-    }} /></label>{error && <p role="alert">{error}</p>}
+  const selected = media.find((m) => m.id === value);
+  // The sample picker must never be a gallery of unrelated furniture photographs.
+  const choices = media.filter((m) => kind === "sample"
+    ? sampleIds.has(m.id) || m.alt?.startsWith("Tryora merchant upload ")
+    : !sampleIds.has(m.id) || m.id === value);
+  const pageCount = Math.ceil(choices.length / 24);
+  const currentPage = Math.min(imagePage, Math.max(0, pageCount - 1));
+  return <div className={`fabric-media-field fabric-media-${kind}`}>
+    <div className="fabric-selected-image">
+      <Sample url={selected?.url} label={label} round={false} />
+      <div>
+        <strong>{selected ? "Selected image" : kind === "sample" ? "No fabric sample uploaded" : "No product reference selected"}</strong>
+        <p className="fabric-muted">{kind === "sample"
+          ? "Upload an actual fabric texture or colour sample. Product photos are hidden from this picker."
+          : "Use a complete product photograph matching the exact Shopify variant. A swatch alone cannot approve a room preview."}</p>
+        {value && !selected && <p role="alert">Image missing from this product. Refresh and choose it again.</p>}
+      </div>
+    </div>
+    <label className="fabric-upload-zone">
+      <span>{busy ? "Uploading to Shopify..." : kind === "sample" ? "Upload fabric / colour sample" : "Upload full-product reference"}</span>
+      <small>JPG, PNG or WebP · up to 8 MB</small>
+      <input aria-label={`Upload ${label}`} type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled || busy} onChange={async (e) => {
+        const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (!file) return;
+        if (file.size > 8 * 1024 * 1024 || file.size === 0) { setError("Choose a nonempty image under 8 MB."); return; }
+        setBusy(true); setError("");
+        try { const image = await upload(file); if (image) { change(image.id); setImagePage(0); } }
+        catch (err) { setError(err instanceof Error ? err.message : "Image upload failed."); }
+        finally { setBusy(false); }
+      }} />
+    </label>
+    {selected && <button className="fabric-clear-image" type="button" disabled={disabled || busy} onClick={() => change(null)}>Remove selection</button>}
+    {choices.length > 0 && <details className="fabric-existing-images">
+      <summary>{kind === "sample" ? "Choose an existing fabric / colour sample" : "Choose an existing product photo"} ({choices.length})</summary>
+      <div className="fabric-media-choices">{choices.slice(currentPage * 24, (currentPage + 1) * 24).map((m) =>
+        <button key={m.id} type="button" disabled={disabled || busy} aria-label={`Use image ${m.id.split("/").pop()} for ${label}`}
+          aria-pressed={m.id === value} onClick={() => change(m.id)}>
+          <img src={m.url} alt={kind === "sample" ? "Fabric or colour sample" : "Full product photograph"} loading="lazy" />
+        </button>)}</div>
+      {pageCount > 1 && <div className="fabric-actions">
+        <button type="button" disabled={currentPage === 0} onClick={() => setImagePage(Math.max(0, currentPage - 1))}>Previous images</button>
+        <button type="button" disabled={currentPage + 1 >= pageCount} onClick={() => setImagePage(Math.min(pageCount - 1, currentPage + 1))}>Next images</button>
+      </div>}
+    </details>}
+    {error && <p role="alert" className="fabric-upload-error">{error}</p>}
   </div>;
 }
 export function FabricColourManager({ data, save, upload, error, busy = false }: {
