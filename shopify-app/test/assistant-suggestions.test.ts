@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { catalogueSuggestions, loadCatalogueSuggestions } from "../app/assistant/suggestions.server";
+import { catalogueWelcome, loadCatalogueWelcome } from "../app/assistant/suggestions.server";
 import { parseProduct, snapshotFrom, resetAssistantCatalogueCache } from "../app/assistant/catalogue.server";
 import { fixtureAdmin, fixtureProduct, type FixtureProduct } from "./fixtures/assistant-store";
 
@@ -8,38 +8,48 @@ const bed = fixtureProduct({ id: 1, title: "Aria Bed", productType: "Bed", optio
 const other = fixtureProduct({ id: 2, title: "Aspen Bed", productType: "Bed", options: { "2. Choose Your Fabric": ["Velvet"], Size: ["Double"] } });
 const snapshot = (products: FixtureProduct[], tenant = shop) => snapshotFrom(tenant, products.map((p) => parseProduct(p, p.variants, true)!).filter(Boolean), true);
 beforeEach(() => resetAssistantCatalogueCache());
-describe("merchant-grounded welcome suggestions", () => {
-  it("selects four distinct questions from actual catalogue facts, prioritising the current product", () => {
-    const result = catalogueSuggestions(snapshot([bed, other]), shop, bed.id);
-    expect(result).toEqual(["Tell me about Aria Bed", "Show me bed products", "Show me Cream bed products", "What sizes does Aria Bed come in?"]);
-    expect(new Set(result).size).toBe(4);
-    expect(result.join()).not.toMatch(/Grey|sofa|returns|best.sell/i);
+
+describe("catalogue-grounded previewer welcome without question chips", () => {
+  it("grounds the recommendation card in native catalogue data and returns no suggested questions", () => {
+    const result = catalogueWelcome(snapshot([bed, other]), shop, bed.id);
+    expect(result).toEqual({ suggestions: [], recommendation: { noun: "bed", fabric: true, colour: true } });
+    expect(result).not.toHaveProperty("previewAvailable");
   });
-  it("uses each merchant's own catalogue and rejects cross-tenant snapshots", () => {
+  it("uses each merchant's own category and rejects cross-tenant snapshots", () => {
     const sofa = fixtureProduct({ title: "Oslo Sofa", productType: "Sofa", options: { Fabric: ["Boucle"] } });
-    const result = catalogueSuggestions(snapshot([sofa], "sofas.myshopify.com"), "sofas.myshopify.com");
-    expect(result.join()).toContain("Boucle sofa");
-    expect(result.join()).not.toMatch(/bed|Aria|Cream/);
-    expect(catalogueSuggestions(snapshot([bed]), "other.myshopify.com")).toEqual([]);
+    expect(catalogueWelcome(snapshot([sofa], "sofas.myshopify.com"), "sofas.myshopify.com"))
+      .toEqual({ suggestions: [], recommendation: { noun: "sofa", fabric: true, colour: false } });
+    expect(catalogueWelcome(snapshot([bed]), "other.myshopify.com")).toEqual({ suggestions: [], recommendation: null });
   });
-  it("hides unavailable, unconfigured external labels and opaque composite colours", () => {
+  it("uses the current product category rather than an unrelated majority category", () => {
+    const sofa = fixtureProduct({ title: "Oslo Sofa", productType: "Sofa", options: { Title: ["Default Title"] } });
+    expect(catalogueWelcome(snapshot([bed, other, sofa]), shop, sofa.id))
+      .toEqual({ suggestions: [], recommendation: { noun: "sofa", fabric: false, colour: false } });
+  });
+  it.each(["Bedside Table", "constructor", "toString"])("uses neutral wording for the custom category %s", (productType) => {
+    const table = fixtureProduct({ title: "Oak Bedside Table", productType, options: { Title: ["Default Title"] } });
+    expect(catalogueWelcome(snapshot([table]), shop, "missing"))
+      .toEqual({ suggestions: [], recommendation: { noun: "furniture", fabric: false, colour: false } });
+  });
+  it("ignores sold-out/unpublished data and keeps external/composite appearance labels opaque", () => {
     const sold = fixtureProduct({ title: "Sold Sofa", productType: "Sofa", options: { Colour: ["Green"] }, available: () => false });
+    const hidden = fixtureProduct({ title: "Hidden Bed", productType: "Bed", options: { Colour: ["Blue"] }, published: false });
     const composite = fixtureProduct({ title: "Composite Bed", productType: "Bed", options: { "Other bed choices": ["Velvet: Ruby | Storage: None"] } });
-    const result = catalogueSuggestions(snapshot([sold, composite]), shop);
-    expect(result.join()).not.toMatch(/Sold|Green|Ruby|Velvet/);
-    expect(result.join()).toContain("Composite Bed");
+    expect(catalogueWelcome(snapshot([sold, hidden, composite]), shop))
+      .toEqual({ suggestions: [], recommendation: { noun: "bed", fabric: false, colour: false } });
   });
-  it("has no fabricated defaults for empty, inaccessible, or unpublished catalogues", async () => {
-    expect(catalogueSuggestions(null, shop)).toEqual([]);
-    expect(catalogueSuggestions(snapshot([]), shop)).toEqual([]);
-    const unpublished = fixtureProduct({ title: "Hidden Bed", productType: "Bed", options: { Colour: ["Cream"] }, published: false });
-    expect(catalogueSuggestions(snapshot([unpublished]), shop)).toEqual([]);
-    expect(await loadCatalogueSuggestions({ graphql: async () => { throw new Error("unavailable"); } }, shop)).toEqual([]);
+  it("has no fabricated defaults for empty or inaccessible catalogues", async () => {
+    const empty = { suggestions: [], recommendation: null };
+    expect(catalogueWelcome(null, shop)).toEqual(empty);
+    expect(catalogueWelcome(snapshot([]), shop)).toEqual(empty);
+    expect(await loadCatalogueWelcome({ graphql: async () => { throw new Error("unavailable"); } }, shop)).toEqual(empty);
   });
-  it("reuses the existing bounded Shopify catalogue loader without a model or credit call", async () => {
+  it("reuses the bounded cached catalogue without an AI or credit call", async () => {
     const admin = fixtureAdmin([bed, other]);
-    const result = await loadCatalogueSuggestions(admin, shop, "1");
-    expect(result).toHaveLength(4);
-    expect(result[0]).toBe("Tell me about Aria Bed");
+    const result = await loadCatalogueWelcome(admin, shop, "1");
+    expect(result).toEqual({ suggestions: [], recommendation: { noun: "bed", fabric: true, colour: true } });
+    const calls = { ...admin.calls };
+    expect(await loadCatalogueWelcome(admin, shop, "1")).toEqual(result);
+    expect(admin.calls).toEqual(calls);
   });
 });

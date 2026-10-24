@@ -304,6 +304,54 @@ describe("store-wide grounding", () => {
 });
 
 describe("visualisation in the conversation", () => {
+  it("keeps room, budget and exact colour/size through three real EUR recommendations and a natural second-product preview", async () => {
+    const alt = fixtureProduct({ id: 40, title: "Luna Bed", productType: "Bed", options: { Colour: ["Cream", "Grey"], Size: ["King"] }, price: 749 });
+    const third = fixtureProduct({ id: 41, title: "Willow Bed", productType: "Bed", options: { Colour: ["Cream"], Size: ["King"] }, price: 849 });
+    state.configs.push({ ...ariaConfig(), id: "alt-config", productId: alt.id });
+    const base = fixtureAdmin([aria, alt, third]);
+    const admin = { ...base, graphql: async (query: string, init?: any) => {
+      const response = await base.graphql(query, init);
+      const data = await response.json();
+      const nodes = data.data?.products?.nodes ?? (data.data?.product ? [data.data.product] : []);
+      for (const node of nodes) if (node.priceRangeV2) {
+        node.priceRangeV2.minVariantPrice.currencyCode = "EUR";
+        node.priceRangeV2.maxVariantPrice.currencyCode = "EUR";
+      }
+      return Response.json(data);
+    } };
+    const cream = variantOf(aria, { Colour: "Cream", Size: "King" });
+    const variants = [cream, alt.variants[0]!, third.variants[0]!];
+    const first = scriptedModel([
+      observeRoom({ colours: ["white", "oak"], walls: "white", floor: "oak", style: "modern" }),
+      search({ query: "bed", colour: "cream", size: "king", maxPrice: 1100, availableOnly: true }),
+      recommend([aria, alt, third].map((p, i) => ({ productRef: ref(p.id), variantRef: ref(variants[i]!.id), reason: "Cream complements the oak floor." }))),
+      finalAnswer("Three options for your room. Cream complements the oak floor."),
+    ]);
+    const roomPhoto = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#ddd5c8" } }).jpeg().toBuffer();
+    const preferences = { budgetMin: null, budgetMax: 1100, colours: ["Cream"], materials: [], sizes: ["King"], furniture: ["Bed"], roomDimensions: "", roomNotes: "oak floor" };
+    const recommendations = await ask(admin, first.client, "Recommend three cream king beds for my room, budget 1100", { roomPhoto, preferences });
+    expect(recommendations.recommendations).toHaveLength(3);
+    expect(recommendations.recommendations.map((p) => [p.productId, p.variantId, p.currencyCode, p.price])).toEqual([
+      [aria.id, cream.id, "EUR", "999.00"], [alt.id, alt.variants[0]!.id, "EUR", "749.00"], [third.id, third.variants[0]!.id, "EUR", "849.00"],
+    ]);
+    expect(recommendations.recommendations.every((p) => p.image?.startsWith("https://cdn.shopify.com/"))).toBe(true);
+    const followup = scriptedModel([
+      toolCall("request_visualisation", { productRef: ref(alt.id), variantRef: ref(alt.variants[0]!.id) }),
+      finalAnswer("Here is the second bed, in Cream. Confirm to create your room preview."),
+    ]);
+    const preview = await ask(admin, followup.client, "Show the second one in my room", {
+      shown: recommendations.recommendations, room: recommendations.room, preferences, constraints: recommendations.constraints, hasPhoto: true,
+    });
+    expect(preview.visualise).toMatchObject({ productId: alt.id, variantId: alt.variants[0]!.id, optionValue: "Cream", options: { Colour: "Cream", Size: "King" }, previewAvailable: true });
+    const context = followup.requests[0].input.find((item: any) => item.role === "developer").content;
+    expect(context).toContain("floor oak");
+    expect(context).toContain("budget up to 1100");
+    expect(context).toContain("colours Cream");
+    expect(context).toContain("sizes King");
+    expect(JSON.stringify(followup.requests)).not.toContain("input_image");
+    expect(toolOutputs(followup.requests, "call-request_visualisation")[0]).toMatchObject({ offered: true, needsPhoto: false });
+  });
+
   it("offers an AI preview card only for a strictly verified variant", async () => {
     const cream = variantOf(aria, { Colour: "Cream", Size: "King" });
     const { client, requests } = scriptedModel([

@@ -26,7 +26,7 @@ function fakeProxy() {
     const url = String(input);
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     calls.push({ method: init.method ?? "GET", url, body: init.body as FormData });
-    if (url.startsWith("/apps/tryora/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions });
+    if (url.startsWith("/apps/tryora/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions, recommendation: proxy.recommendation });
     if (url === "/apps/tryora/assistant/turn") { forms.push(init.body as FormData); return respond({ turnId: `turn${forms.length}` }); }
     const poll = url.match(/assistant\/turn\/turn(\d+)\?visitor=[^&]+&after=(\d+)/);
     if (poll) {
@@ -56,6 +56,7 @@ function fakeProxy() {
   });
   const proxy = {
     suggestions: [] as string[],
+    recommendation: null as any,
     fetcher, forms, calls, turns, previewError: "" as string, options: null as any,
     script(...batches: any[][]) { turns.push(batches); },
     hold() { let release!: () => void; pollGate = new Promise((resolve) => { release = resolve; }); return () => { pollGate = null; release(); }; },
@@ -213,10 +214,11 @@ describe("drawer modes", () => {
 });
 
 describe("welcome screen", () => {
-  it("offers two photo actions and suggestion chips", async () => {
+  it("offers only two main photo actions", async () => {
     const assistant = makeAssistant();
     assistant.open();
     expect($$("[data-ta='welcome']").map((button) => button.dataset.action)).toEqual(["visualise", "recommend"]);
+    expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview\u2026");
     const picker = $('[data-ta-file="upload"]') as HTMLInputElement;
     const pick = vi.spyOn(picker, "click");
     ($("textarea") as HTMLTextAreaElement).blur();
@@ -640,6 +642,13 @@ describe("conversation history", () => {
 });
 
 describe("product images in cards", () => {
+  it("shows the supplied store currency on genuine product cards", async () => {
+    await showCards([card({ price: "649.00", currencyCode: "EUR" })]);
+    expect($(".tryora-assistant__card")!.textContent).toContain("649");
+    expect($(".tryora-assistant__card")!.textContent).toContain("\u20ac");
+    expect($(".tryora-assistant__card")!.textContent).not.toContain("\u00a3");
+    expect($(".tryora-assistant__card [data-ta='preview']")!.textContent).toBe("See it in my room");
+  });
   async function showCards(items: Record<string, unknown>[]) {
     const assistant = makeAssistant();
     proxy.script([{ type: "recommendations", items }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
@@ -1013,15 +1022,44 @@ describe("approved photo entry points", () => {
 });
 
 
-describe("catalogue welcome chips", () => {
-  it("shows at most four escaped server-provided suggestions, and sends the exact selected question", async () => {
-    proxy.suggestions = ["Tell me about Aria Bed", "Show me Cream bed products", "Show me Aspen Bed", 'Tell me about <Oak> "Table"', "Fifth chip"];
+describe("catalogue welcome copy without question chips", () => {
+  it("updates only verified recommendation copy without losing the composer draft or enabling a homepage preview", async () => {
+    proxy.recommendation = { noun: "sofa", fabric: true, colour: false };
+    const assistant = makeAssistant({ productId: undefined, productNoun: undefined, openCurrentPreview: undefined });
+    assistant.open();
+    await type("My room has an oak floor");
+    await settle();
+    expect($("[data-ta-recommend-title]")!.textContent).toBe("Recommend a sofa for my room");
+    expect($("[data-ta-recommend-description]")!.textContent).toBe("Find the best sofa and fabric for your room.");
+    expect(($("textarea") as HTMLTextAreaElement).value).toBe("My room has an oak floor");
+    expect($$("[data-ta='welcome']")).toHaveLength(2);
+    expect($("[data-action='ask']")).toBeNull();
+    expect($("[data-action='visualise']")!.textContent).toContain("Select furniture to preview");
+    expect(proxy.forms).toHaveLength(0);
+  });
+  it("offers the approved bed copy only when native fabric and colour evidence is supplied", async () => {
+    proxy.recommendation = { noun: "bed", fabric: true, colour: true };
     const assistant = makeAssistant(); assistant.open(); await settle();
-    expect($$(".tryora-assistant__suggestion").map((button) => button.textContent)).toEqual(proxy.suggestions.slice(0, 4));
-    expect($("[data-ta-suggestions] table")).toBeNull();
-    proxy.script([{ type: "final", reply: { message: "Here is the verified bed.", recommendations: [] } }, { type: "done" }]);
-    click("[data-ta='suggest']"); await settle(60);
-    expect(String(proxy.forms[0]!.get("history"))).toContain("Tell me about Aria Bed");
+    expect($("[data-action='visualise'] small")!.textContent).toBe("See how this bed looks in your own space.");
+    expect($("[data-ta-recommend-description]")!.textContent).toBe("Find the best bed, fabric and colour for your room.");
+    expect($("[data-action='ask']")).toBeNull();
+    expect($(".tryora-assistant__welcome")!.textContent).not.toContain("Ask about products");
+  });
+  it("ignores invalid welcome metadata and does not add unsupported appearance choices", async () => {
+    proxy.recommendation = { noun: "<script>bed</script>", fabric: true, colour: true };
+    const assistant = makeAssistant({ productId: undefined, productNoun: undefined, openCurrentPreview: undefined });
+    assistant.open(); await settle();
+    expect($("[data-ta-recommend-description]")!.textContent).toBe("Find the best furniture for your room.");
+    expect($(".tryora-assistant__welcome script")).toBeNull();
+  });
+
+  it("never renders question chips, even if an older backend supplies suggestions", async () => {
+    proxy.suggestions = ["Tell me about Aria Bed", "What sizes are available?", "What is your returns policy?"];
+    const assistant = makeAssistant(); assistant.open(); await settle();
+    expect($$(".tryora-assistant__suggestion, [data-ta='suggest'], [data-ta-suggestions]")).toHaveLength(0);
+    expect($$("[data-ta='welcome']").map((button) => button.dataset.action)).toEqual(["visualise", "recommend"]);
+    expect($(".tryora-assistant__welcome")!.textContent).not.toMatch(/Tell me about|What sizes|returns policy/);
+    expect(proxy.forms).toHaveLength(0);
     const call = proxy.calls.find((c) => c.url.includes("/assistant/suggestions?"))!;
     expect(new URL(call.url, "https://example.com").searchParams.get("product")).toBe("1");
   });

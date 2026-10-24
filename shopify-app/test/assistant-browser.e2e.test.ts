@@ -41,7 +41,7 @@ vi.mock("../app/storefront.server", () => ({
   }),
 }));
 
-import { loadCatalogueSuggestions } from "../app/assistant/suggestions.server";
+import { loadCatalogueWelcome } from "../app/assistant/suggestions.server";
 import { cancelAssistantTurn, readAssistantTurn, startAssistantTurn, streamAssistantTurn } from "../app/assistant/turn-routes.server";
 import { setAssistantClientForTests } from "../app/room-assistant.server";
 import { productOptionsForAssistant } from "../app/assistant/options.server";
@@ -117,10 +117,10 @@ const model = {
       }
       if (calls.includes("search_products") && !calls.includes("recommend_products")) {
         const found = JSON.parse(outputs.find((item, index) => calls[index] === "search_products")?.output ?? outputs.at(-1).output);
-        const items = (found.results ?? []).slice(0, 2).map((result: any) => ({ productRef: result.productRef, variantRef: result.matchingVariants[0]?.variantRef ?? null, reason: "Its colour and shape suit the room." }));
+        const items = (found.results ?? []).slice(0, /three/i.test(text) ? 3 : 2).map((result: any) => ({ productRef: result.productRef, variantRef: result.matchingVariants[0]?.variantRef ?? null, reason: "Its colour and shape suit the room." }));
         if (items.length) return toolCall("recommend_products", { items });
       }
-      const words = ["Here are ", "two verified ", "options from ", "the store. ", "Option 1 suits ", "a bright, calm room."];
+      const words = ["Here are ", /three/i.test(text) ? "three verified " : "two verified ", "options from ", "the store. ", "Option 1 suits ", "a bright, calm room."];
       return {
         async *[Symbol.asyncIterator]() {
           for (const word of words) {
@@ -200,7 +200,7 @@ async function route(req: IncomingMessage): Promise<Response> {
     return json({ enabled: true, configured: true, providerReady: true, greeting: "Hi, how can I help today?", shop: SHOP, defaultView: "side", transport, ...lead, launcher: { label: "Room Assistant", position: "bottom-right", colour: "#6f7046" } });
   }
   if (path === "/apps/tryora/assistant/suggestions") {
-    return json({ suggestions: await loadCatalogueSuggestions(admin, SHOP, url.searchParams.get("product") ?? undefined) });
+    return json(await loadCatalogueWelcome(admin, SHOP, url.searchParams.get("product") ?? undefined));
   }
   if (path === "/apps/tryora/check") return json({ ok: true, detected: "empty_space" });
   const request = await webRequest(req);
@@ -298,9 +298,12 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(await page.locator("[data-action='visualise']").textContent()).toContain("Preview this bed in my room");
       expect(await page.locator(".tryora-assistant__actions-grid [data-ta='upload']").count()).toBe(0);
       expect(await page.locator("[data-ta-scroll]").evaluate((element: HTMLElement) => element.scrollTop)).toBe(0);
-      await page.locator(".tryora-assistant__suggestion").first().waitFor();
-      expect(await page.locator(".tryora-assistant__suggestion").count()).toBe(4);
-      expect(await page.locator(".tryora-assistant__suggestion").first().textContent()).toContain(aria.title);
+      await expect.poll(() => page.locator("[data-ta-recommend-description]").textContent()).toBe("Find the best bed and colour for your room.");
+      expect(await page.locator(".tryora-assistant__suggestion, [data-ta-suggestions]").count()).toBe(0);
+      expect(await page.locator("[data-ta='welcome']").count()).toBe(2);
+      expect(await page.locator("[data-action='ask']").count()).toBe(0);
+      expect(await page.locator("[data-action='visualise'] small").textContent()).toBe("See how this bed looks in your own space.");
+      expect(await page.locator("[data-ta-recommend-description]").textContent()).toBe("Find the best bed and colour for your room.");
       await shot(page, `approved-${width}-welcome`);
       await page.locator("[data-action='visualise']").click();
       await page.locator(".tryora__dialog").waitFor();
@@ -379,6 +382,14 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(seen.previewStarts).toHaveLength(0);
       expect(modelRequests).toEqual([]);
       await shot(pageTab, `guard-${kind}`);
+      // Choosing furniture is still possible on a non-preview page, with no automatic generation.
+      await pageTab.fill("textarea", "Which beds would suit my room?");
+      await pageTab.locator("[data-ta='send']").click();
+      await pageTab.locator(".tryora-assistant__card").first().waitFor({ timeout: 15_000 });
+      const titles = await pageTab.locator(".tryora-assistant__card h4").allTextContents();
+      expect(titles.length).toBeGreaterThan(0);
+      expect(titles.every((title: string) => products.some((p) => p.title === title))).toBe(true);
+      expect(seen.previewStarts).toHaveLength(0);
     } finally { await context.close(); }
   }, 30_000);
 
@@ -502,8 +513,8 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await context.close();
   }, 90_000);
 
-  it("desktop: uploads a room photo in chat, keeps the analysis and previews a verified product in the conversation", async () => {
-    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
+  it.each([1280, 390])("room photo, three grounded recommendations and a conversational preview at %ipx", async (width) => {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 800 }, isMobile: width === 390, hasTouch: width === 390 }); await routeImages(context);
     const page = await context.newPage();
     await page.goto(origin);
     await page.locator(".tryora-assistant-launch").click();
@@ -511,8 +522,8 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     const room = await sharp({ create: { width: 1200, height: 900, channels: 3, background: "#e8e2d6" } }).jpeg().toBuffer();
     await page.setInputFiles("[data-ta-file='upload']", { name: "bedroom.jpg", mimeType: "image/jpeg", buffer: room });
     await page.locator("[data-ta-attachment] img").waitFor();
-    await shot(page, "05-attachment");
-    await page.fill("textarea", "Which bed would look best in this room?");
+    await shot(page, `live-${width}-attachment`);
+    await page.fill("textarea", "Recommend three beds for my room");
     await page.click("[data-ta='send']");
     await page.locator(".tryora-assistant__room-chip").waitFor({ timeout: 15_000 });
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
@@ -520,6 +531,8 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     expect(await page.locator(".tryora-assistant__room-chip").textContent()).toContain("Scandinavian");
     expect(await page.locator(".tryora-assistant__user-photo").count()).toBe(1);
 
+    expect(await page.locator(".tryora-assistant__card").count()).toBe(3);
+    await shot(page, `live-${width}-room-recommendations`);
     // Ask for a visualisation of the verified Aria variant and confirm the card.
     await page.fill("textarea", "Show the Aria in cream in my room");
     await page.click("[data-ta='send']");
@@ -527,13 +540,14 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await offer.waitFor({ timeout: 15_000 });
     expect(seen.turnsWithPhoto).toBe(1); // the follow-up did not re-upload the photo
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
+    await shot(page, `live-${width}-conversational-preview-offer`);
     await offer.click();
     await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
     const start = seen.previewStarts.at(-1)!;
     expect(start).toMatchObject({ product: aria.id, option: "Cream", variant: aria.variants.find((variant) => variant.selectedOptions[0]!.value === "Cream")!.id });
     expect(start.photo).toMatch(/^blob:\d+$/);
     await expect.poll(() => seen.acks).toBe(1);
-    await shot(page, "06-preview-in-chat");
+    await shot(page, `live-${width}-preview-in-chat`);
     await context.close();
   }, 90_000);
 
