@@ -258,7 +258,7 @@ describe("authenticated two-mode admin", () => {
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
     const form = new FormData();
-    form.set("intent", "upload"); form.set("mode", "manual"); form.set("revision", "");
+    form.set("intent", "upload"); form.set("mode", "manual"); form.set("purpose", "sample"); form.set("revision", "");
     form.set("image", new Blob([image], { type: "image/png" }), "fabric.png");
     const result = await action({ request: new Request(
       `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`,
