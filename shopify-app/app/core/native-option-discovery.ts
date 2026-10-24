@@ -5,6 +5,7 @@ export type NativeOptionRole = "fabric" | "colour" | "finish";
  * remain the Shopify identity; normalization must not repair saved mappings. */
 export function nativeOptionRole(name: string): NativeOptionRole | null {
   const normalized = name.normalize("NFKC").trim().toLowerCase()
+    .replace(/^\d+[.)]\s+/, "")
     .replace(/[_-]+/g, " ").replace(/\s+/g, " ").replace(/:$/, "").trim()
     .replace(/^(?:choose|select) (?:your )?/, "");
   if (["fabric", "fabric type", "upholstery fabric"].includes(normalized)) return "fabric";

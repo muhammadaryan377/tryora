@@ -442,3 +442,21 @@ html.tryora-assistant-locked { overflow: hidden; }
   .tryora-assistant__panel, .tryora-assistant-launch, .tryora-assistant__action { animation: none !important; transition: none !important; }
   .tryora-assistant__dots i, .tryora-assistant__spinner, .tryora-assistant__thumb { animation: none !important; }
 }
+
+/* Product preview selector: verified samples and fabric text have different geometry. */
+.tryora__sw--fabric .tryora__swrow {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  align-items: start;
+}
+.tryora__sw--fabric .tryora__s.is-text .tryora__chip {
+  box-sizing: border-box; width: 100%; min-height: 44px; overflow-wrap: anywhere;
+}
+.tryora__sw--colour .tryora__chip { border-radius: 50%; }
+.tryora__sw--colour .tryora__s.is-text .tryora__chip { border-radius: 8px; }
+.tryora__s.is-unavailable { opacity: .55; }
+.tryora__sname { white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.3; }
+.tryora__viewed { white-space: normal; text-align: center; }
+.tryora__gchip { min-height: 40px; padding: 8px 14px; border: 1px solid var(--t-line); line-height: 1.3; }
+.tryora__sw .tryora__label:not(:first-child) { margin-top: 16px; }
+.tryora__swrow--scroll { padding: 4px 4px 10px; gap: 12px; }
+.tryora__sw--fabric .tryora__swrow--scroll .tryora__s.is-text { flex: 0 0 108px; }

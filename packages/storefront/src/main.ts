@@ -833,15 +833,16 @@ export class Tryora {
       more = all.length - shown.length;
     }
     const selected = this.optionLabel(this.state.selectedOption);
-    return '<div class="tryora__sw"><p class="tryora__label"><strong>' + esc(c.product) + '</strong>' +
+    return '<div class="tryora__sw ' + (!c.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? "") ? 'tryora__sw--fabric' : 'tryora__sw--colour') + '"><p class="tryora__label"><strong>' + esc(c.product) + '</strong>' +
       (selected ? ' · ' + esc(selected) : '') + '</p>' + this.fabricPicker(locked) +
       '<p class="tryora__label">Choose ' + esc(c.selectorLabel ?? c.optionName ?? 'option') + '</p>' +
       '<div class="tryora__swrow ' + (mobile ? 'tryora__swrow--scroll' : '') + '" role="radiogroup" aria-label="' + esc(c.selectorLabel ?? c.optionName ?? 'Options') + '">' +
       shown.map((x) => this.swatch(x, locked)).join("") +
       (more ? '<button class="tryora__more" data-act="more" aria-label="Show all options">+' + more + '<br>more</button>' : '') + '</div>' +
       (mobile && all.length > 5 ? '<button class="tryora__link" data-act="more">All ' + all.length + ' options</button>' : '') +
+      (all.some((x) => !this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">Some options cannot be previewed with your selected size and configuration. Keep your product-page choices or ask the store about a verified preview.</p>' : '') +
       (this.cfg.fabricOptionName && !all.some((x) => this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">No supported colours for this fabric and the selected product options.</p>' : '') +
-      (!this.cfg.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? '') ? '<p class="tryora__small">Colour samples are not available from the Shopify product options. The preview uses its product reference.</p>' : '') + '</div>';
+      (!this.cfg.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? '') ? '<p class="tryora__small">Colour choices have not been mapped for this preview. Only verified fabric configurations can be previewed.</p>' : '') + '</div>';
   }
 
   private selectedVariant(value: string): VariantChoice | null {
@@ -863,14 +864,14 @@ export class Tryora {
     const disabled = locked || (!available && !viewed);
     const label = x.label ?? x.value;
     const text = !x.image && !x.colour;
-    return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-soldout ' : '') + (text ? 'is-text' : '') +
+    return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-unavailable ' : '') + (text ? 'is-text' : '') +
       '" data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
-      ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', unavailable for selected options' : '') + '">' +
+      ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', preview not supported for selected options' : '') + '">' +
       '<span class="tryora__chip"' + (!x.image && x.colour ? ' style="background:' + esc(x.colour) + '"' : '') + '>' +
       (x.image ? '<img src="' + esc(x.image) + '" alt="' + esc(label) + '" loading="lazy">' : text ? esc(label) : '') + '</span>' +
       (text ? '' : '<span class="tryora__sname">' + esc(label) + '</span>') +
       (locked && !selected ? '<span class="tryora__lock" aria-hidden="true">' + LOCK + '</span>' : '') +
-      (viewed ? '<span class="tryora__viewed">' + TICK + ' Viewed</span>' : !available ? '<span class="tryora__sold">Unavailable</span>' : '') + '</button>';
+      (viewed ? '<span class="tryora__viewed">' + TICK + ' Viewed</span>' : '') + '</button>';
   }
 
   private swatchPanel(): string {

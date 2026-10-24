@@ -142,6 +142,42 @@ describe("dependent fabric and colour popup", () => {
     expect(popup.visibleSwatches().map((s: any) => s.group)).toEqual(["Velvet", "Velvet"]);
   });
 
+
+  it("explains unsupported configurations without selling or inventing colour choices", async () => {
+    await setup("4");
+    click("fabric", "Velvet");
+    const html = popup.swatches();
+    expect(html).toContain("preview not supported for selected options");
+    expect(html).toContain('is-unavailable');
+    expect(html).not.toContain('tryora__sold');
+    expect(html).not.toContain('is-soldout');
+    expect(html).toContain("selected size and configuration");
+    expect(popup.state.selectedOption).toBeNull();
+  });
+
+  it("keeps fabric-only composite identities opaque and reports missing colour mapping", async () => {
+    await setup();
+    const composite = "Velvet: Cream | Headboard: Tall | Storage: None";
+    popup.cfg.fabricOptionName = null;
+    popup.cfg.selectorLabel = "Fabric";
+    popup.cfg.selectionOptionNames = ["Fabric"];
+    popup.pageOptions = { Size: "King", Fabric: "Velvet", "Other bed choices": composite };
+    const original = { id: "1", image: null, options: { ...popup.pageOptions } };
+    const target = { id: "2", image: null, options: { ...popup.pageOptions, Fabric: "Boucle", "Other bed choices": "Boucle: Cream | Headboard: Tall | Storage: None" } };
+    popup.cfg.swatches = [
+      { value: "Velvet", label: "Velvet", group: null, available: true, image: null, colour: null, variants: [original] },
+      { value: "Boucle", label: "Boucle", group: null, available: true, image: null, colour: null, variants: [target] },
+    ];
+    expect(popup.selectedVariant("Velvet")).toEqual(original);
+    expect(popup.selectedVariant("Boucle")).toBeNull();
+    const html = popup.swatches();
+    expect(html).toContain("tryora__sw--fabric");
+    expect(html).toContain("Colour choices have not been mapped");
+    expect(html).not.toContain('aria-label="Colour"');
+    expect(html).not.toContain("<img");
+    expect(popup.pageOptions["Other bed choices"]).toBe(composite);
+  });
+
   it("resets colour on fabric change while preserving size, headboard and storage", async () => {
     await setup("2");
     click("fabric", "Boucle");
