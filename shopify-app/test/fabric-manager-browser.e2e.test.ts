@@ -151,7 +151,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
       await row.locator('input[type=file]').setInputFiles({ name: "actual-swatch.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(1);
-      await expect(row.locator(".fabric-media-sample .fabric-selected-image img")).toHaveAttribute("src", /upload-1\.jpg/);
+      expect(await row.locator(".fabric-media-sample .fabric-selected-image img").getAttribute("src")).toMatch(/upload-1\.jpg/);
       await savePage(page);
 
       await page.locator('summary:has-text("Edit sample image")').last().click();
