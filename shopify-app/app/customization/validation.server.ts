@@ -1,3 +1,5 @@
+import { isFabricDocument, parseFabricDocument } from "./fabric-manager";
+import { safeShopifyMediaUrl } from "./option-model";
 import { nativeSnapshot } from "./reference-resolver.server";
 import { optionsOf, parseManualMapping, preservationKey, PRESERVATION_OPTION, MAPPED_FABRIC_OPTION, validateNativeBindings, type ManualEntry } from "./option-model";
 import { combinationKey } from "./adapters/manual-mapping.server";
@@ -6,10 +8,11 @@ import type { ProviderContext } from "./adapters/types.server";
 
 export async function manualStorefrontData(context: ProviderContext, prefetched?: Parameters<typeof nativeSnapshot>[3]) {
   const { config, setting } = context;
-  if (!setting.active) throw new Error("Mapping needs activation.");
-  const mapping = parseManualMapping(setting.mapping, config.shopId, config.productId);
+  const manager = isFabricDocument(setting.mapping) ? parseFabricDocument(setting.mapping, config.shopId, config.productId) : null;
+  if (!setting.active && !manager) throw new Error("Mapping needs activation.");
+  const mapping = manager && !manager.published ? { entries: [], roles: manager.draft.roles } : parseManualMapping(setting.mapping, config.shopId, config.productId);
   const snapshot = await nativeSnapshot(context.admin, config.productId, true, prefetched);
-  const errors = validateNativeBindings(mapping, snapshot.variants, snapshot.media);
+  const errors = validateNativeBindings(mapping as Parameters<typeof validateNativeBindings>[0], snapshot.variants, snapshot.media);
   if (errors.length) throw new Error("Mapping needs synchronization.");
   function allowed(e: ManualEntry) {
     const v = snapshot.variants.find((v) => v.id === e.variantId)!;
@@ -21,16 +24,33 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
   const variantChoice = (e: ManualEntry) => ({ id: e.variantId,
     image: snapshot.media.find((m) => m.id === e.referenceMediaIds[0])!.image!.url,
     options: { ...e.nativeOptions, [PRESERVATION_OPTION]: preservationKey(e), [MAPPED_FABRIC_OPTION]: e.fabric.label } });
-  const swatches = [...new Set(mapping.entries.map(combinationKey))].map((key) => {
+  let swatches = [...new Set(mapping.entries.map(combinationKey))].map((key) => {
     const entries = mapping.entries.filter((e) => combinationKey(e) === key);
     const e = entries[0]!;
     // Samples must be consistent across sizes/configurations for the same appearance.
     const samples = new Set(entries.map((e) => e.swatchMediaId ?? ""));
     const swatchId = samples.size === 1 ? e.swatchMediaId : undefined;
-    return { value: key, label: e.colour.label, group: e.fabric.label, colour: null,
+    return { value: key, label: e.colour.label, group: e.fabric.label, colour: null as string | null,
       image: swatchId ? snapshot.media.find((m) => m.id === swatchId)?.image?.url ?? null : null,
       available: entries.some(allowed), variants: entries.filter(allowed).map(variantChoice) };
   });
+  const fabricImages: Record<string, string> = Object.create(null);
+  if (manager) {
+    const mediaUrl = (id: string | null) => {
+      const url = snapshot.media.find((m) => m.id === id)?.image?.url;
+      return url && safeShopifyMediaUrl(url) ? url : null;
+    };
+    swatches = manager.draft.fabrics.filter((f) => f.enabled).flatMap((f) => {
+      const texture = mediaUrl(f.textureMediaId);
+      if (texture) fabricImages[f.name] = texture;
+      return f.colours.filter((c) => c.enabled).map((c) => {
+        const value = JSON.stringify([f.id, c.id]);
+        const approved = swatches.find((s) => s.value === value);
+        return { value, label: c.name, group: f.name, colour: c.hex, image: mediaUrl(c.swatchMediaId),
+          available: !!setting.active && !!approved?.available, variants: setting.active ? approved?.variants ?? [] : [] };
+      });
+    });
+  }
   const productVariants = snapshot.variants.map((v) => {
     const e = mapping.entries.find((e) => e.variantId === v.id);
     return e ? variantChoice(e) : { id: v.id, image: v.image?.url ?? null, options: optionsOf(v) };
@@ -38,5 +58,7 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
   return { swatches, productVariants, selectionOptionNames: [mapping.roles.fabric, mapping.roles.colour, mapping.roles.composite, MAPPED_FABRIC_OPTION].filter((s): s is string => !!s),
     // The virtual selector name is display metadata; it is never a native Shopify identity.
     optionName: "Colour", selectorLabel: "Colour", fabricOptionName: MAPPED_FABRIC_OPTION, singleVariants: [],
-    mappingRevision: setting.revision, providerId: "manual_mapping" };
+    ...(manager ? { managerManaged: true as const, mappedEntries: mapping.entries.map((e) => ({ variantId: e.variantId, fabric: e.fabric.label, colour: e.colour.label,
+      preserved: e.preserved, referenceImage: snapshot.media.find((m) => m.id === e.referenceMediaIds[0])!.image!.url })) } : {}),
+    fabricImages, mappingRevision: setting.revision, providerId: "manual_mapping" };
 }

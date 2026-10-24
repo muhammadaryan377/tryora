@@ -98,7 +98,7 @@ export default function Products() {
                   <s-table-cell>
                     <s-text>{r.customizationProvider.label}</s-text>
                     <s-text color="subdued"> {r.customizationProvider.status}</s-text>
-                    <s-link href={`/app/customization?product=${encodeURIComponent(r.id)}`}>Provider settings</s-link>
+                    <s-link href={`/app/fabrics?product=${encodeURIComponent(r.id)}`}>Fabrics &amp; Colours</s-link>
                   </s-table-cell>
                   <s-table-cell>
                     <s-badge tone={STATUS[r.readiness].tone}>{STATUS[r.readiness].label}</s-badge>

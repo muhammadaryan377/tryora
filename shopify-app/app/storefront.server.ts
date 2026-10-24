@@ -25,6 +25,7 @@ import { nativeSelections } from "./core/customization";
 import { eligibleVariants } from "./native-selection.server";
 import { loadProviderSetting } from "./customization/provider-config.server";
 import { providerAdapter, resolveConfiguredPreview } from "./customization/registry.server";
+import { isFabricDocument } from "./customization/fabric-manager";
 import { manualStorefrontData } from "./customization/validation.server";
 /**
  * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
@@ -56,7 +57,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
   });
   if (!config?.enabled || config.readiness !== "ready") return { enabled: false as const };
   const providerSetting = await loadProviderSetting(shopId, gid);
-  if (!providerAdapter(providerSetting.providerId).capabilities.authorization || (providerSetting.providerId !== "shopify_native" && !providerSetting.active)) return { enabled: false as const };
+  if (!providerAdapter(providerSetting.providerId).capabilities.authorization || (providerSetting.providerId !== "shopify_native" && !providerSetting.active && !isFabricDocument(providerSetting.mapping))) return { enabled: false as const };
   const res = await admin.graphql(
     `#graphql
     query TryoraStorefrontProduct($id: ID!) {
@@ -103,17 +104,19 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
       if (providerSetting.providerId === "cloudlift") manualData = { ...manualData, providerId: "cloudlift" };
     } catch { return { enabled: false as const }; }
     swatches = manualData.swatches;
+    if (!swatches.length) return { enabled: false as const };
   }
   const shopRow = await prisma.shop.findUnique({ where: { id: shopId } });
   // The popup only asks for its settings when the app embed is on in the theme, so this marks setup step 3 done.
   if (shopRow && !shopRow.storefrontEnabled) {
     await prisma.shop.update({ where: { id: shopId }, data: { storefrontEnabled: true } }).catch(() => {});
   }
-  // Fill gaps with the merchant's own colours, or name-based guesses if they approved guessing.
+  const managedNative = providerSetting.providerId === "shopify_native" && isFabricDocument(providerSetting.mapping);
+  // Explicit Native manager mode uses only Shopify samples; legacy merchant opt-in remains unchanged.
   const resolved = resolveSwatches(
     swatches.map((s) => ({ value: s.value, shopifyColour: s.colour, shopifyImage: s.image })),
-    (manualData || model.fabricOptionName) ? {} : (config.swatchColours as Record<string, string>) ?? {},
-    { approved: !manualData && !model.fabricOptionName && !!shopRow?.swatchAutoFill, photoColours: (manualData || model.fabricOptionName) ? {} : cachedPhotoColours(config.photoColours) },
+    (manualData || managedNative || model.fabricOptionName) ? {} : (config.swatchColours as Record<string, string>) ?? {},
+    { approved: !manualData && !managedNative && !model.fabricOptionName && !!shopRow?.swatchAutoFill, photoColours: (manualData || managedNative || model.fabricOptionName) ? {} : cachedPhotoColours(config.photoColours) },
   );
   swatches.forEach((s, i) => {
     s.colour = resolved[i]!.colour;
@@ -147,6 +150,8 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     optionName: model.optionName,
     selectorLabel: model.selectorLabel,
     fabricOptionName: model.fabricOptionName,
+    fabricImages: Object.fromEntries((p.options.find((o: any) => o.name === model.fabricOptionName)?.optionValues ?? [])
+      .filter((v: any) => v.swatch?.image?.image?.url).map((v: any) => [v.name, v.swatch.image.image.url])) as Record<string, string>,
     selectionOptionNames: model.optionNames,
     // Unavailable variants identify page context but are never offered for generation.
     productVariants: p.variants.nodes.map(variantChoice),
