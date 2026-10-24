@@ -26,15 +26,15 @@ function Sample({ url, hex, label, round = true }: { url?: string | null; hex?: 
 }
 function MediaField({ label, value, media, change, upload, disabled, kind, sampleIds }: {
   label: string; value: string | null; media: Media[]; change: (id: string | null) => void;
-  upload: (file: File) => Promise<Media | null>; disabled: boolean;
+  upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>; disabled: boolean;
   kind: "sample" | "reference"; sampleIds: ReadonlySet<string>;
 }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(""), [imagePage, setImagePage] = useState(0);
   const selected = media.find((m) => m.id === value);
   // The sample picker must never be a gallery of unrelated furniture photographs.
   const choices = media.filter((m) => kind === "sample"
-    ? sampleIds.has(m.id) || m.alt?.startsWith("Tryora merchant upload ")
-    : !sampleIds.has(m.id) || m.id === value);
+    ? sampleIds.has(m.id) || m.alt?.startsWith("Tryora fabric sample ")
+    : (m.id === value || !sampleIds.has(m.id) && !m.alt?.startsWith("Tryora fabric sample ")));
   const pageCount = Math.ceil(choices.length / 24);
   const currentPage = Math.min(imagePage, Math.max(0, pageCount - 1));
   return <div className={`fabric-media-field fabric-media-${kind}`}>
@@ -55,7 +55,7 @@ function MediaField({ label, value, media, change, upload, disabled, kind, sampl
         const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (!file) return;
         if (file.size > 8 * 1024 * 1024 || file.size === 0) { setError("Choose a nonempty image under 8 MB."); return; }
         setBusy(true); setError("");
-        try { const image = await upload(file); if (image) { change(image.id); setImagePage(0); } }
+        try { const image = await upload(file, kind); if (image) { change(image.id); setImagePage(0); } }
         catch (err) { setError(err instanceof Error ? err.message : "Image upload failed."); }
         finally { setBusy(false); }
       }} />
@@ -78,7 +78,7 @@ function MediaField({ label, value, media, change, upload, disabled, kind, sampl
 }
 export function FabricColourManager({ data, save, upload, error, busy = false }: {
   data: FabricManagerData; save: (mode: "native" | "manual", draft: FabricDraft) => void;
-  upload: (file: File) => Promise<Media | null>; error?: string; busy?: boolean;
+  upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>; error?: string; busy?: boolean;
 }) {
   const p = data.selected;
   const [mode, setMode] = useState<"native" | "manual">(p?.mode ?? "native"), [draft, setDraft] = useState<FabricDraft>(p?.draft ?? emptyFabricDraft());
@@ -95,7 +95,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
       (patch.name !== undefined && patch.name !== previous.name || renamedColours.has(b.colourId)) ? { ...b, reviewed: false } : b) };
   });
   const updateBinding = (id: string, patch: Partial<ManagedBinding>) => setDraft((d) => ({ ...d, bindings: d.bindings.map((b) => b.id === id ? { ...b, ...patch, reviewed: patch.reviewed ?? false } : b) }));
-  const uploadImage = async (file: File) => { const m = await upload(file); if (m) setMedia((all) => [...all.filter((x) => x.id !== m.id), m]); return m; };
+  const uploadImage = async (file: File, purpose: "sample" | "reference") => { const m = await upload(file, purpose); if (m) setMedia((all) => [...all.filter((x) => x.id !== m.id), m]); return m; };
   useEffect(() => { setBindingPage(0); setFabricEditor(true); }, [fabricId]);
   const sampleIds = new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]).filter((id): id is string => !!id));
   const fabricBindings = draft.bindings;
