@@ -25,7 +25,7 @@ const MAX_PHOTO_BYTES = 8 * 1024 * 1024;
 const TURN_ID = /^[A-Za-z0-9]{1,40}_[a-f0-9]{32}__[a-f0-9]{32}$/;
 const VISITOR = /^[0-9a-f-]{36}$/i;
 
-const LIMITS: Record<string, number> = { history: 30_000, room: 4_000, shown: 2_000, selected: 400, preferences: 2_000 };
+const LIMITS: Record<string, number> = { history: 30_000, room: 4_000, shown: 2_000, selected: 400, preferences: 2_000, earlier: 1_500 };
 
 /** Parses and bounds a turn request. Throws BAD_REQUEST / BAD_PHOTO for anything malformed. */
 export async function assistantInputFrom(form: FormData, admin: AdminGraphql, shopId: string): Promise<AssistantTurnInput> {
@@ -52,6 +52,7 @@ export async function assistantInputFrom(form: FormData, admin: AdminGraphql, sh
     shown: parsed("shown") ?? [],
     selected: parsed("selected") ?? null,
     preferences: parsed("preferences") ?? null,
+    earlier: parsed("earlier") ?? [],
   };
 }
 

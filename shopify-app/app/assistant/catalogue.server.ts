@@ -84,9 +84,15 @@ export const PRODUCT_COUNT_QUERY = `#graphql
     productsCount(query: $query, limit: null) { count precision }
   }`;
 
+/** Detail reads also carry Shopify's own option swatches (colour or image) for the chat option selector. */
+const DETAIL_PRODUCT_FIELDS = PRODUCT_FIELDS.replace(
+  "options { name optionValues { name } }",
+  "options { name optionValues { name swatch { color image { image { url(transform: { maxWidth: 96, maxHeight: 96 }) } } } } }",
+);
+
 export const PRODUCT_DETAIL_QUERY = `#graphql
   query TryoraAssistantProductDetail($id: ID!, $after: String) {
-    product(id: $id) { ${PRODUCT_FIELDS}
+    product(id: $id) { ${DETAIL_PRODUCT_FIELDS}
       variants(first: ${DETAIL_VARIANT_PAGE}, after: $after) { nodes { ${VARIANT_FIELDS} } pageInfo { hasNextPage endCursor } }
     }
   }`;
@@ -121,7 +127,7 @@ export interface CatalogueProduct {
   currencyCode: string;
   minPrice: number;
   maxPrice: number;
-  options: { name: string; values: string[] }[];
+  options: { name: string; values: string[]; swatches?: Record<string, { colour: string | null; image: string | null }> }[];
   collections: { title: string; handle: string }[];
   attributes: Record<string, string>;
   variantCount: number;
@@ -219,6 +225,17 @@ function attributeValue(raw: unknown): string | null {
   return clean ? clean.slice(0, 300) : null;
 }
 
+/** Shopify's placeholder option for products without real choices ("Title: Default Title"). */
+export const isDefaultTitleOption = (option: { name: string; values: string[] }) =>
+  option.values.length === 1 && option.values[0] === "Default Title";
+
+/** Real, shopper-meaningful options only; never the artificial "Default Title". */
+export const realOptions = <T extends { name: string; values: string[] }>(options: T[]) => options.filter((option) => !isDefaultTitleOption(option));
+
+/** A variant's options without the placeholder "Title: Default Title". */
+export const realVariantOptions = (options: Record<string, string>) =>
+  Object.fromEntries(Object.entries(options).filter(([name, value]) => !(name === "Title" && value === "Default Title")));
+
 /** Shopify handles are lowercase letters, digits, hyphens (and occasionally underscores or unicode letters). */
 const validHandle = (value: unknown): value is string => typeof value === "string" && /^[\p{L}\p{N}_-]{1,255}$/u.test(value);
 
@@ -293,10 +310,16 @@ export function parseProduct(node: any, variantNodes: any[], variantsComplete: b
     currencyCode: String(node.priceRangeV2?.minVariantPrice?.currencyCode ?? "GBP"),
     minPrice: Number(node.priceRangeV2?.minVariantPrice?.amount ?? 0),
     maxPrice: Number(node.priceRangeV2?.maxVariantPrice?.amount ?? 0),
-    options: (node.options ?? []).map((option: any) => ({
-      name: String(option.name),
-      values: (option.optionValues ?? []).map((value: any) => String(value.name)),
-    })),
+    options: (node.options ?? []).map((option: any) => {
+      const values = (option.optionValues ?? []).map((value: any) => String(value.name));
+      const swatches = Object.fromEntries((option.optionValues ?? [])
+        .filter((value: any) => value?.swatch && (value.swatch.color || value.swatch.image?.image?.url))
+        .map((value: any) => [String(value.name), {
+          colour: typeof value.swatch.color === "string" && /^#[0-9a-f]{3,8}$/i.test(value.swatch.color) ? value.swatch.color : null,
+          image: imageUrl(value.swatch.image?.image?.url),
+        }]));
+      return Object.keys(swatches).length ? { name: String(option.name), values, swatches } : { name: String(option.name), values };
+    }),
     collections,
     attributes,
     variantCount,

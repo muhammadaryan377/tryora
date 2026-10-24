@@ -45,6 +45,15 @@ export async function guardPreview(shopId: string, visitorId: string) {
   }
 }
 
+/** Option and variant lookups for chat cards: Shopify reads only, so a looser per-visitor limit than messages. */
+export function guardAssistantRead(shopId: string, visitorId: string) {
+  if (!VISITOR.test(visitorId)) throw new TryoraError("RATE_LIMITED", "Missing visitor");
+  if (!hit(`assistant-read-visitor:${shopId}:${visitorId}`, 60, 10 * 60_000) ||
+      !hit(`assistant-read-shop:${shopId}`, 600, 10 * 60_000)) {
+    throw new TryoraError("RATE_LIMITED");
+  }
+}
+
 /** Assistant messages can call a paid model but never reserve or consume preview credits. */
 export function guardAssistant(shopId: string, visitorId: string) {
   if (!VISITOR.test(visitorId)) throw new TryoraError("RATE_LIMITED", "Missing visitor");

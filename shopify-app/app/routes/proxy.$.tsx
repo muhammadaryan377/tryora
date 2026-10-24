@@ -10,7 +10,8 @@ import {
   startPreview,
   storefrontConfig,
 } from "../storefront.server";
-import { guardAssistant, guardPhotoCheck, guardPreview } from "../guard.server";
+import { guardAssistant, guardAssistantRead, guardPhotoCheck, guardPreview } from "../guard.server";
+import { productOptionsForAssistant } from "../assistant/options.server";
 import {
   answerRoomAssistant,
   assistantStorefrontConfig,
@@ -67,6 +68,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Load the shop's catalogue in the background so the first question does not wait for it.
     if (config.enabled) warmAssistantCatalogue(admin, session.shop);
     return json(config);
+  }
+  if (path === "assistant/options") {
+    try {
+      guardAssistantRead(session.shop, url.searchParams.get("visitor") ?? "");
+      return json(await productOptionsForAssistant(admin, session.shop, url.searchParams.get("product") ?? ""));
+    } catch (e) {
+      const code = errorCode(e);
+      return json({ error: code }, code === "RATE_LIMITED" ? 429 : code === "NOT_FOUND" || code === "BAD_REQUEST" ? 404 : 503);
+    }
   }
   const turn = path.match(/^assistant\/turn\/([\w-]+)$/);
   if (turn) {

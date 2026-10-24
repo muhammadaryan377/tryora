@@ -15,6 +15,7 @@ vi.mock("../app/db.server", () => ({
         (!args.where.productId?.in || args.where.productId.in.includes(config.productId)))),
     },
     customizationConfig: { findMany: vi.fn(async (args: any) => state.providerRows.filter((row) => row.shopId === args.where.shopId)) },
+    shop: { findUnique: vi.fn(async () => ({ leadCapture: "skippable", leadTiming: "after", leadSettings: { showOptIn: false } })) },
   },
 }));
 
@@ -139,7 +140,9 @@ describe("room assistant settings", () => {
     expect((await assistantStorefrontConfig(SHOP, { pageType: "product" })).enabled).toBe(false);
     vi.stubEnv("OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED", "true");
     const config = await assistantStorefrontConfig(SHOP, { pageType: "product" });
-    expect(config).toMatchObject({ enabled: true, shop: SHOP, transport: "poll", defaultView: "side" });
+    expect(config).toMatchObject({ enabled: true, shop: SHOP, transport: "poll", defaultView: "side", previewsAvailable: true });
+    // The chat applies the merchant's email step exactly as the product popup does.
+    expect(config.lead).toEqual({ mode: "skippable", timing: "after", showOptIn: false, optInWording: expect.stringMatching(/^Email me offers/) });
     vi.stubEnv("TRYORA_ASSISTANT_TRANSPORT", "sse");
     expect((await assistantStorefrontConfig(SHOP, { pageType: "product" })).transport).toBe("sse");
   });
@@ -175,7 +178,10 @@ describe("input validation", () => {
     expect(() => parseToolArguments("get_product_details", JSON.stringify({ productRefs: ["gid://shopify/Product/1"] }))).toThrow();
     expect(() => parseToolArguments("get_product_details", JSON.stringify({ productRefs: ["1", "2", "3", "4"] }))).toThrow();
     expect(() => parseToolArguments("recommend_products", JSON.stringify({ items: [{ productRef: "gid://x", variantRef: null, reason: "" }] }))).toThrow();
-    expect(() => parseToolArguments("request_visualisation", JSON.stringify({ productRef: "1", variantRef: null }))).toThrow();
+    // A single-variant product is previewed with variantRef null; malformed refs are still refused.
+    expect(parseToolArguments("request_visualisation", JSON.stringify({ productRef: "1", variantRef: null }))).toEqual({ productRef: "1", variantRef: null });
+    expect(() => parseToolArguments("request_visualisation", JSON.stringify({ productRef: "1", variantRef: "gid://x" }))).toThrow();
+    expect(() => parseToolArguments("select_product", JSON.stringify({ productRef: "x", variantRef: null }))).toThrow();
     expect(() => parseToolArguments("update_product", "{}")).toThrow();
     expect(parseToolArguments("search_products", JSON.stringify({ query: "bed", colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: 500, availableOnly: true, limit: 50 })))
       .toMatchObject({ query: "bed", maxPrice: 500, limit: 10 });
@@ -220,7 +226,7 @@ describe("store-wide grounding", () => {
       url: `/products/${oslo.handle}?variant=${ref(gray.id)}`,
     })]);
     const [shown] = toolOutputs(requests, "call-recommend_products");
-    expect(shown.shown).toEqual([expect.objectContaining({ option: 1, title: "Oslo Couch", availableToBuy: true, aiRoomPreview: "not_configured" })]);
+    expect(shown.shown).toEqual([expect.objectContaining({ option: 1, title: "Oslo Couch", availableToBuy: true, aiRoomPreview: "AI room preview isn't offered for this product." })]);
   });
 
   it("uses a transient vision request, records room notes, and validates the exact preview reference", async () => {
@@ -324,7 +330,7 @@ describe("visualisation in the conversation", () => {
     expect(soldOut.reply.visualise).toBeNull();
     expect(soldOut.output).toMatchObject({ offered: false, reason: expect.stringMatching(/sold out/) });
     const unconfigured = await run(ref(oslo.id), ref(gray.id));
-    expect(unconfigured.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not available/) });
+    expect(unconfigured.output).toMatchObject({ offered: false, reason: "AI room preview isn't offered for this product." });
     vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
     state.providerRows = [{ shopId: SHOP, productId: aria.id, providerId: "cloudlift", revision: "r1", active: true, mapping: null }];
     const cloudlift = await run(ref(aria.id), ref(variantOf(aria, { Colour: "Cream", Size: "King" }).id));

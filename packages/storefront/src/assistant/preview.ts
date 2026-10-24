@@ -48,6 +48,8 @@ export async function generatePreview(input: {
   visitor: string;
   signal: AbortSignal;
   onStage: (stage: string) => void;
+  /** "1" once the merchant's email step is satisfied (or not required yet), exactly as the popup sends it. */
+  leadDone: "0" | "1";
   pollMs?: number;
 }): Promise<{ url: string; acknowledge: () => void }> {
   const { item } = input;
@@ -64,7 +66,7 @@ export async function generatePreview(input: {
       sourceVariant: "",
       visitor: input.visitor,
       key: crypto.randomUUID(),
-      leadDone: "0",
+      leadDone: input.leadDone,
     }, input.signal));
     jobId = String(started.jobId);
   } catch (error: any) {
