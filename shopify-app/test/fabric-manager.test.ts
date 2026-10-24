@@ -154,6 +154,15 @@ describe("authenticated two-mode admin", () => {
     expect(view.selected).toMatchObject({ title: "Synthetic bed", mode: "native", explicitlyOff: true });
     expect(state.writes).toEqual([]);
   });
+  it("keeps native management available when the reviewed provider table is absent", async () => {
+    vi.mocked(prisma.customizationConfig.findMany).mockRejectedValueOnce(
+      Object.assign(new Error("Missing provider table"), { code: "P2021" }));
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false);
+    expect(view.manualSetupReason).toContain("customization database table");
+    expect(view.selected?.mode).toBe("native");
+    expect(state.writes).toEqual([]);
+  });
   it("saves product-scoped Manual then Native mode while preserving explicit OFF and the manual draft", async () => {
     const f = snapshot();
     await saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft: f.draft });
