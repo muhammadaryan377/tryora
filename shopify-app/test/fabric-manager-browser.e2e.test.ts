@@ -68,7 +68,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
     const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{FabricColourManager}from'./app/components/fabric-colour-manager';
       const data=window.managerData;function App(){const[error,setError]=useState('');return <FabricColourManager data={data} error={error}
       save={async(mode,draft)=>{const r=await fetch(location.href,{method:'POST',body:new URLSearchParams({intent:'save',mode,revision:data.selected.revision,draft:JSON.stringify(draft)})});if(r.redirected){location.href=r.url;return}setError((await r.json()).error||'Save failed')}}
-      upload={async(file)=>{const form=new FormData();form.set('intent','upload');form.set('revision',data.selected.revision);form.set('image',file);const r=await fetch(location.href,{method:'POST',body:form});const json=await r.json();if(json.error)throw Error(json.error);return json.media}}/>}createRoot(document.getElementById('root')).render(<App/>);`;
+      upload={async(file)=>{const form=new FormData();form.set('intent','upload');form.set('mode','manual');form.set('revision',data.selected.revision);form.set('image',file);const r=await fetch(location.href,{method:'POST',body:form});const json=await r.json();if(json.error)throw Error(json.error);return json.media}}/>}createRoot(document.getElementById('root')).render(<App/>);`;
     bundle = (await build({ stdin: { contents: entry, loader: "tsx", resolveDir: join(__dirname, "..") }, bundle: true, write: false, format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' } })).outputFiles[0]!.text;
     server = createServer(async (req, res) => {
       try {
