@@ -4,6 +4,7 @@ import { cloudliftAdapter } from "./adapters/cloudlift.server";
 import { manualMappingAdapter } from "./adapters/manual-mapping.server";
 import type { ProviderAdapter, ProviderContext } from "./adapters/types.server";
 import { STORE_DEFAULT } from "./provider-config.server";
+import { PreviewIneligible, rejectionIssue } from "./preview-issues";
 
 const unsupported: ProviderAdapter = {
   providerId: "unsupported", version: "0", label: "Other providers — not yet supported",
@@ -23,7 +24,9 @@ export async function resolveConfiguredPreview(context: ProviderContext, option:
   let result;
   try { result = await adapter.validate(context, { scope: { shopId: context.config.shopId, productId: context.config.productId },
     revision: revision ?? "", combinationId: option, nativeVariantId: variantId ?? "", selectedOptions: {} }); }
-  catch (error) { if (error instanceof TryoraError) throw error; throw new TryoraError("BAD_REQUEST"); }
-  if (result.status !== "approved" || !result.product) throw new TryoraError("BAD_REQUEST");
+  catch (error) { if (error instanceof TryoraError) throw error; throw new PreviewIneligible("BAD_REQUEST", "mapping_out_of_sync"); }
+  if (result.status !== "approved" || !result.product) {
+    throw new PreviewIneligible("BAD_REQUEST", result.issue ?? (!adapter.capabilities.authorization ? "provider_not_supported" : rejectionIssue(result.status === "rejected" ? result.reason : undefined)));
+  }
   return result.product;
 }

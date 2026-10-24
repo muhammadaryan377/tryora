@@ -12,6 +12,10 @@ import { TryoraError } from "../core/index";
 import type { AdminGraphql } from "../preview-product.server";
 import { storefrontConfig } from "../storefront.server";
 import { getProductDetails, isRef, realOptions, ShopifyBudget, type CatalogueProduct } from "./catalogue.server";
+import prisma from "../db.server";
+import { ensureAutoProductConfig } from "../auto-products.server";
+import { exactPreviewStatus, previewReason, type PreviewStatus } from "../room-assistant.server";
+import { logAssistant } from "./log.server";
 
 export type AttributeKind = "fabric" | "colour" | "size" | "headboard" | "storage" | "other";
 export interface OptionValue { value: string; colour: string | null; image: string | null; samples?: Record<string, { colour: string | null; image: string | null }> }
@@ -234,4 +238,46 @@ function managedOptions(product: CatalogueProduct, preview: any, sourceVariantId
   return { productRef: product.ref, productId: product.id, title: product.title, url: product.url, image: product.image, imageAlt: product.imageAlt,
     currencyCode: product.currencyCode, attributes, variants, singleVariant: product.variants.length === 1 && product.variantsComplete,
     preview: { offered: preview.available && variants.some((v) => !!v.previewOption), reason: preview.available ? "This exact configuration needs an approved full-product reference." : REASONS.paused }, lead: preview.lead };
+}
+
+export interface VariantPreviewCheck {
+  variantId: string;
+  previewAvailable: boolean;
+  previewStatus: PreviewStatus;
+  previewReason: string | null;
+  optionValue: string | null;
+  referenceImage: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string };
+}
+
+/**
+ * The in-card selector's eligibility model shows what the popup would list; this confirms one exact selection with the
+ * same strict validation startPreview runs (exact variant, stock, fixed options, approved reference, reviewed mapping),
+ * so the card only offers a preview that can actually be generated, and otherwise says precisely why not.
+ */
+export async function checkVariantPreview(admin: AdminGraphql, shopId: string, productId: string, variantId: string, sourceVariantId?: string): Promise<VariantPreviewCheck> {
+  const ref = productId.split("/").pop() ?? "";
+  if (!/^gid:\/\/shopify\/Product\/\d{1,20}$/.test(productId) || !isRef(ref) || !/^gid:\/\/shopify\/ProductVariant\/\d{1,20}$/.test(variantId) ||
+    (sourceVariantId !== undefined && !/^gid:\/\/shopify\/ProductVariant\/\d{1,20}$/.test(sourceVariantId))) throw new TryoraError("BAD_REQUEST");
+  const product = (await getProductDetails(admin, [ref], new ShopifyBudget(6))).get(ref);
+  if (!product) throw new TryoraError("NOT_FOUND");
+  const variant = product.variants.find((v) => v.id === variantId);
+  if (!variant || (sourceVariantId && !product.variants.some((v) => v.id === sourceVariantId))) throw new TryoraError("BAD_REQUEST");
+  const ensured = await ensureAutoProductConfig(admin, shopId, product.id).catch(() => null);
+  const config = ensured?.enabled && ensured.readiness === "ready" ? await prisma.productPreviewConfig.findFirst({
+    where: { shopId, productId: product.id, enabled: true, readiness: "ready" }, include: { choices: true },
+  }) ?? undefined : undefined;
+  // The card's source configuration is the shopper's explicit selection, so it is never the page-popup handoff.
+  const check = await exactPreviewStatus({ admin, shopId, selectedVariantRef: sourceVariantId ? sourceVariantId.split("/").pop()! : null, currentProductId: null },
+    product, variant, config);
+  if (check.issue) logAssistant("preview_unavailable", { shop: shopId, product: product.ref, variant: variant.ref, reason: check.issue }, "info");
+  return {
+    variantId: variant.id,
+    previewAvailable: check.status === "available",
+    previewStatus: check.status,
+    previewReason: previewReason(check.status, variant.available, check.issue),
+    optionValue: check.optionValue,
+    referenceImage: check.reference ?? null,
+    ...(check.previewContext ? { previewContext: check.previewContext } : {}),
+  };
 }

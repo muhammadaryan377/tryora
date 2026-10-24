@@ -14,14 +14,15 @@ export type AssistantLogEvent =
   | "rate_limited"
   | "catalogue_loaded"
   | "recommendation_dropped"
-  | "auto_config_failure";
+  | "auto_config_failure"
+  | "preview_unavailable";
 
 type Field = string | number | boolean | null | undefined;
 
 const ALLOWED = new Set([
   "shop", "requestId", "code", "stage", "status", "durationMs", "round", "tool", "rounds", "toolCalls",
   "products", "pages", "complete", "cache", "inputTokens", "outputTokens", "recommendations", "reason",
-  "errorClass", "model", "photo", "shopifyCalls",
+  "errorClass", "model", "photo", "shopifyCalls", "product", "variant",
 ]);
 
 export type AssistantLogFields = Partial<Record<string, Field>>;

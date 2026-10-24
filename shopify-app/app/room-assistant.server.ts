@@ -13,6 +13,7 @@ import { loadProviderSetting } from "./customization/provider-config.server";
 import { ensureAutoProductConfig } from "./auto-products.server";
 import { tryora } from "./tryora.server";
 import { providerAdapter, resolveConfiguredPreview } from "./customization/registry.server";
+import { PREVIEW_ISSUES, previewIssueOf, type PreviewIssue } from "./customization/preview-issues";
 import {
   adminQuery,
   countCatalogue,
@@ -1099,48 +1100,78 @@ function nativeVariants(product: CatalogueProduct): NativeVariant[] {
   }));
 }
 
+/** What the exact-variant check needs from a request; the per-variant /assistant/preview-check route builds the same. */
+export interface PreviewCheckContext {
+  admin: AdminGraphql;
+  shopId: string;
+  /** The shopper's verified selection for this product (source size/storage for reviewed mappings), if any. */
+  selectedVariantRef: string | null;
+  /** The product page the shopper is on; it keeps the live-source popup handoff without a verified selection. */
+  currentProductId: string | null;
+}
+
+export interface PreviewCheck {
+  status: PreviewStatus;
+  optionValue: string | null;
+  issue?: PreviewIssue;
+  reference?: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string };
+}
+
 /**
  * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
- * same provider adapter chain that startPreview uses. Anything less is reported as not available.
+ * same provider adapter chain that startPreview uses. Anything less is reported as not available, with the reason.
  */
-async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null; reference?: string | null; previewContext?: { mappingRevision: string; sourceVariantId: string } }> {
+export async function exactPreviewStatus(ctx: PreviewCheckContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<PreviewCheck> {
   if (!config || config.shopId !== ctx.shopId || config.productId !== product.id) return { status: "not_configured", optionValue: null };
   if (!variant) return { status: "choose_options", optionValue: null };
-  if (!variant.available) return { status: "unavailable", optionValue: null };
+  const refuse = (issue: PreviewIssue): PreviewCheck => ({ status: "unavailable", optionValue: null, issue });
+  if (!variant.available) return refuse("sold_out");
   try {
     const setting = await loadProviderSetting(ctx.shopId, product.id);
     const adapter = providerAdapter(setting.providerId);
-    if (!adapter.capabilities.authorization || (setting.providerId !== "shopify_native" && !setting.active)) return { status: "unavailable", optionValue: null };
+    if (!adapter.capabilities.authorization) return refuse("provider_not_supported");
+    if (setting.providerId !== "shopify_native" && !setting.active) return refuse("mapping_not_published");
     if (setting.providerId === "manual_mapping" && isFabricDocument(setting.mapping)) {
-      const mapping = parseManualMapping(setting.mapping, ctx.shopId, product.id);
+      let mapping;
+      try { mapping = parseManualMapping(setting.mapping, ctx.shopId, product.id); }
+      catch { return refuse((setting.mapping as { published?: unknown }).published ? "mapping_out_of_sync" : "mapping_not_published"); }
       const entry = mapping.entries.find((e) => e.variantId === variant.id);
-      if (!entry) return { status: "unavailable", optionValue: null };
-      const selected = ctx.selection?.productRef === product.ref ? ctx.selection.variantRef : null;
+      if (!entry) return refuse("variant_not_mapped");
+      const selected = ctx.selectedVariantRef;
       // A current page without a verified shopper selection must use the existing live-source popup.
-      if (!selected && ctx.currentProduct?.id === product.id) return { status: "product_page", optionValue: null };
+      if (!selected && ctx.currentProductId === product.id) return { status: "product_page", optionValue: null };
       const sourceVariantId = selected ? `gid://shopify/ProductVariant/${selected}` : variant.id;
       const optionValue = combinationKey(entry);
       const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting, sourceVariantId }, optionValue, variant.id, setting.revision);
-      if (validated.variantId !== variant.id) return { status: "unavailable", optionValue: null };
+      if (validated.variantId !== variant.id) return refuse("not_approved");
       return { status: "available", optionValue, reference: imageUrl(validated.urls[0]), previewContext: { mappingRevision: setting.revision, sourceVariantId } };
     }
     // Existing legacy/Cloudlift source-selection behavior remains unchanged.
     if (setting.providerId !== "shopify_native") return { status: "product_page", optionValue: null };
     const variants = nativeVariants(product);
     const model = nativeSelections(product.options.map((option) => ({ name: option.name, optionValues: option.values.map((name) => ({ name })) })), config.visualOptionName, variants);
-    if (model.issue || (config.autoConfigured && model.ambiguous)) return { status: "unavailable", optionValue: null };
+    if (model.issue || (config.autoConfigured && model.ambiguous)) return refuse(model.issue === "stale_mapping" ? "option_mapping_stale" : "option_mapping_ambiguous");
     const native = variants.find((entry) => entry.id === variant.id)!;
     const selection = model.selections.find((entry) => matchesOptions(native, entry.options));
-    if (model.selections.length && !selection) return { status: "unavailable", optionValue: null };
+    if (model.selections.length && !selection) return refuse("option_not_mapped");
     const optionValue = selection?.value ?? SINGLE;
     // The same validation startPreview runs: exact variant, stock, frozen context and approved reference images.
     const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting }, optionValue, variant.id);
-    if (validated.variantId !== variant.id) return { status: "unavailable", optionValue: null };
+    if (validated.variantId !== variant.id) return refuse("not_approved");
     return { status: "available", optionValue, reference: imageUrl(validated.urls[0]) };
-  } catch {
+  } catch (error) {
     // A stale or incomplete reference is reported as unavailable instead of being substituted.
-    return { status: "unavailable", optionValue: null };
+    return refuse(previewIssueOf(error));
   }
+}
+
+function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined) {
+  return exactPreviewStatus({
+    admin: ctx.admin, shopId: ctx.shopId,
+    selectedVariantRef: ctx.selection?.productRef === product.ref ? ctx.selection.variantRef : null,
+    currentProductId: ctx.currentProduct?.id ?? null,
+  }, product, variant, config);
 }
 
 // ---------- recommendations ----------
@@ -1148,13 +1179,13 @@ async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, 
 interface ModelRecommendation { productRef: string; variantRef: string | null; reason: string }
 
 /** One consistent explanation for a preview that can't be offered, shared by the card and the model. */
-export function previewReason(status: PreviewStatus, available: boolean): string | null {
+export function previewReason(status: PreviewStatus, available: boolean, issue?: PreviewIssue): string | null {
   switch (status) {
     case "available": return null;
     case "not_configured": return "AI room preview isn't offered for this product.";
     case "choose_options": return "Choose a fabric or colour to check AI room preview.";
     case "product_page": return "This configuration is not verified for an in-chat preview. Choose another verified appearance or product.";
-    case "unavailable": return available ? "This exact option isn't approved for AI room preview." : "This option is sold out, so it can't be previewed.";
+    case "unavailable": return PREVIEW_ISSUES[available ? issue ?? "not_approved" : "sold_out"].shopper;
   }
 }
 
@@ -1221,6 +1252,8 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       return null;
     }
     const preview = await previewStatusFor(ctx, product, variant, configFor(product.id));
+    // The merchant action for a refusal is logged with its issue; the shopper sees only the shopper text.
+    if (preview.issue) logAssistant("preview_unavailable", { shop: ctx.shopId, product: product.ref, variant: variant?.ref, reason: preview.issue }, "info");
     return {
       id: `${product.ref}:${variant?.ref ?? ""}`,
       productRef: product.ref,
@@ -1237,7 +1270,7 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       purchaseAvailable: variant ? variant.available : product.variants.some((entry) => entry.available),
       previewAvailable: preview.status === "available",
       previewStatus: preview.status,
-      previewReason: previewReason(preview.status, variant ? variant.available : true),
+      previewReason: previewReason(preview.status, variant ? variant.available : true, preview.issue),
       optionValue: preview.optionValue,
       ...(preview.previewContext ? { previewContext: preview.previewContext } : {}),
       variantCount: product.variantCount,

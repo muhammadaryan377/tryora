@@ -3,6 +3,7 @@ import type { AdminGraphql, resolvePreviewProduct } from "../../preview-product.
 import type { CustomizationAdapter, CustomizationValidation } from "../../core/customization-adapter";
 import type { ProviderSetting } from "../provider-config.server";
 import { STORE_DEFAULT } from "../provider-catalog";
+import type { PreviewIssue } from "../preview-issues";
 
 export interface ProviderContext {
   admin: AdminGraphql;
@@ -11,7 +12,8 @@ export interface ProviderContext {
   sourceVariantId?: string;
 }
 export type PreviewProduct = Awaited<ReturnType<typeof resolvePreviewProduct>>;
-export type ProviderValidation = CustomizationValidation & { product?: PreviewProduct };
+/** issue explains a rejection precisely; it never changes whether the request is approved. */
+export type ProviderValidation = CustomizationValidation & { product?: PreviewProduct; issue?: PreviewIssue };
 export interface ProviderAdapter extends CustomizationAdapter<ProviderContext> {
   readonly version: string;
   readonly label: string;
