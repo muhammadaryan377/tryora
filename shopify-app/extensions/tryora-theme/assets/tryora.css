@@ -525,3 +525,24 @@ html.tryora-assistant-locked { overflow: hidden; }
 /* Merchant-provided fabric samples; no generated texture fallbacks. */
 .tryora__gchip:has(.tryora__fabric-image) { display: inline-flex; align-items: center; gap: 8px; border-radius: 12px; }
 .tryora__fabric-image { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; flex: none; }
+
+/* Room Assistant recommendation cards: shared drawer and fullscreen layout. */
+.tryora-assistant__card { grid-template-columns:100px minmax(0,1fr);gap:12px;padding:14px;border-radius:18px;align-items:start; }
+.tryora-assistant__card .tryora-assistant__thumb { width:100px;height:110px;border-radius:14px; }
+.tryora-assistant__card-body { gap:6px; }
+.tryora-assistant__card h4 { font-size:16px;line-height:1.35; }
+.tryora-assistant__card .tryora-assistant__eyebrow { font-size:10px;letter-spacing:.025em; }
+.tryora-assistant__card-reason { line-height:1.5!important; }
+.tryora-assistant__card-choices,.tryora-assistant__card > .tryora-assistant__card-actions,.tryora-assistant__card > .tryora-assistant__image-note { grid-column:1/-1;min-width:0; }
+.tryora-assistant__card-choices { display:flex;flex-wrap:wrap;gap:8px; }
+.tryora-assistant__card-choices:empty { display:none; }
+.tryora-assistant__card-choices > button { border:0;background:transparent;text-decoration:underline;padding:4px;font-size:12px; }
+.tryora-assistant__card-choices .tryora-assistant__options { flex-basis:100%; }
+.tryora-assistant__card > .tryora-assistant__card-actions { display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0; }
+.tryora-assistant__card > .tryora-assistant__card-actions > * { display:flex;align-items:center;justify-content:center;text-align:center;min-height:44px;border-radius:999px;padding:10px 12px;line-height:1.3; }
+.tryora-assistant__composer { flex:none; padding-bottom:max(12px,env(safe-area-inset-bottom)); }
+.tryora-assistant__room-chip { padding:5px 8px;font-size:12px; }
+.tryora-assistant__room-chip > span { overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
+.tryora-assistant[data-view=fullscreen] .tryora-assistant__card { grid-template-columns:140px minmax(0,1fr);padding:16px;gap:14px; }
+.tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb { width:140px;height:145px; }
+@media(max-width:480px){.tryora-assistant__card,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card{grid-template-columns:84px minmax(0,1fr);padding:12px;gap:10px}.tryora-assistant__card .tryora-assistant__thumb,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb{width:84px;height:100px}.tryora-assistant__card > .tryora-assistant__card-actions > *{font-size:12px;padding:10px 8px}}
