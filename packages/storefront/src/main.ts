@@ -905,8 +905,10 @@ export class Tryora {
     // A Shopify colour chip is not a fabric texture. Without a real sample image, display
     // a readable fabric label instead of a large, misleading solid-colour tile.
     const fabricOnly = !this.cfg.fabricOptionName && /fabric/i.test(this.cfg.selectorLabel ?? this.cfg.optionName ?? "");
-    const text = !x.image && (fabricOnly || !x.colour);
-    return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-unavailable ' : '') + (text ? 'is-text' : '') +
+    const text = !x.image && fabricOnly;
+    // A colour with no sample image or Shopify colour keeps the same round size: an empty sample, named below.
+    const nosample = !x.image && !x.colour && !fabricOnly;
+    return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-unavailable ' : '') + (text ? 'is-text' : nosample ? 'is-nosample' : '') +
       '" data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
       ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', preview not supported for selected options' : '') + '">' +
       '<span class="tryora__chip"' + (!text && !x.image && x.colour ? ' style="background:' + esc(x.colour) + '"' : '') + '>' +

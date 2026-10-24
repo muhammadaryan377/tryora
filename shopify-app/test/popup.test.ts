@@ -138,7 +138,9 @@ describe("dependent fabric and colour popup", () => {
     expect(html).toContain('src="https://cdn.shopify.com/cream-swatch.jpg"');
     expect(html).toContain('alt="Cream"');
     expect(html).toContain('aria-label="Velvet / Grey"');
-    expect(html).toContain('is-text');
+    // A colour without a sample keeps the round sample size with its name below; no colour is invented.
+    expect(html).toMatch(/class="tryora__s [^"]*is-nosample[^"]*"[^>]*aria-label="Velvet \/ Grey"/);
+    expect(html).toContain('<span class="tryora__chip"></span><span class="tryora__sname">Grey</span>');
     expect(popup.visibleSwatches().map((s: any) => s.group)).toEqual(["Velvet", "Velvet"]);
   });
 

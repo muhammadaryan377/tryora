@@ -66,7 +66,11 @@ describe.skipIf(process.env.TRYORA_E2E !== "1")("premium popup in Chrome (synthe
   it.each([1280, 390])("shows only real colours with circular samples at %ipx", async (width) => {
     const { page, context } = await open(base, width);
     try {
-      expect(await page.locator(".tryora__sname").allTextContents()).toEqual(["Cream"]);
+      expect(await page.locator(".tryora__sname").allTextContents()).toEqual(["Cream", "Grey"]);
+      // Grey has no sample: same round size as Cream, an empty sample, and no invented colour.
+      const sizes = await page.locator(".tryora__chip").evaluateAll((chips: Element[]) => chips.map((chip) => { const r = chip.getBoundingClientRect(); return [Math.round(r.width), Math.round(r.height)]; }));
+      expect(new Set(sizes.map(String)).size).toBe(1);
+      expect(await page.locator(".tryora__s.is-nosample .tryora__chip").getAttribute("style")).toBeNull();
       expect(await page.locator(".tryora__fabric-image").count()).toBe(2);
       if (process.env.TRYORA_E2E_SCREENSHOTS) {
         mkdirSync(process.env.TRYORA_E2E_SCREENSHOTS, { recursive: true });

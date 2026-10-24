@@ -128,7 +128,10 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await page.selectOption('[aria-label="Shopify product"]', productId);
 
       await page.locator('summary:has-text("Edit sample image")').first().waitFor();
-       expect(await page.locator(".fabric-media-sample .fabric-existing-images .fabric-media-choices img").count()).toBeLessThan(state.media.length);
+      // Each sample picker lists only fabric/colour samples, never the full-product photos (101-104).
+      const picker = page.locator(".fabric-media-sample").first().locator(".fabric-existing-images .fabric-media-choices img");
+      const sources = await picker.evaluateAll((images: HTMLImageElement[]) => images.map((image) => image.getAttribute("src")));
+      expect(sources.sort()).toEqual([201, 202, 203].map((n) => `https://cdn.shopify.com/${n}.jpg`));
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await page.locator('.fabric-manager').textContent()).toContain("Velvet");
       expect(await page.locator('.fabric-list-item[aria-pressed=true]').textContent()).toContain("Velvet");
