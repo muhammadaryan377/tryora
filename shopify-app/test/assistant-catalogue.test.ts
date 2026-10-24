@@ -50,6 +50,10 @@ const store = () => snapshotFrom("demo.myshopify.com", parsed([
 const titles = (matches: { product: CatalogueProduct }[]) => matches.map((match) => match.product.title);
 
 describe("shopper vocabulary", () => {
+  it("treats object-prototype names as ordinary merchant/shopper text", () => {
+    expect(tokens("constructor")).toEqual(["constructor"]);
+    expect(expandQuery("constructor")).toEqual([{ term: "constructor", weight: 1 }]);
+  });
   it("normalises synonyms, spelling variants and compound sizes", () => {
     expect(tokens("Grey couch")).toEqual(tokens("gray sofa"));
     expect(tokens("Bouclé settee")).toEqual(tokens("boucle sofa"));

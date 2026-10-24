@@ -124,7 +124,7 @@ export function tokens(value: string, keepStopWords = false, components = true):
   if (cached) return cached;
   const text = normaliseText(value).replace(PHRASES, (_match, lead: string, phrase: string) => `${lead}${PHRASE_MAP.get(phrase)}`);
   const result = text.split(" ").filter((token) => token && (keepStopWords || !STOP.has(token))).map(stem)
-    .flatMap((token) => components ? [token, ...(COMPONENTS[token] ?? [])] : [token]);
+    .flatMap((token) => components ? [token, ...(Object.hasOwn(COMPONENTS, token) ? COMPONENTS[token]! : [])] : [token]);
   if (cacheable) {
     if (tokenCache.size >= TOKEN_CACHE_LIMIT) tokenCache.clear();
     tokenCache.set(key, result);
@@ -139,7 +139,7 @@ export function expandQuery(value: string): WeightedTerm[] {
   const seen = new Map<string, number>();
   for (const token of tokens(value)) {
     seen.set(token, Math.max(seen.get(token) ?? 0, 1));
-    for (const related of RELATED[token] ?? []) {
+    for (const related of Object.hasOwn(RELATED, token) ? RELATED[token]! : []) {
       for (const relatedToken of tokens(related)) {
         if (!seen.has(relatedToken)) seen.set(relatedToken, 0.5);
       }
