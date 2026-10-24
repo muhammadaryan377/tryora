@@ -16,6 +16,13 @@ export interface FabricManagerData {
     syncedAt: string; saved: boolean;
   };
 }
+/** Render the same timestamp on the Railway server and in shoppers' browser timezones.
+ * Localized dates during SSR cause React hydration errors 418/425. */
+export function formatSyncedAtUtc(iso: string): string {
+  const timestamp = new Date(iso);
+  if (Number.isNaN(timestamp.getTime())) return "Time unavailable";
+  return timestamp.toISOString().slice(0, 19).replace("T", " ") + " UTC";
+}
 const uid = () => crypto.randomUUID();
 const control = { border: "1px solid #c8c8c8", borderRadius: 8, padding: "10px 12px", background: "white", width: "100%", boxSizing: "border-box" as const, font: "inherit" };
 const field = { display: "grid", gap: 6 };
@@ -133,7 +140,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
           <p>{mode === "native" ? "Automatically use fabrics, colours and variants configured in your Shopify product." : "Add your own fabrics, colours and swatch images for products using custom options."}</p>
         </s-section>
         {mode === "native" ? <s-section heading="Native Shopify options">
-          <p>Last synced: <time dateTime={p.syncedAt}>{new Date(p.syncedAt).toLocaleString()}</time>. Live Shopify availability.</p>
+          <p>Last synced: <time dateTime={p.syncedAt}>{formatSyncedAtUtc(p.syncedAt)}</time>. Live Shopify availability.</p>
           <s-button href={link}>Refresh from Shopify</s-button>
           <p>Read-only product data. Preview settings and exact approved references still control generation.</p>
           {p.native.issue && <s-banner heading="Preview option mapping needs review" tone="warning"><p>{p.native.issue}. Review Product preview settings; no alternative option is selected automatically.</p></s-banner>}
