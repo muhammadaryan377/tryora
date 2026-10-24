@@ -95,7 +95,7 @@ function makeAssistant(extra: Record<string, unknown> = {}, overrides: Record<st
   launcher = buildAssistantLauncher(config, () => {});
   document.body.appendChild(launcher);
   return new RoomAssistant({ ...config, ...overrides } as any, {
-    productId: "1", openCurrentPreview: openPreview, launcher, currentVariantId: () => "11",
+    productId: "1", productNoun: "bed", openCurrentPreview: openPreview, launcher, currentVariantId: () => "11",
     preparePhoto: async (file: File) => photo(file.name), ...extra,
   }) as any;
 }
@@ -221,6 +221,9 @@ describe("welcome screen", () => {
     click("[data-action='ask']");
     expect(document.activeElement).toBe($("textarea"));
     click("[data-action='recommend']");
+    expect(pick).not.toHaveBeenCalled();
+    expect($(".tryora-assistant__photo-screen h3")!.textContent).toBe("Add a photo of your room");
+    click("[data-ta='upload']");
     expect(pick).toHaveBeenCalledTimes(1);
     await attachFile();
     expect(($("textarea") as HTMLTextAreaElement).value).toBe("Which furniture from this store would suit this room?");
@@ -232,8 +235,10 @@ describe("welcome screen", () => {
     assistant.open();
     const pick = vi.spyOn($('[data-ta-file="upload"]') as HTMLInputElement, "click");
     click("[data-action='visualise']");
+    expect(pick).not.toHaveBeenCalled();
+    expect($(".tryora-assistant__photo-screen h3")!.textContent).toBe("Add a photo to preview this bed");
+    click("[data-ta='upload']");
     expect(pick).toHaveBeenCalled();
-    expect($(".tryora-assistant__notice")!.textContent).toMatch(/room photo/);
     await attachFile();
     expect(($("textarea") as HTMLTextAreaElement).value).toBe("Show this product in my room.");
     proxy.script([{ type: "final", reply: { message: "Here is the card.", recommendations: [] } }, { type: "done" }]);
@@ -898,5 +903,108 @@ describe("conversation state: selection, constraints and shown products", () => 
     const oldCloud = $$(".tryora-assistant__card")[1]!;
     expect(oldCloud.querySelector("h4")!.textContent).toBe("Cloud Nine Upholstered kids");
     expect(oldCloud.querySelector("[data-ta='preview']")).not.toBeNull();
+  });
+});
+
+
+describe("approved photo entry points", () => {
+  it("keeps cards clean and adapts to the verified category", () => {
+    const assistant = makeAssistant(); assistant.open();
+    expect($("[data-action='visualise']")!.textContent).toContain("Preview this bed in my room");
+    expect($("[data-action='recommend']")!.textContent).toContain("Recommend a bed for my room");
+    expect($(".tryora-assistant__actions-grid [data-ta='upload']")).toBeNull();
+    expect($(".tryora-assistant__actions-grid [data-ta='camera']")).toBeNull();
+    expect($("[data-ta='attach'] svg")).not.toBeNull();
+  });
+  it("back and ask preserve conversation, room, selection and draft", async () => {
+    const assistant = makeAssistant(); assistant.open();
+    assistant.state.entries = [{ id: "old", kind: "notice", text: "Keep conversation", at: Date.now() }];
+    assistant.state.selected = { productRef: "9", variantRef: "91", source: "card" };
+    assistant.state.room = { colours: ["cream"], style: "calm" };
+    await type("Keep draft");
+    const before = JSON.stringify(assistant.state);
+    assistant.welcomeAction("recommend");
+    expect($$(".tryora-assistant__photo-actions button").map((b) => b.dataset.ta)).toEqual(["camera", "upload"]);
+    click("[data-ta='photo-back']");
+    expect($(".tryora-assistant__welcome")).not.toBeNull();
+    click("[data-action='ask']");
+    expect($(".tryora-assistant__scroll")!.textContent).toContain("Keep conversation");
+    expect(JSON.stringify(assistant.state)).toBe(before);
+    expect(($("textarea") as HTMLTextAreaElement).value).toBe("Keep draft");
+  });
+  it("explains desktop camera fallback without an unexpected file picker", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: false }));
+    const assistant = makeAssistant(); assistant.open(); click("[data-action='visualise']");
+    const upload = vi.spyOn($("[data-ta-file='upload']")!, "click");
+    const camera = vi.spyOn($("[data-ta-file='camera']")!, "click");
+    click("[data-ta='camera']");
+    expect($(".tryora-assistant__camera-notice")!.textContent).toContain("Choose Upload photo");
+    expect(camera).not.toHaveBeenCalled(); expect(upload).not.toHaveBeenCalled();
+    click("[data-ta='upload']"); expect(upload).toHaveBeenCalledOnce();
+  });
+  it("uses a native rear camera input and preserves cancelled capture state", () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true }));
+    const assistant = makeAssistant(); assistant.open(); click("[data-action='recommend']");
+    const input = $("[data-ta-file='camera']") as HTMLInputElement;
+    const picker = vi.spyOn(input, "click"); click("[data-ta='camera']");
+    expect(picker).toHaveBeenCalledOnce();
+    expect(input.getAttribute("capture")).toBe("environment");
+    expect(input.getAttribute("accept")).toBe("image/*");
+    Object.defineProperty(input, "files", { value: [] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(assistant.attachment).toBeNull();
+    expect($(".tryora-assistant__photo-screen")).not.toBeNull();
+    expect(proxy.forms).toHaveLength(0);
+  });
+  it("shows invalid-file errors on the photo screen and allows retry", async () => {
+    const { PhotoError } = await import("../../packages/storefront/src/assistant/photo");
+    const prepare = vi.fn().mockRejectedValueOnce(new PhotoError("Please choose a JPG room photo.")).mockResolvedValueOnce(photo());
+    const assistant = makeAssistant({ preparePhoto: prepare }); assistant.open(); click("[data-action='recommend']");
+    await attachFile("bad.pdf", "application/pdf");
+    expect($(".tryora-assistant__photo-screen [role='alert']")!.textContent).toContain("Please choose");
+    expect(assistant.attachment).toBeNull(); expect(proxy.forms).toHaveLength(0);
+    await attachFile();
+    expect($(".tryora-assistant__photo-screen")).toBeNull();
+    expect($("[data-ta-attachment] img")).not.toBeNull();
+  });
+  it("sends a composer photo with text without forcing preview generation", async () => {
+    const assistant = makeAssistant(); assistant.open();
+    click("[data-action='visualise']"); click("[data-ta='photo-back']"); click("[data-ta='attach']");
+    expect($(".tryora-assistant__menu--attach h3")!.textContent).toBe("Add a photo to your message");
+    expect(document.activeElement).toBe($("[data-ta='photo-sheet-close']"));
+    proxy.script([{ type: "final", reply: { message: "Cream could suit the room.", recommendations: [] } }, { type: "done" }]);
+    await attachFile();
+    expect(assistant.pendingIntent).toBeNull();
+    expect($(".tryora-assistant__menu--attach")!.hidden).toBe(true);
+    await type("This is my room. What colour would suit it?");
+    click("[data-ta='send']"); await settle(60);
+    expect(proxy.forms[0]!.get("photo")).toBeInstanceOf(Blob);
+    expect(String(proxy.forms[0]!.get("history"))).toContain("What colour would suit it?");
+    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+  it("discards a prepared image arriving after Forget room", async () => {
+    let resolve!: (value: ReturnType<typeof photo>) => void;
+    const assistant = makeAssistant({ preparePhoto: () => new Promise((done) => { resolve = done; }) });
+    assistant.open();
+    const pending = assistant.attach(new File(["x"], "room.jpg", { type: "image/jpeg" }));
+    assistant.forgetRoom(); resolve(photo("late.jpg")); await pending;
+    expect(assistant.attachment).toBeNull(); expect(assistant.roomPhoto).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:late.jpg");
+  });
+  it("Escape closes the photo sheet and restores camera-button focus", () => {
+    const assistant = makeAssistant(); assistant.open(); click("[data-ta='attach']");
+    $("[data-ta='photo-sheet-close']")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect($(".tryora-assistant__menu--attach")!.hidden).toBe(true);
+    expect(document.activeElement).toBe($("[data-ta='attach']")); expect(assistant.isOpen).toBe(true);
+  });
+  it("offers catalogue selection when there is no known current product", async () => {
+    const assistant = makeAssistant({ productId: undefined, productNoun: undefined, openCurrentPreview: undefined });
+    proxy.script([{ type: "final", reply: { message: "Here are store products.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    expect($("[data-action='visualise']")!.textContent).toContain("Choose a product to preview");
+    expect($("[data-action='recommend']")!.textContent).toContain("Recommend furniture");
+    click("[data-action='visualise']"); await settle(60);
+    expect(proxy.forms).toHaveLength(1); expect($(".tryora-assistant__photo-screen")).toBeNull();
+    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
   });
 });

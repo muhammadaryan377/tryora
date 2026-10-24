@@ -268,6 +268,68 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await new Promise((resolve) => server?.close(resolve));
   });
 
+
+  it.each([1280, 390])("approved photo screens and composer sheet at %ipx", async (width) => {
+    const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 900 }, isMobile: width === 390, hasTouch: width === 390 });
+    await routeImages(context);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error: Error) => errors.push(error.message));
+    try {
+      await page.goto(origin);
+      await page.locator(".tryora-assistant-launch").click();
+      await page.locator(".tryora-assistant__welcome").waitFor();
+      expect(await page.locator("[data-action='visualise']").textContent()).toContain("Preview this bed in my room");
+      expect(await page.locator(".tryora-assistant__actions-grid [data-ta='upload']").count()).toBe(0);
+      expect(await page.locator("[data-ta-scroll]").evaluate((element: HTMLElement) => element.scrollTop)).toBe(0);
+      await shot(page, `approved-${width}-welcome`);
+      await page.locator("[data-action='visualise']").click();
+      expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo to preview this bed");
+      expect(await page.locator(".tryora-assistant__composer").isVisible()).toBe(false);
+      expect(await page.locator(".tryora-assistant__photo-actions button").count()).toBe(2);
+      await shot(page, `approved-${width}-preview-photo`);
+      if (width === 390) {
+        const chooserPromise = page.waitForEvent("filechooser");
+        await page.locator("[data-ta='camera']").click();
+        const chooser = await chooserPromise;
+        expect(await chooser.element().getAttribute("capture")).toBe("environment");
+        // No photograph is provided: cancelling must not create an attachment.
+        expect(await page.locator("[data-ta-attachment] img").count()).toBe(0);
+      } else {
+        await page.locator("[data-ta='camera']").click();
+        expect(await page.locator(".tryora-assistant__camera-notice").textContent()).toContain("Choose Upload photo");
+      }
+      await page.locator("[data-ta='photo-back']").click();
+      await page.locator("[data-action='recommend']").click();
+      expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo of your room");
+      await shot(page, `approved-${width}-recommend-photo`);
+      const layout = await page.locator(".tryora-assistant__photo-frame").evaluate((element: HTMLElement) => ({
+        fits: element.scrollWidth <= element.clientWidth,
+        choices: [...element.querySelectorAll("button")].map((button) => { const b = button.getBoundingClientRect(); return { x: b.x, right: b.right, y: b.y, height: b.height }; }),
+      }));
+      expect(layout.fits).toBe(true);
+      expect(layout.choices[0].right).toBeLessThanOrEqual(layout.choices[1].x);
+      await page.locator("[data-ta='photo-back']").click();
+      await page.locator("[data-ta='attach']").click();
+      expect(await page.locator(".tryora-assistant__menu--attach h3").textContent()).toBe("Add a photo to your message");
+      await shot(page, `approved-${width}-composer-sheet`);
+      await page.locator("[data-ta='photo-sheet-close']").focus();
+      await page.keyboard.press("Escape");
+      expect(await page.locator(".tryora-assistant__menu--attach").isVisible()).toBe(false);
+      expect(await page.locator("[data-ta='attach']").evaluate((element: HTMLElement) => document.activeElement === element)).toBe(true);
+      const previewsBefore = seen.previewStarts.length;
+      await page.locator("[data-ta='attach']").click();
+      await page.locator("[data-ta-file='upload']").setInputFiles({ name: "room.jpg", mimeType: "image/jpeg", buffer: previewImage });
+      await page.locator("[data-ta-attachment] img").waitFor();
+      expect(await page.locator(".tryora-assistant__menu--attach").isVisible()).toBe(false);
+      expect(seen.previewStarts).toHaveLength(previewsBefore);
+      await page.fill("textarea", "This is my room. What colour would suit it?");
+      await shot(page, `approved-${width}-photo-draft`);
+      expect(await page.locator("form[action='/cart/add'] [name='id']").inputValue()).toBe(aria.variants[0]!.id.split("/").pop());
+      expect(errors).toEqual([]);
+    } finally { await context.close(); }
+  }, 60_000);
+
   it("desktop: launchers coexist, drawer streams grounded answers, modes and history work", async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
     const page = await context.newPage();
@@ -504,10 +566,10 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     const box = await panel.boundingBox();
     expect([Math.round(box.x), Math.round(box.y), Math.round(box.width), Math.round(box.height)]).toEqual([0, 0, 390, 844]);
     expect(await page.locator("[data-ta='view']").isVisible()).toBe(false);
-    expect(await page.locator("[data-ta-camera]").isVisible()).toBe(false); // inside the closed attach menu
+    expect(await page.locator(".tryora-assistant__menu--attach").isVisible()).toBe(false);
     await page.tap("[data-ta='attach']");
     expect(await page.locator("[data-ta-camera]").isVisible()).toBe(true);
-    await page.tap("[data-ta='attach']");
+    await page.tap("[data-ta='photo-sheet-close']");
     for (let i = 0; i < 3; i += 1) {
       await page.fill("textarea", `grey beds ${i}`);
       await page.tap("[data-ta='send']");

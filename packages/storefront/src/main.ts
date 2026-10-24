@@ -1000,7 +1000,7 @@ function mountPreviewLauncher(cfg: Config, open: () => void): HTMLElement | null
 }
 
 /** Product previews: only for products the server reports as enabled and ready. */
-async function bootPreview(productId: string | undefined): Promise<{ open: () => void; launcher: HTMLElement | null } | null> {
+async function bootPreview(productId: string | undefined): Promise<{ open: () => void; launcher: HTMLElement | null; itemNoun?: string } | null> {
   if (!productId) return null;
   let cfg: Config;
   try {
@@ -1028,7 +1028,7 @@ async function bootPreview(productId: string | undefined): Promise<{ open: () =>
     }
   });
   if (location.hash === "#tryora") open();
-  return { open, launcher: mountPreviewLauncher(cfg, open) };
+  return { open, launcher: mountPreviewLauncher(cfg, open), itemNoun: cfg.itemNoun };
 }
 
 /** Keeps the assistant launcher clear of a floating preview launcher on the same side of the screen. */
@@ -1042,7 +1042,7 @@ export function arrangeLaunchers(preview: HTMLElement | null, assistant: HTMLEle
 }
 
 /** Room assistant: independent of product previews, so it also works on home and collection pages. */
-async function bootAssistant(root: HTMLElement, productId: string | undefined, preview: Promise<{ open: () => void; launcher: HTMLElement | null } | null>) {
+async function bootAssistant(root: HTMLElement, productId: string | undefined, preview: Promise<{ open: () => void; launcher: HTMLElement | null; itemNoun?: string } | null>) {
   const config = await fetchAssistantConfig(root);
   if (!config?.enabled) return;
   // The preview config request runs in parallel; it only decides whether "Preview this product" is offered.
@@ -1053,6 +1053,7 @@ async function bootAssistant(root: HTMLElement, productId: string | undefined, p
     assistant ??= new RoomAssistant(config, {
       productId,
       openCurrentPreview: current?.open,
+      productNoun: current?.itemNoun,
       launcher,
       currentVariantId: () => document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value ?? null,
     });
