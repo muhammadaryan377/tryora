@@ -93,6 +93,16 @@ const model = {
       if (photo && !calls.includes("record_room_observations")) {
         return toolCall("record_room_observations", { colours: ["warm white", "light oak"], walls: "white", floor: "oak", style: "Scandinavian", lighting: "bright daylight", furniture: ["rug"], layout: "bed wall opposite the window", placement: ["centred on the back wall"], notes: "" });
       }
+      // QA scenario A: the real model answered "select one" with option 1, whatever card the shopper had chosen.
+      if (/^select one$/i.test(text.trim())) {
+        const results = outputs.map((item) => JSON.parse(item.output));
+        const mismatch = results.find((output) => output.error === "reference_mismatch");
+        if (!calls.includes("select_product")) return toolCall("select_product", { productRef: developer.match(/1\. productRef (\d+)/)![1], variantRef: null });
+        if (mismatch && calls.filter((name) => name === "select_product").length === 1) {
+          return toolCall("select_product", { productRef: mismatch.expectedProductRef, variantRef: null }, "call-select-corrected");
+        }
+        return finalAnswer("That one is selected.");
+      }
       if (/in my room/i.test(text) && !calls.includes("request_visualisation")) {
         if (/aria/i.test(text)) {
           const cream = aria.variants.find((variant) => variant.selectedOptions[0]!.value === "Cream")!;
@@ -415,6 +425,41 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await expect.poll(() => seen.acks).toBeGreaterThan(0);
     await settled(page);
     await shot(page, "11-preview-after-email");
+    expect(errors).toEqual([]);
+    await context.close();
+  }, 90_000);
+
+  it("desktop: the card the shopper selects stays selected; the model cannot swap in another product", async () => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
+    const page = await context.newPage();
+    const errors: string[] = [];
+    page.on("pageerror", (error: Error) => errors.push(error.message));
+    await page.goto(origin);
+    await page.locator(".tryora-assistant-launch").click();
+    await page.locator(".tryora-assistant__panel").waitFor();
+    await page.fill("textarea", "Suggest some beds");
+    await page.click("[data-ta='send']");
+    await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
+    const cards = page.locator(".tryora-assistant__card");
+    await expect.poll(() => cards.count()).toBe(2);
+    const second = cards.nth(1);
+    const chosen = (await second.locator("h4").textContent())!;
+    await second.locator("[data-ta='select']").click();
+    await expect.poll(() => second.getAttribute("class")).toContain("is-selected");
+    await page.fill("textarea", "select one");
+    await page.click("[data-ta='send']");
+    await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
+    // The latest reply shows the product the shopper chose, and only that product is marked selected.
+    const focus = page.locator(".tryora-assistant__message--assistant").last().locator(".tryora-assistant__card");
+    await expect.poll(() => focus.count()).toBe(1);
+    expect(await focus.locator("h4").textContent()).toBe(chosen);
+    expect(await focus.locator(".tryora-assistant__eyebrow").textContent()).toBe("Selected product");
+    expect(await focus.locator(".tryora-assistant__thumb img").getAttribute("src")).toMatch(/^https:\/\/cdn\.shopify\.com\//);
+    expect(await cards.first().getAttribute("class")).not.toContain("is-selected");
+    const stored = await page.evaluate((key: string) => JSON.parse(sessionStorage.getItem(key)!).selected, `tryora_assistant_v2:${SHOP}`);
+    expect(stored.source).toBe("card");
+    await settled(page);
+    await shot(page, "12-card-selection-kept");
     expect(errors).toEqual([]);
     await context.close();
   }, 90_000);

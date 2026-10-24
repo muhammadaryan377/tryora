@@ -141,6 +141,27 @@ Also:
 
 No database schema, API scope, billing or credit-rule changes. Query costs: the detail query with option swatches is 332; the product-page model used by the selector is the existing 761-cost query.
 
+## Conversation state (branch fix/assistant-conversation-state)
+
+QA on `test-sofa-site` (October 2026) found the assistant choosing products from prose instead of state. The causes and fixes:
+
+| Scenario | Root cause | Fix |
+|---|---|---|
+| A: Cloud Nine chosen on its card, then "select one", and the assistant picked Egerie | Cards had no select action. The "Selected" badge only mirrored the last product the AI touched, and the server passed the selection to the model as a hint | Cards have a **Select** button. Selections carry a `source` (`card`, `options` or `conversation`). The shopper's own choice is authoritative: "select one" confirms it, and `select_product` / `request_visualisation` refuse any other product with `reference_mismatch` |
+| B: "$250 budget", then kids beds recommended | The budget persisted only if the model called `update_shopper_context`. There was no notion of a children's product | The server parses the budget and audience from every message (`nextConstraints`) and returns them, and the browser stores them and sends them back. Search applies the budget as `maxPrice` and excludes children's products (title, type, tags or collections) unless the shopper said it is for a child. `recommend_products` drops misfits before the 3-card cap |
+| C: "show me tha" previewed Egerie at $319.99 | `request_visualisation` accepted any old conversation selection | An ambiguous reference resolves to the old selection only if that selection still fits the budget and audience. Otherwise the assistant asks one short question, and the tools refuse to guess |
+| D: "show me Cloud Nine" only said "preview unavailable" | There was no "show the product" path, and a refusal offered nothing else | `select_product` renders the product's real card (photo, price, View product) labelled *Selected product*. A refused preview still shows that card and offers up to two previewable alternatives that fit the constraints. The reason is said once |
+| Cards disagreeing about preview status | Old cards never updated. Auto-configuration failures were indistinguishable from "not eligible" | Older cards for the same exact variant take the newest verified status. Auto-config failures are now logged (`auto_config_failure`, `admin_query_failed`) |
+
+How a reference is resolved, implemented in `app/assistant/references.server.ts`, which is pure and deterministic. The latest message is checked in this order:
+1. A product named in the message. Truncated names work ("Cloud Nine U"), and a real name beats colour-only titles.
+2. An ordinal ("the second one", "option 3", "the last one"), resolved against the latest cards.
+3. "Select one" or "pick for me". Right after a card selection it confirms that card. Otherwise the assistant chooses among products that fit the constraints.
+4. "This", "that", "it" and similar. The shopper's card or option selection always wins. A conversation selection wins only while it still fits the latest budget and audience.
+5. Otherwise the message is ambiguous, and the assistant asks one short question.
+
+The resolution is written into the developer context as **Authoritative conversation state**, rebuilt from structured data every turn, and the tools enforce it. Explicitly naming an over-budget product is honoured, and the reply states the difference. A page refresh restores everything from `sessionStorage` (`selected` with `source`, and `constraints`). No database, schema, scope or billing changes.
+
 ## Previews inside the conversation
 
 A *See it in my room* or *Generate preview* button appears only when the server's strict check passed for that exact variant. That check is the same `loadProviderSetting` → adapter → `resolveConfiguredPreview` chain that `startPreview` uses. Cloudlift and manual-mapping products show "choose options on the product page" instead.
@@ -163,6 +184,7 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
 | `test/room-assistant.test.ts` | Settings compatibility and form fields, validation, grounding, fresh re-checks, visualisation eligibility (sold out, unconfigured, Cloudlift), preferences, streaming deltas and reset, price sanitisation, cancellation, multi-turn references, room continuity, bounded rounds, Shopify outage, rate limits |
 | `test/assistant-turns.test.ts` | Turn buffers (wake-up, isolation, supersede, bounds), request limits, incremental long-poll before completion, Stop, SSE, worker routing |
 | `test/room-assistant-ui.test.ts` (happy-dom) | Launcher, drawer modes, minimise and restore, keyboard, welcome actions, attachments, upload progress, streaming render, XSS safety, cards, in-chat preview and acknowledgement, lead hand-off, Stop and Retry, errors, New chat / Forget room / Clear, history across reloads, expiry and cross-store isolation, blocked storage |
+| `test/assistant-references.test.ts`, `test/assistant-conversation-state.test.ts` | Budget, audience and reference resolution. QA scenarios A–D with a scripted model that repeats the real model's mistakes: card authority, budget persistence and enforcement, children's products, ambiguity, named over-budget products, corrections, refresh, forged state, long-conversation staleness |
 | `test/storefront-boot.test.ts` | Preview and assistant launchers coexisting, merchant placement, independent failure |
 | `test/assistant-browser.e2e.test.ts` | Real Chrome: everything above end to end, plus desktop and mobile layout. Run with `TRYORA_E2E=1` (optionally `TRYORA_E2E_BROWSER`, `TRYORA_E2E_SCREENSHOTS`) |
 

@@ -239,7 +239,7 @@ describe("welcome screen", () => {
     proxy.script([{ type: "final", reply: { message: "Here is the card.", recommendations: [] } }, { type: "done" }]);
     click("[data-ta='send']");
     await settle(60);
-    expect(JSON.parse(String(proxy.forms[0]!.get("selected")))).toEqual({ productRef: "1", variantRef: "11" });
+    expect(JSON.parse(String(proxy.forms[0]!.get("selected")))).toEqual({ productRef: "1", variantRef: "11", source: "options" });
     assistant.newChat();
     click("[data-ta='product-preview']");
     expect(openPreview).toHaveBeenCalled();
@@ -678,7 +678,7 @@ describe("product images in cards", () => {
     expect(general!.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Product photo");
     expect(general!.textContent).toContain("Photo shows the product; your selected option may look different.");
     // Not verifiable for a preview: the action is shown disabled, with the reason.
-    const disabled = general!.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions button")!;
+    const disabled = general!.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions button[aria-describedby]")!;
     expect(disabled.disabled).toBe(true);
     expect(general!.querySelector(`#${CSS.escape(disabled.getAttribute("aria-describedby")!)}`)!.textContent).toBe("This exact option isn't approved for AI room preview.");
     expect(reference!.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Preview reference");
@@ -778,12 +778,12 @@ describe("in-card options and conversation memory", () => {
     expect(egerie.querySelector("a")!.getAttribute("href")).toBe("/products/egerie?variant=32");
     // The exact selection is remembered and sent with the next message.
     const stored = JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!);
-    expect(stored.selected).toEqual({ productRef: "3", variantRef: "32" });
+    expect(stored.selected).toEqual({ productRef: "3", variantRef: "32", source: "options" });
     proxy.script([{ type: "final", reply: { message: "Yes.", recommendations: [] } }, { type: "done" }]);
     await type("Is that one comfortable?");
     click("[data-ta='send']");
     await settle(60);
-    expect(JSON.parse(String(proxy.forms.at(-1)!.get("selected")))).toEqual({ productRef: "3", variantRef: "32" });
+    expect(JSON.parse(String(proxy.forms.at(-1)!.get("selected")))).toEqual({ productRef: "3", variantRef: "32", source: "options" });
     expect(JSON.parse(String(proxy.forms.at(-1)!.get("shown")))).toEqual([{ productRef: "3", variantRef: "32" }]);
   });
 
@@ -837,5 +837,66 @@ describe("in-card options and conversation memory", () => {
     const kept = JSON.parse(sessionStorage.getItem(sessionKey(SHOP)) ?? "{}");
     expect(kept.lead).toEqual({ done: false });
     expect(kept.previewsDelivered).toBe(0);
+  });
+});
+
+describe("conversation state: selection, constraints and shown products", () => {
+  const cloud = card({ id: "2:21", productRef: "2", variantRef: "21", title: "Cloud Nine Upholstered kids", url: "/products/cloud-nine?variant=21", image: "https://cdn.shopify.com/cloud.jpg",
+    price: "239.99", previewAvailable: false, previewStatus: "not_configured", previewReason: "AI room preview isn't offered for this product.", optionValue: null });
+  const egerie = card({ id: "3:31", productRef: "3", variantRef: "31", title: "Egerie Bed", price: "319.99" });
+  async function turn(events: any[], final: Record<string, unknown> = {}, text = "beds?") {
+    proxy.script(...(events.length ? [events] : []), [{ type: "final", reply: { message: "OK.", recommendations: [], ...final } }, { type: "done" }]);
+    await type(text);
+    click("[data-ta='send']");
+    await settle(80);
+  }
+
+  it("Scenario A: selecting a card makes it the authoritative selection sent with the next message", async () => {
+    makeAssistant().open();
+    await turn([{ type: "recommendations", items: [egerie, cloud] }]);
+    const cards = $$(".tryora-assistant__card");
+    expect(cards.map((element) => element.querySelector(".tryora-assistant__eyebrow")!.textContent)).toEqual(["Option 1", "Option 2"]);
+    cards[1]!.querySelector<HTMLButtonElement>("[data-ta='select']")!.click();
+    await settle(10);
+    const selected = $$(".tryora-assistant__card")[1]!;
+    expect(selected.classList.contains("is-selected")).toBe(true);
+    expect(selected.querySelector(".tryora-assistant__eyebrow")!.textContent).toBe("Option 2 · Selected");
+    expect(selected.querySelector("[data-ta='select']")).toBeNull();
+    await turn([], {}, "select one");
+    expect(JSON.parse(String(proxy.forms.at(-1)!.get("selected")))).toEqual({ productRef: "2", variantRef: "21", source: "card" });
+  });
+
+  it("Scenario D: 'show me Cloud Nine' renders that product's card with its photo even when it can't be previewed", async () => {
+    makeAssistant().open();
+    await turn([{ type: "selected", item: cloud, source: "conversation" }], { selection: { productRef: "2", variantRef: "21", source: "conversation" } }, "Show me Cloud Nine");
+    const shown = $$(".tryora-assistant__card");
+    expect(shown).toHaveLength(1);
+    expect(shown[0]!.querySelector(".tryora-assistant__eyebrow")!.textContent).toBe("Selected product");
+    expect(shown[0]!.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/cloud.jpg");
+    expect(shown[0]!.querySelector("a")!.getAttribute("href")).toBe("/products/cloud-nine?variant=21");
+    expect(shown[0]!.querySelector("[data-ta='preview']")).toBeNull();
+  });
+
+  it("persists the budget the server returns and sends it back on later turns, until a new chat", async () => {
+    const assistant = makeAssistant();
+    assistant.open();
+    const constraints = { budgetMax: 250, budgetMin: null, budgetCurrency: "$", forChildren: false };
+    await turn([{ type: "constraints", constraints }], { constraints }, "my budget 250$");
+    expect(JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!).constraints).toEqual(constraints);
+    await turn([], {}, "show me grey ones");
+    expect(JSON.parse(String(proxy.forms.at(-1)!.get("constraints")))).toEqual(constraints);
+    assistant.newChat();
+    await turn([], {}, "hello");
+    expect(proxy.forms.at(-1)!.get("constraints")).toBeNull();
+  });
+
+  it("older cards take the newest verified preview status, so two cards never disagree", async () => {
+    makeAssistant().open();
+    await turn([{ type: "recommendations", items: [egerie, cloud] }]);
+    const ready = { ...cloud, previewAvailable: true, previewStatus: "available", previewReason: null, optionValue: "__single__" };
+    await turn([{ type: "selected", item: ready, source: "conversation" }], {}, "Show me Cloud Nine");
+    const oldCloud = $$(".tryora-assistant__card")[1]!;
+    expect(oldCloud.querySelector("h4")!.textContent).toBe("Cloud Nine Upholstered kids");
+    expect(oldCloud.querySelector("[data-ta='preview']")).not.toBeNull();
   });
 });

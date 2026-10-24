@@ -60,6 +60,11 @@ export interface Preferences {
 }
 
 export interface Ref { productRef: string; variantRef: string | null }
+/** How the selection was made: the shopper's own card or option choice is authoritative over the conversation. */
+export type SelectionSource = "card" | "options" | "conversation";
+export interface Selection extends Ref { source: SelectionSource }
+/** Budget and audience the shopper stated; the server updates them every turn. */
+export interface Constraints { budgetMax: number | null; budgetMin: number | null; budgetCurrency: string | null; forChildren: boolean }
 
 export type Entry =
   | { id: string; kind: "user"; text: string; photo: boolean; at: number }
@@ -74,6 +79,8 @@ export type Entry =
     replyTo: string;
     recommendations: Recommendation[];
     visualise: Recommendation | null;
+    /** True when the cards are one product the shopper asked to see, not a numbered set of options. */
+    focus?: boolean;
     at: number;
   }
   | { id: string; kind: "preview"; item: Recommendation; status: "generating" | "ready" | "failed"; stage?: string; error?: string; handoff?: string; at: number }
@@ -90,7 +97,8 @@ export interface ChatState {
   room: RoomNotes | null;
   preferences: Preferences | null;
   shown: Ref[];
-  selected: Ref | null;
+  selected: Selection | null;
+  constraints: Constraints | null;
   ui: { open: boolean; view: "side" | "fullscreen" };
   /** Whether this session already completed (or skipped, where allowed) the merchant's email step. */
   lead: { done: boolean };
@@ -107,7 +115,7 @@ const LEGACY_KEY = "tryora_assistant_context";
 export const sessionKey = (shop: string) => `tryora_assistant_v2:${shop}`;
 
 export function emptyState(shop: string, view: "side" | "fullscreen" = "side", now = Date.now()): ChatState {
-  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, preferences: null, shown: [], selected: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
+  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, preferences: null, shown: [], selected: null, constraints: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
 }
 
 function storage(): Storage | null {
@@ -140,6 +148,8 @@ export function loadState(shop: string, view: "side" | "fullscreen" = "side", no
       ...parsed,
       ui: { open: !!parsed.ui?.open, view: parsed.ui?.view === "fullscreen" ? "fullscreen" : "side" },
       lead: { done: parsed.lead?.done === true },
+      selected: parsed.selected?.productRef ? { ...parsed.selected, source: parsed.selected.source ?? "conversation" } : null,
+      constraints: parsed.constraints && typeof parsed.constraints === "object" ? parsed.constraints : null,
       previewsDelivered: Number.isInteger(parsed.previewsDelivered) && parsed.previewsDelivered > 0 ? parsed.previewsDelivered : 0,
     };
   } catch {

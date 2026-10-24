@@ -9,7 +9,7 @@ import { errorMessage, escapeHtml, formatText, money, STAGE_LABELS } from "./for
 import { runTurn, TurnError, type TurnEvent } from "./transport.js";
 import { generatePreview, PREVIEW_STAGES, PreviewError, previewErrorMessage } from "./preview.js";
 import { PhotoError, prepareRoomPhoto, type PreparedPhoto } from "./photo.js";
-import { earlierFor, historyFor, loadState, saveState, type ChatState, type Entry, type Recommendation } from "./session.js";
+import { earlierFor, historyFor, loadState, saveState, type ChatState, type Entry, type Recommendation, type SelectionSource } from "./session.js";
 import { cardForVariant, resolveVariant, selectionsFor, valuesFor, type ProductOptions } from "./options.js";
 import { PROXY } from "./transport.js";
 import { tagBasket } from "../attribution.js";
@@ -171,6 +171,7 @@ export class RoomAssistant {
     this.state.entries = [];
     this.state.shown = [];
     this.state.selected = null;
+    this.state.constraints = null;
     this.state.preferences = null;
     this.cardOptions.clear();
     this.save();
@@ -186,6 +187,7 @@ export class RoomAssistant {
     this.state.entries = [];
     this.state.shown = [];
     this.state.selected = null;
+    this.state.constraints = null;
     this.state.preferences = null;
     this.state.lead = { done: false };
     this.state.previewsDelivered = 0;
@@ -230,7 +232,7 @@ export class RoomAssistant {
     }
     if (this.pendingIntent === "visualise" && this.context.productId) {
       const variant = this.context.currentVariantId?.();
-      this.state.selected = { productRef: numeric(this.context.productId), variantRef: variant && /^\d+$/.test(variant) ? variant : null };
+      this.state.selected = { productRef: numeric(this.context.productId), variantRef: variant && /^\d+$/.test(variant) ? variant : null, source: "options" };
     }
     this.pendingIntent = null;
     if (textarea) { textarea.value = ""; this.autosize(); }
@@ -283,6 +285,7 @@ export class RoomAssistant {
     if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 6)));
     if (this.state.selected) form.set("selected", JSON.stringify(this.state.selected));
     if (this.state.preferences) form.set("preferences", JSON.stringify(this.state.preferences));
+    if (this.state.constraints) form.set("constraints", JSON.stringify(this.state.constraints));
     const earlier = earlierFor(this.state, userId);
     if (earlier.length) form.set("earlier", JSON.stringify(earlier));
     if (photo) form.set("photo", photo, "room.jpg");
@@ -340,20 +343,35 @@ export class RoomAssistant {
         return;
       case "recommendations":
         reply.recommendations = (event.items ?? []) as Recommendation[];
+        reply.focus = false;
         this.state.shown = reply.recommendations.map(({ productRef, variantRef }) => ({ productRef, variantRef }));
-        this.renderEntry(reply.id);
+        this.syncCards(reply.recommendations, reply.id);
         this.save();
+        this.renderAll();
         return;
       case "visualise":
         reply.visualise = event.item as Recommendation;
-        this.state.selected = { productRef: reply.visualise.productRef, variantRef: reply.visualise.variantRef };
-        this.renderEntry(reply.id);
-        this.save();
-        return;
-      case "selected":
-        this.state.selected = { productRef: event.item.productRef, variantRef: event.item.variantRef ?? null };
+        this.select(reply.visualise, this.state.selected?.productRef === reply.visualise.productRef ? this.state.selected.source : "conversation");
+        this.syncCards([reply.visualise], reply.id);
         this.save();
         this.renderAll();
+        return;
+      case "selected": {
+        const item = event.item as Recommendation;
+        this.select(item, event.source ?? "conversation");
+        // "Show me X": the product's own card, with its real photo, whether or not it can be previewed.
+        if (!reply.recommendations.some((card) => card.productRef === item.productRef)) {
+          reply.recommendations = [...(reply.focus || !reply.recommendations.length ? [] : reply.recommendations), item];
+          reply.focus = reply.recommendations.length === 1;
+        }
+        this.syncCards([item], reply.id);
+        this.save();
+        this.renderAll();
+        return;
+      }
+      case "constraints":
+        this.state.constraints = event.constraints ?? null;
+        this.save();
         return;
       case "room":
         this.state.room = event.room;
@@ -370,7 +388,8 @@ export class RoomAssistant {
         reply.text = String(final.message ?? reply.text);
         if (Array.isArray(final.recommendations) && final.recommendations.length) reply.recommendations = final.recommendations;
         if (final.visualise) reply.visualise = final.visualise;
-        if (final.selected) this.state.selected = { productRef: final.selected.productRef, variantRef: final.selected.variantRef ?? null };
+        if (final.selection) this.state.selected = { productRef: final.selection.productRef, variantRef: final.selection.variantRef ?? null, source: final.selection.source ?? "conversation" };
+        if (final.constraints) this.state.constraints = final.constraints;
         if (final.room) this.state.room = final.room;
         if (final.preferences) this.state.preferences = final.preferences;
         reply.status = "done";
@@ -587,6 +606,7 @@ export class RoomAssistant {
       }
       case "cancel-preview": return this.previews.get(id)?.abort();
       case "options": return void this.toggleOptions(element.dataset.card ?? "");
+      case "select": return this.selectCard(element.dataset.card ?? "");
       case "opt": return this.chooseOption(element.dataset.card ?? "", element.dataset.attr ?? "", element.dataset.value ?? "");
       case "lead-submit": return void this.submitLead(id);
       case "lead-skip": return this.skipLead(id);
@@ -945,10 +965,15 @@ export class RoomAssistant {
     const panel = this.cardOptions.get(key);
     const optionsButton = item.hasOptions
       ? `<button type="button" class="tryora-assistant__secondary" data-ta="options" data-card="${escapeHtml(key)}" aria-expanded="${!!panel}">${item.variantRef ? "Change options" : "Choose options"}</button>` : "";
-    return `<article class="tryora-assistant__card${this.isSelected(raw) ? " is-selected" : ""}" data-card="${escapeHtml(key)}">
+    const selected = this.isSelected(raw);
+    const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
+    const label = focus ? "Selected product" : `Option ${index + 1}${selected ? " · Selected" : ""}`;
+    const selectButton = selected || focus ? ""
+      : `<button type="button" class="tryora-assistant__secondary" data-ta="select" data-card="${escapeHtml(key)}" aria-label="Select ${escapeHtml(item.title)}">Select</button>`;
+    return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
-        <span class="tryora-assistant__eyebrow">Option ${index + 1}${this.isSelected(raw) ? ` · Selected` : ""}</span>
+        <span class="tryora-assistant__eyebrow">${label}</span>
         <h4>${escapeHtml(item.title)}</h4>
         ${options ? `<div class="tryora-assistant__tags">${options}</div>` : ""}
         ${this.priceHtml(item)}
@@ -958,6 +983,7 @@ export class RoomAssistant {
         ${panel ? this.optionsPanelHtml(key, panel) : ""}
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" href="${escapeHtml(item.url)}">View product</a>
+          ${selectButton}
           ${optionsButton}
           ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : "See it in my room"}</button>`
             : unavailable ? `<button type="button" class="tryora-assistant__primary" disabled aria-describedby="ta-why-${id}">See it in my room</button>` : ""}
@@ -1140,6 +1166,35 @@ export class RoomAssistant {
     return this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === item.id);
   }
 
+  private select(item: Recommendation, source: SelectionSource) {
+    this.state.selected = { productRef: item.productRef, variantRef: item.variantRef ?? null, source };
+  }
+
+  /** The shopper chose this card: it becomes the authoritative selection the assistant must use. */
+  selectCard(key: string) {
+    const card = this.cardAt(key);
+    if (!card) return;
+    this.select(card.item, "card");
+    this.save();
+    this.renderAll();
+    this.announce(`Selected ${card.item.title}.`);
+  }
+
+  /**
+   * Older cards for the same exact variant take the newest server-verified price, stock and preview status, so two
+   * cards for one product never disagree about whether it can be previewed.
+   */
+  private syncCards(items: Recommendation[], from?: string) {
+    const fields = ["price", "maxPrice", "currencyCode", "purchaseAvailable", "previewAvailable", "previewStatus", "previewReason", "optionValue", "referenceImage"] as const;
+    for (const item of items) {
+      for (const entry of this.state.entries) {
+        if (entry.kind !== "assistant" || entry.id === from) continue;
+        entry.recommendations = entry.recommendations.map((card) => card !== item && card.productRef === item.productRef && (card.variantRef ?? null) === (item.variantRef ?? null)
+          ? { ...card, ...Object.fromEntries(fields.map((field) => [field, item[field]])) } : card);
+      }
+    }
+  }
+
   private cardAt(key: string): { entry: AssistantEntry; index: number; item: Recommendation } | null {
     const split = key.lastIndexOf(":");
     const entryId = key.slice(0, split);
@@ -1197,7 +1252,8 @@ export class RoomAssistant {
       card.entry.recommendations[card.index] = updated;
       this.state.shown = this.state.shown.map((ref) => ref.productRef === previous.productRef && ref.variantRef === previous.variantRef
         ? { productRef: updated.productRef, variantRef: updated.variantRef } : ref);
-      this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef };
+      this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef, source: "options" };
+      this.syncCards([updated], card.entry.id);
       this.save();
     }
     this.renderAll();
