@@ -23,6 +23,7 @@ import { nativeSelections } from "../app/core/customization";
 import { manualStorefrontData } from "../app/customization/validation.server";
 import { resolveConfiguredPreview } from "../app/customization/registry.server";
 import { action, loader } from "../app/routes/app.fabrics";
+import { formatSyncedAtUtc } from "../app/components/fabric-colour-manager";
 import { loadProviderSetting } from "../app/customization/provider-config.server";
 const snapshot = () => { const f = providerFixture(); return { ...f, product: { id: productId }, draft: draftFromMapping(f.mapping, shopId, productId) }; };
 const request = (fields: Record<string, string>, product = productId) => new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(product)}`, { method: "POST", body: new URLSearchParams({ intent: "save", revision: "", mode: "manual", draft: JSON.stringify(emptyFabricDraft()), ...fields }) });
@@ -308,5 +309,24 @@ describe("actual merchant image uploads", () => {
   it("bounds streamed form bodies before parsing multipart data", async () => {
     const r = new Request("https://tryora.example", { method: "POST", body: new URLSearchParams({ draft: "x".repeat(200) }) });
     await expect(fabricForm(r, 64)).rejects.toMatchObject({ status: 413 });
+  });
+});
+
+describe("SSR-safe fabric manager timestamp", () => {
+  it("renders identical initial text across Railway and Shopify browser timezones", () => {
+    const originalTimezone = process.env.TZ;
+    try {
+      const timestamp = "2026-10-24T19:08:20.123Z";
+      process.env.TZ = "UTC";
+      const server = formatSyncedAtUtc(timestamp);
+      process.env.TZ = "Asia/Karachi";
+      const browser = formatSyncedAtUtc(timestamp);
+      expect(server).toBe("2026-10-24 19:08:20 UTC");
+      expect(browser).toBe(server);
+      expect(formatSyncedAtUtc("not a timestamp")).toBe("Time unavailable");
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
   });
 });
