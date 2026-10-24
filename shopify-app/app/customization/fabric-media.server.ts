@@ -48,8 +48,8 @@ function stagedUrl(value: string) {
   return u.toString();
 }
 /** Called only after admin authentication, product ownership, manual-mode and revision checks. */
-export async function uploadFabricMedia(admin: AdminGraphql, productId: string, file: Blob) {
-  const bytes = await cleanFabricImage(file), marker = `Tryora merchant upload ${randomUUID()}`;
+export async function uploadFabricMedia(admin: AdminGraphql, productId: string, file: Blob, purpose: "sample" | "reference" = "sample") {
+  const bytes = await cleanFabricImage(file), marker = `Tryora ${purpose === "sample" ? "fabric sample" : "furniture reference"} ${randomUUID()}`;
   const stage = (await result(admin, STAGE_FABRIC_IMAGE, { input: [{ filename: `${randomUUID()}.jpg`, mimeType: "image/jpeg", resource: "IMAGE", httpMethod: "POST", fileSize: String(bytes.length) }] })).stagedUploadsCreate;
   if (stage?.userErrors?.length || stage?.stagedTargets?.length !== 1) throw new FabricConfigError("Shopify could not prepare this upload. Check your product-write permission and try again.");
   const target = stage.stagedTargets[0];
