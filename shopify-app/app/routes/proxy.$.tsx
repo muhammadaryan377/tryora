@@ -11,7 +11,7 @@ import {
   storefrontConfig,
 } from "../storefront.server";
 import { guardAssistant, guardAssistantRead, guardPhotoCheck, guardPreview } from "../guard.server";
-import { productOptionsForAssistant } from "../assistant/options.server";
+import { checkVariantPreview, productOptionsForAssistant } from "../assistant/options.server";
 import {
   answerRoomAssistant,
   assistantStorefrontConfig,

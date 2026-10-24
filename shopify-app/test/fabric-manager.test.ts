@@ -23,6 +23,7 @@ import { nativeSelections } from "../app/core/customization";
 import { manualStorefrontData } from "../app/customization/validation.server";
 import { resolveConfiguredPreview } from "../app/customization/registry.server";
 import { action, loader } from "../app/routes/app.fabrics";
+import { loadProviderSetting } from "../app/customization/provider-config.server";
 const snapshot = () => { const f = providerFixture(); return { ...f, product: { id: productId }, draft: draftFromMapping(f.mapping, shopId, productId) }; };
 const request = (fields: Record<string, string>, product = productId) => new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(product)}`, { method: "POST", body: new URLSearchParams({ intent: "save", revision: "", mode: "manual", draft: JSON.stringify(emptyFabricDraft()), ...fields }) });
 beforeEach(() => {
@@ -153,6 +154,15 @@ describe("authenticated two-mode admin", () => {
     expect(view.selected).toMatchObject({ title: "Synthetic bed", mode: "native", explicitlyOff: true });
     expect(state.writes).toEqual([]);
   });
+  it("keeps native management available when the reviewed provider table is absent", async () => {
+    vi.mocked(prisma.customizationConfig.findMany).mockRejectedValueOnce(
+      Object.assign(new Error("Missing provider table"), { code: "P2021" }));
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false);
+    expect(view.manualSetupReason).toContain("customization database table");
+    expect(view.selected?.mode).toBe("native");
+    expect(state.writes).toEqual([]);
+  });
   it("saves product-scoped Manual then Native mode while preserving explicit OFF and the manual draft", async () => {
     const f = snapshot();
     await saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft: f.draft });
@@ -194,11 +204,78 @@ describe("authenticated two-mode admin", () => {
     expect(await action({ request: request({ mode: "manual" }) } as any)).toHaveProperty("error");
     expect(state.writes).toEqual([]);
   });
+  it("blocks unapproved installations before reading mappings, saving or uploading, regardless of submitted shop", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "approved.myshopify.com");
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false); expect(view.manualSetupReason).toContain("authorize this Shopify installation");
+    expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
+    for (const intent of ["save", "upload"]) expect(await action({ request: request({ intent, shop: "approved.myshopify.com", mode: "manual" }) } as any)).toHaveProperty("error");
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft: snapshot().draft })).rejects.toThrow(/authorization/);
+    expect(prisma.customizationConfig.findUnique).not.toHaveBeenCalled(); expect(state.writes).toEqual([]);
+  });
+  it("reports malformed operator policy without exposing its contents or reading provider data", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "secret-approved.myshopify.com,*");
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false); expect(view.manualSetupReason).toContain("allowlist is invalid");
+    expect(JSON.stringify(view)).not.toContain("secret-approved.myshopify.com");
+    expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
+  });
+  it("applies scoped grants to runtime provider reads as well as admin writes", async () => {
+    state.rows = [{ shopId, productId, providerId: "manual_mapping", revision: "r", active: true, mapping: {} }];
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "another.myshopify.com");
+    expect((await loadProviderSetting(shopId, productId)).providerId).toBe("shopify_native");
+    expect(prisma.customizationConfig.findMany).not.toHaveBeenCalled();
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    expect((await loadProviderSetting(shopId, productId)).providerId).toBe("manual_mapping");
+    expect(prisma.customizationConfig.findMany).toHaveBeenCalledOnce();
+  });
+  it("persists reviewed fabrics/colours/exact references for an approved installation without enabling previews", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const { draft } = snapshot();
+    const response = await action({ request: request({ mode: "manual", draft: JSON.stringify(draft) }) } as any);
+    expect(response).toBeInstanceOf(Response);
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(true); expect(view.selected?.explicitlyOff).toBe(true);
+    expect(view.selected?.draft).toEqual(draft); expect(state.rows[0].mapping.published.entries).toHaveLength(4);
+    expect(state.config.enabled).toBe(false);
+  });
   it("requires authentication and authenticated product ownership", async () => {
     state.authenticate.mockRejectedValue(new Response("Unauthorized", { status: 401 }));
     await expect(action({ request: request({}) } as any)).rejects.toMatchObject({ status: 401 });
     state.authenticate.mockResolvedValue({ admin: state.admin, session: { shop: shopId } });
     expect(await action({ request: request({}, "gid://shopify/Product/999") } as any)).toHaveProperty("error");
+    expect(state.writes).toEqual([]);
+  });
+  it("allows an authorized merchant to upload a fabric swatch before the first Manual Setup save", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+    const original = state.admin.graphql;
+    let marker = "";
+    state.admin.graphql = async (query: string, variables: any) => {
+      if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: {
+        stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/sample.jpg", parameters: [] }],
+        userErrors: [],
+      } } });
+      if (query.includes("TryoraAttachFabricImage")) {
+        marker = variables.variables.media[0].alt;
+        return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } });
+      }
+      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: {
+        nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/sample.jpg" } }],
+      } } } });
+      return original(query, variables);
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+    const form = new FormData();
+    form.set("intent", "upload"); form.set("mode", "manual"); form.set("purpose", "sample"); form.set("revision", "");
+    form.set("image", new Blob([image], { type: "image/png" }), "fabric.png");
+    const result = await action({ request: new Request(
+      `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`,
+      { method: "POST", body: form },
+    ) } as any);
+    expect(result).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991" } });
+    expect(state.rows).toEqual([]); // Upload does not activate Manual Setup or authorize previews.
+    expect(state.config.enabled).toBe(false);
     expect(state.writes).toEqual([]);
   });
   it("blocks native-mode image uploads before any Shopify mutation", async () => {

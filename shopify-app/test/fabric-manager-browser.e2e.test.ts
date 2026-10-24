@@ -68,7 +68,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
     const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{FabricColourManager}from'./app/components/fabric-colour-manager';
       const data=window.managerData;function App(){const[error,setError]=useState('');return <FabricColourManager data={data} error={error}
       save={async(mode,draft)=>{const r=await fetch(location.href,{method:'POST',body:new URLSearchParams({intent:'save',mode,revision:data.selected.revision,draft:JSON.stringify(draft)})});if(r.redirected){location.href=r.url;return}setError((await r.json()).error||'Save failed')}}
-      upload={async(file)=>{const form=new FormData();form.set('intent','upload');form.set('revision',data.selected.revision);form.set('image',file);const r=await fetch(location.href,{method:'POST',body:form});const json=await r.json();if(json.error)throw Error(json.error);return json.media}}/>}createRoot(document.getElementById('root')).render(<App/>);`;
+      upload={async(file,purpose)=>{const form=new FormData();form.set('intent','upload');form.set('mode','manual');form.set('purpose',purpose);form.set('revision',data.selected.revision);form.set('image',file);const r=await fetch(location.href,{method:'POST',body:form});const json=await r.json();if(json.error)throw Error(json.error);return json.media}}/>}createRoot(document.getElementById('root')).render(<App/>);`;
     bundle = (await build({ stdin: { contents: entry, loader: "tsx", resolveDir: join(__dirname, "..") }, bundle: true, write: false, format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' } })).outputFiles[0]!.text;
     server = createServer(async (req, res) => {
       try {
@@ -89,8 +89,29 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)); origin = `http://127.0.0.1:${server.address().port}`;
     const { chromium } = await import("playwright-core"); browser = await chromium.launch({ executablePath: browserPath, headless: true });
   });
-  beforeEach(() => fixture());
+  beforeEach(() => { fixture(); vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true"); vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId); });
   afterAll(async () => { await browser?.close(); await new Promise<void>((resolve) => server?.close(resolve)); vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+  it.each(["rollout-off", "other-installation", "invalid-policy"])("locks manual controls and rejects forged actions for %s", async (condition) => {
+    if (condition === "rollout-off") vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "false");
+    else vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", condition === "invalid-policy" ? "*" : "another.myshopify.com");
+    const context = await browser.newContext({ viewport: { width: 390, height: 900 } });
+    await context.route("https://cdn.shopify.com/**", (r: any) => r.fulfill({ contentType: r.request().url().endsWith("polaris.js") ? "application/javascript" : "image/jpeg", body: r.request().url().endsWith("polaris.js") ? polaris : jpeg }));
+    const page = await context.newPage(); const original = structuredClone(state.rows);
+    try {
+      await page.goto(`${origin}/app/fabrics?product=${encodeURIComponent(productId)}`);
+      await page.locator('[aria-label="Configuration mode"]').waitFor();
+      expect(await page.locator('[aria-label="Configuration mode"]').inputValue()).toBe("native");
+      expect(await page.locator('[aria-label="Configuration mode"] option[value=manual]').getAttribute("disabled")).not.toBeNull();
+      expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
+      expect(await page.locator('button:has-text("+ Add fabric")').isDisabled()).toBe(true);
+      expect(await page.locator('.fabric-workspace').count()).toBe(0);
+      expect(await page.locator('s-banner[heading="Manual setup is not enabled"]').count()).toBe(1);
+      expect(await page.locator('.fabric-manager').textContent()).toContain("Shopify-native previews continue to work");
+      const response = await page.evaluate(async () => (await fetch(location.href, { method: 'POST', body: new URLSearchParams({ intent: 'save', mode: 'manual', shop: 'another.myshopify.com', draft: '{}' }) })).json());
+      expect(response.error).toContain("authorization"); expect(state.rows).toEqual(original); expect(state.uploads).toBe(0);
+      await screenshot(page, `manager-disabled-${condition}`);
+    } finally { await context.close(); }
+  });
   it.each([1280, 390])("native/manual modes, colour edits and real image upload/save at %ipx", async (width) => {
     const context = await browser.newContext({ viewport: { width, height: 1000 } });
     await context.route("https://cdn.shopify.com/**", (r: any) => r.fulfill({ contentType: r.request().url().endsWith("polaris.js") ? "application/javascript" : "image/jpeg", body: r.request().url().endsWith("polaris.js") ? polaris : jpeg }));
@@ -107,6 +128,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await page.selectOption('[aria-label="Shopify product"]', productId);
 
       await page.locator('summary:has-text("Edit sample image")').first().waitFor();
+       expect(await page.locator(".fabric-media-sample .fabric-existing-images .fabric-media-choices img").count()).toBeLessThan(state.media.length);
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await page.locator('.fabric-manager').textContent()).toContain("Velvet");
       expect(await page.locator('.fabric-list-item[aria-pressed=true]').textContent()).toContain("Velvet");
@@ -129,7 +151,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
       await row.locator('input[type=file]').setInputFiles({ name: "actual-swatch.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(1);
-      await expect.poll(() => row.locator('select').inputValue()).toBe("gid://shopify/MediaImage/901");
+      expect(await row.locator(".fabric-media-sample .fabric-selected-image img").getAttribute("src")).toMatch(/upload-1\.jpg/);
       await savePage(page);
 
       await page.locator('summary:has-text("Edit sample image")').last().click();
@@ -149,14 +171,14 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(3);
       expect(state.rows[0].mapping.draft.fabrics.at(-1)).toMatchObject({ name: "Loft Linen", description: "Merchant-provided fabric description", enabled: true });
       await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
-      await page.locator('.fabric-editor summary').click();
+      if (await page.locator(".fabric-editor").getAttribute("open") === null) await page.locator(".fabric-editor summary").click();
       const newFabric = page.locator('.fabric-editor');
       await newFabric.locator('input[type=checkbox]').uncheck();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.at(-1).enabled).toBe(false);
       page.on("dialog", (d: any) => d.accept());
       await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
-      await page.locator('.fabric-editor summary').click();
+      if (await page.locator(".fabric-editor").getAttribute("open") === null) await page.locator(".fabric-editor summary").click();
       await page.locator('.fabric-editor button:has-text("Remove fabric")').click();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(2);

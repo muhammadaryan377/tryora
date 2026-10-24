@@ -71,7 +71,7 @@ export function compileFabricDocument(raw: unknown, shopId: string, productId: s
   return { document, diagnostics };
 }
 export async function saveFabricConfiguration(admin: AdminGraphql, shopId: string, productId: string, input: { mode: string; revision: string; draft: unknown }) {
-  if (!providerSettingsEnabled()) throw new FabricConfigError("Manual setup requires the existing reviewed provider-table rollout and server opt-in. Native previews remain unchanged.");
+  if (!providerSettingsEnabled(shopId)) throw new FabricConfigError("Manual setup requires the reviewed provider-table rollout and server authorization for this installation. Native previews remain unchanged.");
   if (!["native", "manual"].includes(input.mode)) throw new FabricConfigError("Choose Shopify Native or Manual Setup.");
   const snapshot = await nativeSnapshot(admin, productId);
   // Never update productPreviewConfig: explicit OFF settings and auto-enable behavior remain authoritative.

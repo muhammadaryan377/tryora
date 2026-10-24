@@ -4,6 +4,7 @@ import { matchesOptions } from "../../core/customization";
 import { defaultNoun } from "../../products.server";
 import type { ProviderAdapter } from "./types.server";
 import { matchesProviderScope } from "./types.server";
+import { isFabricDocument } from "../fabric-manager";
 
 export function combinationKey(entry: ManualMapping["entries"][number]) { return JSON.stringify([entry.fabric.id, entry.colour.id]); }
 export const manualMappingAdapter: ProviderAdapter = {
@@ -25,22 +26,25 @@ export const manualMappingAdapter: ProviderAdapter = {
   async validate(context, request) {
     const { config, setting } = context;
     if (config.enabled !== true || config.readiness !== "ready") return { status: "rejected", reason: "unsupported" };
-    if (!setting.active || !matchesProviderScope(context, request.scope, "manual_mapping") || request.revision !== setting.revision) return { status: "rejected", reason: "stale" };
+    const unpublished = !setting.active || isFabricDocument(setting.mapping) && !(setting.mapping as { published?: unknown }).published;
+    if (!matchesProviderScope(context, request.scope, "manual_mapping") || request.revision !== setting.revision) return { status: "rejected", reason: "stale" };
+    if (unpublished) return { status: "rejected", reason: "stale", issue: "mapping_not_published" };
     const mapping = parseManualMapping(setting.mapping, config.shopId, config.productId);
     const { product, variants, media } = await nativeSnapshot(context.admin, config.productId);
-    if (validateNativeBindings(mapping, variants, media).length) return { status: "rejected", reason: "stale" };
+    if (validateNativeBindings(mapping, variants, media).length) return { status: "rejected", reason: "stale", issue: "mapping_out_of_sync" };
     const entry = mapping.entries.find((e) => e.variantId === request.nativeVariantId && (e.id === request.combinationId || combinationKey(e) === request.combinationId));
     const source = mapping.entries.find((e) => e.variantId === context.sourceVariantId);
-    if (!entry || !source || preservationKey(entry) !== preservationKey(source)) return { status: "rejected", reason: "unsupported" };
+    if (!entry) return { status: "rejected", reason: "unsupported", issue: "variant_not_mapped" };
+    if (!source || preservationKey(entry) !== preservationKey(source)) return { status: "rejected", reason: "unsupported", issue: "configuration_mismatch" };
     if (Object.entries(request.selectedOptions).some(([name, value]) => entry.nativeOptions[name] !== value)) return { status: "rejected", reason: "unsupported" };
     const changing = new Set([mapping.roles.fabric, mapping.roles.colour, mapping.roles.composite].filter(Boolean));
-    if (Object.entries(source.nativeOptions).some(([name, value]) => !changing.has(name) && entry.nativeOptions[name] !== value)) return { status: "rejected", reason: "unsupported" };
+    if (Object.entries(source.nativeOptions).some(([name, value]) => !changing.has(name) && entry.nativeOptions[name] !== value)) return { status: "rejected", reason: "unsupported", issue: "configuration_mismatch" };
     const selected = variants.find((v) => v.id === entry.variantId);
-    if (!selected?.availableForSale) return { status: "rejected", reason: "unavailable" };
-    if (!matchesOptions(selected, (config.frozenContext ?? {}) as Record<string, string>)) return { status: "rejected", reason: "unsupported" };
+    if (!selected?.availableForSale) return { status: "rejected", reason: "unavailable", issue: "sold_out" };
+    if (!matchesOptions(selected, (config.frozenContext ?? {}) as Record<string, string>)) return { status: "rejected", reason: "unsupported", issue: "outside_fixed_options" };
     const value = config.visualOptionName ? optionsOf(selected)[config.visualOptionName] : "";
     if (config.choices.some((c) => (c.optionValue === value || c.optionValue === request.combinationId || c.optionValue === combinationKey(entry)) &&
-      (!c.available || ((c.variantIds ?? []) as string[]).length > 0 && !((c.variantIds ?? []) as string[]).includes(selected.id)))) return { status: "rejected", reason: "unavailable" };
+      (!c.available || ((c.variantIds ?? []) as string[]).length > 0 && !((c.variantIds ?? []) as string[]).includes(selected.id)))) return { status: "rejected", reason: "unavailable", issue: "choice_disabled" };
     const urls = entry.referenceMediaIds.map((id) => media.find((m) => m.id === id)!.image!.url);
     const preview = { urls, variantId: selected.id, selectedOptions: entry.nativeOptions, optionValue: `${entry.fabric.label} / ${entry.colour.label}`,
       referenceVersion: `${setting.revision}:${entry.id}:${selected.id}:${entry.referenceMediaIds.join(",")}`,

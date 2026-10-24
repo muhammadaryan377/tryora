@@ -1,8 +1,9 @@
 import type { ProductPreviewConfig, VisualChoice } from "@prisma/client";
 import { TryoraError } from "./core/index";
 import { defaultNoun } from "./products.server";
-import { nativeSelections } from "./core/customization";
+import { matchesOptions, nativeSelections, type NativeSelection } from "./core/customization";
 import { choicesFor, eligibleVariants } from "./native-selection.server";
+import { PreviewIneligible, type PreviewIssue } from "./customization/preview-issues";
 
 export type AdminGraphql = { graphql: (q: string, o?: { variables?: Record<string, unknown> }) => Promise<Response> };
 export const PREVIEW_PRODUCT_QUERY = `#graphql
@@ -19,7 +20,7 @@ export const PREVIEW_PRODUCT_QUERY = `#graphql
 export const PREVIEW_MEDIA_QUERY = `#graphql
   query TryoraPreviewMedia($id: ID!, $after: String) {
     product(id: $id) { media(first: 250, after: $after) {
-      nodes { ... on MediaImage { id image { url } } }
+      nodes { ... on MediaImage { id alt image { url } } }
       pageInfo { hasNextPage endCursor }
     } }
   }`;
@@ -39,19 +40,19 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
     after = info.hasNextPage ? info.endCursor : null;
   } while (after);
   const option = product.options.find((o: any) => o.name === config.visualOptionName);
-  if (config.visualOptionName && !option) throw new TryoraError("NOT_FOUND");
+  if (config.visualOptionName && !option) throw new PreviewIneligible("NOT_FOUND", "option_mapping_stale");
   const model = nativeSelections(product.options, config.visualOptionName, variants);
-  if (model.issue || (config.autoConfigured && model.ambiguous)) throw new TryoraError("BAD_REQUEST");
+  if (model.issue || (config.autoConfigured && model.ambiguous)) throw new PreviewIneligible("BAD_REQUEST", model.issue === "stale_mapping" ? "option_mapping_stale" : "option_mapping_ambiguous");
   const selection = model.selections.find((s) => s.value === requested);
-  if (model.fabricOptionName && !selection) throw new TryoraError("BAD_REQUEST");
+  if (model.fabricOptionName && !selection) throw new PreviewIneligible("BAD_REQUEST", "option_not_mapped");
   const values: string[] = option?.optionValues.map((v: any) => v.name) ?? [];
-  if (model.selections.length && !selection) throw new TryoraError("BAD_REQUEST");
-  if (!model.selections.length && requested && requested !== "__single__" && requested !== (values[0] ?? "")) throw new TryoraError("BAD_REQUEST");
+  if (model.selections.length && !selection) throw new PreviewIneligible("BAD_REQUEST", "option_not_mapped");
+  if (!model.selections.length && requested && requested !== "__single__" && requested !== (values[0] ?? "")) throw new PreviewIneligible("BAD_REQUEST", "option_not_mapped");
   // A dependent selection must carry the exact variant; never pick another fabric or size.
   if (model.fabricOptionName && !requestedVariantId) throw new TryoraError("BAD_REQUEST");
   const optionValue = selection ? (selection.group ? [selection.group, selection.label].join(" / ") : selection.value) : (values[0] ?? "");
   const choices = selection ? choicesFor(config, selection) : config.choices.filter((c) => c.optionValue === optionValue);
-  if (choices.some((c) => !c.available)) throw new TryoraError("NOT_FOUND");
+  if (choices.some((c) => !c.available)) throw new PreviewIneligible("NOT_FOUND", "choice_disabled");
   // A fabric-only or colour-only approval cannot approve all combinations.
   const choice = model.fabricOptionName
     ? choices.find((c) => c.optionValue === selection!.value)
@@ -61,7 +62,7 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
     const ids = (c.variantIds ?? []) as string[];
     if (ids.length) eligible = eligible.filter((v) => ids.includes(v.id));
   }
-  if (!eligible.length) throw new TryoraError("NOT_FOUND");
+  if (!eligible.length) throw new PreviewIneligible("NOT_FOUND", ineligibility(config, variants, requestedVariantId, selection));
   if (!requestedVariantId && eligible.length > 1) throw new TryoraError("BAD_REQUEST");
   // The client may request a Shopify variant for the colour + product-page size.
   // Never trust that ID without checking the selected option, stock, frozen context
@@ -69,7 +70,7 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
   const selected = requestedVariantId
     ? eligible.find((v) => v.id === requestedVariantId)
     : eligible.find((v) => v.image?.url) ?? eligible[0];
-  if (!selected) throw new TryoraError("BAD_REQUEST");
+  if (!selected) throw new PreviewIneligible("BAD_REQUEST", ineligibility(config, variants, requestedVariantId, selection));
   const variantUrl: string | undefined = selected.image?.url;
   const boundApproval = !model.fabricOptionName || ((choice?.variantIds ?? []) as string[]).includes(selected.id);
   const approved = (boundApproval ? choice?.approvedMediaIds ?? [] : []) as string[];
@@ -77,7 +78,7 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
   // the wrong colour. Only explicit images approved for this option are safe fallbacks.
   const ids = [...new Set((model.selections.length || model.fabricOptionName ? approved : [...approved, config.referenceMediaId])
     .filter((id): id is string => !!id))].slice(0, 4);
-  if (!variantUrl && !ids.length) throw new TryoraError("NOT_FOUND");
+  if (!variantUrl && !ids.length) throw new PreviewIneligible("NOT_FOUND", "missing_reference");
   const media: any[] = [];
   after = null;
   while (ids.length) {
@@ -90,7 +91,7 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
     after = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
     if (!after || ids.every((id) => media.some((m) => m.id === id))) break;
   }
-  if (ids.some((id) => !media.some((m: any) => m?.id === id && m.image?.url))) throw new TryoraError("NOT_FOUND");
+  if (ids.some((id) => !media.some((m: any) => m?.id === id && m.image?.url))) throw new PreviewIneligible("NOT_FOUND", "reference_media_missing");
   const urls = [...new Set<string>([variantUrl, ...ids.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
   return {
     urls, optionValue, variantId: selected.id as string,
@@ -100,4 +101,14 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
     itemNoun: config.itemNoun || defaultNoun(product.productType, product.title),
     description: `${product.title}\nSelected Shopify options: ${JSON.stringify(selected.selectedOptions)}\n${product.description ?? ""}`.slice(0, 8000),
   };
+}
+
+/** Explains why the requested variant is not eligible, in the order eligibleVariants checks it. */
+function ineligibility(config: ProductPreviewConfig, variants: any[], requestedVariantId?: string, selection?: NativeSelection): PreviewIssue {
+  const variant = requestedVariantId ? variants.find((v) => v.id === requestedVariantId) : null;
+  if (!variant) return requestedVariantId ? "option_not_mapped" : "choice_disabled";
+  if (selection && !matchesOptions(variant, selection.options)) return "option_not_mapped";
+  if (!variant.availableForSale) return "sold_out";
+  if (!matchesOptions(variant, (config.frozenContext ?? {}) as Record<string, string>)) return "outside_fixed_options";
+  return "choice_disabled";
 }

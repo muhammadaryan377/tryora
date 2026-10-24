@@ -862,8 +862,9 @@ describe("in-card options and conversation memory", () => {
     expect(opt("Size", "Double")).toBeNull();
     const egerie = $(".tryora-assistant__card")!;
     expect(egerie.querySelector("[data-ta='preview']")).toBeNull();
-    const disabled = egerie.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions button[disabled]")!;
-    expect(disabled.textContent).toBe("Preview in my room");
+    const alternative = egerie.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions [data-ta=options]")!;
+    expect(alternative.textContent).toBe("Check other appearances");
+    expect(alternative.disabled).toBe(false); // Opens verified choices; it does not launch an unapproved preview.
     expect(egerie.textContent).toContain("This exact option isn't approved for AI room preview.");
   });
 

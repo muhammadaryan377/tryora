@@ -165,14 +165,15 @@ describe("dependent fabric and colour popup", () => {
     const original = { id: "1", image: null, options: { ...popup.pageOptions } };
     const target = { id: "2", image: null, options: { ...popup.pageOptions, Fabric: "Boucle", "Other bed choices": "Boucle: Cream | Headboard: Tall | Storage: None" } };
     popup.cfg.swatches = [
-      { value: "Velvet", label: "Velvet", group: null, available: true, image: null, colour: null, variants: [original] },
+      { value: "Velvet", label: "Velvet", group: null, available: true, image: null, colour: "#b91c1c", variants: [original] },
       { value: "Boucle", label: "Boucle", group: null, available: true, image: null, colour: null, variants: [target] },
     ];
     expect(popup.selectedVariant("Velvet")).toEqual(original);
     expect(popup.selectedVariant("Boucle")).toBeNull();
     const html = popup.swatches();
     expect(html).toContain("tryora__sw--fabric");
-    expect(html).toContain("Colour choices have not been mapped");
+    expect(html).toContain("has not linked separate colour choices");
+    expect(html).not.toContain('style="background:#b91c1c"');
     expect(html).not.toContain('aria-label="Colour"');
     expect(html).not.toContain("<img");
     expect(popup.pageOptions["Other bed choices"]).toBe(composite);
