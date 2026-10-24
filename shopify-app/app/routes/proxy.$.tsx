@@ -25,7 +25,7 @@ import {
   streamAssistantTurn,
 } from "../assistant/turn-routes.server";
 import { warmAssistantCatalogue } from "../assistant/catalogue.server";
-import { loadCatalogueSuggestions } from "../assistant/suggestions.server";
+import { loadCatalogueWelcome } from "../assistant/suggestions.server";
 import { logAssistant } from "../assistant/log.server";
 
 /**
@@ -74,7 +74,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     try {
       guardAssistantRead(session.shop, url.searchParams.get("visitor") ?? "");
       await requireAssistantEnabled(session.shop);
-      return json({ suggestions: await loadCatalogueSuggestions(admin, session.shop, url.searchParams.get("product") ?? undefined) });
+      return json(await loadCatalogueWelcome(admin, session.shop, url.searchParams.get("product") ?? undefined));
     } catch {
       return json({ suggestions: [] });
     }
@@ -82,7 +82,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   if (path === "assistant/options") {
     try {
       guardAssistantRead(session.shop, url.searchParams.get("visitor") ?? "");
-      return json(await productOptionsForAssistant(admin, session.shop, url.searchParams.get("product") ?? ""));
+      return json(await productOptionsForAssistant(admin, session.shop, url.searchParams.get("product") ?? "", url.searchParams.get("sourceVariant") ?? undefined));
     } catch (e) {
       const code = errorCode(e);
       return json({ error: code }, code === "RATE_LIMITED" ? 429 : code === "NOT_FOUND" || code === "BAD_REQUEST" ? 404 : 503);

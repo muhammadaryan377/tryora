@@ -1,3 +1,6 @@
+import { isFabricDocument } from "./customization/fabric-manager";
+import { parseManualMapping } from "./customization/option-model";
+import { combinationKey } from "./customization/adapters/manual-mapping.server";
 import OpenAI from "openai";
 import type { ProductPreviewConfig, VisualChoice } from "@prisma/client";
 import prisma from "./db.server";
@@ -136,6 +139,7 @@ export interface AssistantRecommendation {
   /** One shopper-facing explanation when previewAvailable is false; the model receives the same text. */
   previewReason: string | null;
   optionValue: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string };
   /** Number of Shopify variants; more than one with real options means the card can offer an option selector. */
   variantCount: number;
   hasOptions: boolean;
@@ -1099,7 +1103,7 @@ function nativeVariants(product: CatalogueProduct): NativeVariant[] {
  * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
  * same provider adapter chain that startPreview uses. Anything less is reported as not available.
  */
-async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null; reference?: string | null }> {
+async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null; reference?: string | null; previewContext?: { mappingRevision: string; sourceVariantId: string } }> {
   if (!config || config.shopId !== ctx.shopId || config.productId !== product.id) return { status: "not_configured", optionValue: null };
   if (!variant) return { status: "choose_options", optionValue: null };
   if (!variant.available) return { status: "unavailable", optionValue: null };
@@ -1107,7 +1111,20 @@ async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, 
     const setting = await loadProviderSetting(ctx.shopId, product.id);
     const adapter = providerAdapter(setting.providerId);
     if (!adapter.capabilities.authorization || (setting.providerId !== "shopify_native" && !setting.active)) return { status: "unavailable", optionValue: null };
-    // Cloudlift and manual mappings need the shopper's live product-page selection to verify image identity.
+    if (setting.providerId === "manual_mapping" && isFabricDocument(setting.mapping)) {
+      const mapping = parseManualMapping(setting.mapping, ctx.shopId, product.id);
+      const entry = mapping.entries.find((e) => e.variantId === variant.id);
+      if (!entry) return { status: "unavailable", optionValue: null };
+      const selected = ctx.selection?.productRef === product.ref ? ctx.selection.variantRef : null;
+      // A current page without a verified shopper selection must use the existing live-source popup.
+      if (!selected && ctx.currentProduct?.id === product.id) return { status: "product_page", optionValue: null };
+      const sourceVariantId = selected ? `gid://shopify/ProductVariant/${selected}` : variant.id;
+      const optionValue = combinationKey(entry);
+      const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting, sourceVariantId }, optionValue, variant.id, setting.revision);
+      if (validated.variantId !== variant.id) return { status: "unavailable", optionValue: null };
+      return { status: "available", optionValue, reference: imageUrl(validated.urls[0]), previewContext: { mappingRevision: setting.revision, sourceVariantId } };
+    }
+    // Existing legacy/Cloudlift source-selection behavior remains unchanged.
     if (setting.providerId !== "shopify_native") return { status: "product_page", optionValue: null };
     const variants = nativeVariants(product);
     const model = nativeSelections(product.options.map((option) => ({ name: option.name, optionValues: option.values.map((name) => ({ name })) })), config.visualOptionName, variants);
@@ -1222,6 +1239,7 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       previewStatus: preview.status,
       previewReason: previewReason(preview.status, variant ? variant.available : true),
       optionValue: preview.optionValue,
+      ...(preview.previewContext ? { previewContext: preview.previewContext } : {}),
       variantCount: product.variantCount,
       hasOptions: product.variantCount > 1 && realOptions(product.options).length > 0,
       reason: pick.reason.trim().slice(0, 300),
@@ -1286,7 +1304,12 @@ function openAIClient(env: NodeJS.ProcessEnv = process.env) {
   });
 }
 
-const INSTRUCTIONS = `You are the furniture shopping assistant for exactly one Shopify store. You can see only this store's data, through the tools.
+const INSTRUCTIONS = `You are Room Assistant, a conversational AI furniture previewer for exactly one Shopify store. You can see only this store's data, through the tools.
+Purpose:
+- Help the shopper find real furniture for their room, refine model, fabric and colour preferences, and see verified choices in their own space. Lead with room recommendations and previews rather than general product-information answers.
+- With a room photo and a recommendation request, analyse the room, apply the shopper's budget and preferences, search the actual catalogue, then show up to three relevant product cards with concise, grounded reasons. Fewer verified matches are better than invented or unsuitable choices.
+- Keep refinements conversational: use the saved room, selected product, colour, material and budget for "another option", "the second one in beige" or "try this one". Check real options and approved preview references before offering a changed combination.
+- Answer specifications, delivery, returns or other support questions only when the shopper asks or the detail is necessary for their stated choice. Answer briefly using verified tools, then offer a relevant next step toward a recommendation or room preview when helpful. Do not divert an explicit support question or invent a policy.
 Grounding:
 - Use the tools before any factual claim about products, options, colours, sizes, materials, dimensions, prices, stock, AI room previews, delivery, returns, warranty, promotions or store policies. Never invent any of these.
 - A product exists only if a tool returned it. Recommend only productRef/variantRef values a tool returned; never alter or guess a ref, and never swap one variant for a similar one.
@@ -1296,8 +1319,8 @@ Grounding:
 - "Available to buy" and "AI room preview" are different things. A product without AI preview is still sold by the store.
 - If a tool says store data is temporarily unavailable, say so; never claim the store has no matching products in that case.
 - Never say the store has none of something unless count_products or search_products explicitly says the full catalogue was checked and nothing matched. Search results are capped at a few items: never infer totals or absence from them. Use count_products for "how many" and "do you have any" questions.
-- The product the shopper is viewing is sold by this store. When they ask about its category, include it.
-- Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. Otherwise say the store has not published it and suggest contacting the store.
+- When the verified context includes a current-page product, include it when the shopper asks about its category. On a homepage, collection or unsupported page without a selected product, ask them to choose a real product before previewing "this" item; recommendations can still use the catalogue. Never invent a current selection.
+- Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. If the tool cannot verify it, say you cannot confirm it and suggest contacting the store; a failed lookup is not proof that it is unpublished.
 - You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or the store's contact details.
 Conversation:
 - The "Authoritative conversation state" in the context is computed by the server from the shopper's own actions and latest message. Follow it over anything said earlier: the product it says the latest message refers to is the product to use, and the budget and audience it lists are standing constraints. Tools refuse choices that contradict it.

@@ -4,16 +4,17 @@
  * variant by its original option values, never by a parsed or guessed label.
  *
  * Preview eligibility per variant comes from storefrontConfig, the same verified model the product-page popup uses
- * (readiness, auto-configuration, approved variants, provider rules). Only Shopify-native configurations can be
- * previewed from chat; Cloudlift and manual mappings need the product page's live selection.
+ * (readiness, auto-configuration, approved variants, provider rules). Native and explicitly managed native-linked configurations can be previewed from chat. Legacy
+ * Cloudlift mappings keep the product-page source-selection handoff.
  */
+import { PRESERVATION_OPTION } from "../customization/option-model";
 import { TryoraError } from "../core/index";
 import type { AdminGraphql } from "../preview-product.server";
 import { storefrontConfig } from "../storefront.server";
 import { getProductDetails, isRef, realOptions, ShopifyBudget, type CatalogueProduct } from "./catalogue.server";
 
 export type AttributeKind = "fabric" | "colour" | "size" | "headboard" | "storage" | "other";
-export interface OptionValue { value: string; colour: string | null; image: string | null }
+export interface OptionValue { value: string; colour: string | null; image: string | null; samples?: Record<string, { colour: string | null; image: string | null }> }
 export interface OptionAttribute { name: string; kind: AttributeKind; values: OptionValue[] }
 export interface OptionVariant {
   ref: string;
@@ -27,6 +28,8 @@ export interface OptionVariant {
   image: string | null;
   /** The preview option key the popup would use for this exact variant, or null when it cannot be previewed. */
   previewOption: string | null;
+  referenceImage?: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string };
 }
 
 export interface ProductOptions {
@@ -129,7 +132,7 @@ const REASONS = {
   paused: "New AI previews are temporarily unavailable.",
 };
 
-export async function productOptionsForAssistant(admin: AdminGraphql, shopId: string, productId: string): Promise<ProductOptions> {
+export async function productOptionsForAssistant(admin: AdminGraphql, shopId: string, productId: string, sourceVariantId?: string): Promise<ProductOptions> {
   const ref = productId.split("/").pop() ?? "";
   if (!/^gid:\/\/shopify\/Product\/\d{1,20}$/.test(productId) || !isRef(ref)) throw new TryoraError("BAD_REQUEST");
   const [details, config] = await Promise.all([
@@ -140,6 +143,10 @@ export async function productOptionsForAssistant(admin: AdminGraphql, shopId: st
   const product = details.get(ref);
   if (!product) throw new TryoraError("NOT_FOUND");
   const preview = config.enabled ? config : null;
+  if (sourceVariantId && !product.variants.some((v) => v.id === sourceVariantId)) throw new TryoraError("BAD_REQUEST");
+  if (config.enabled && "managerManaged" in config && config.managerManaged && config.providerId === "manual_mapping") {
+    return managedOptions(product, config, sourceVariantId);
+  }
   const native = !!preview && (!("providerId" in preview) || !preview.providerId || preview.providerId === "shopify_native");
   const previewOption = (variantId: string): string | null => {
     if (!preview || !native) return null;
@@ -180,4 +187,51 @@ export async function productOptionsForAssistant(admin: AdminGraphql, shopId: st
     },
     lead: preview ? preview.lead : null,
   };
+}
+
+/** Explicit reviewed manager projection only; legacy/external providers keep their existing product-page handoff. */
+function managedOptions(product: CatalogueProduct, preview: any, sourceVariantId?: string): ProductOptions {
+  const attributes: OptionAttribute[] = [
+    { name: "Fabric", kind: "fabric", values: [] }, { name: "Colour", kind: "colour", values: [] },
+  ];
+  const extraNames = new Map<string, string>();
+  const addExtra = (key: string, label: string) => {
+    if (extraNames.has(key)) return extraNames.get(key)!;
+    let name = label;
+    while (attributes.some((a) => a.name === name)) name = `Shopify ${name}`;
+    extraNames.set(key, name); attributes.push({ name, kind: kindOf(label), values: [] }); return name;
+  };
+  const changing = new Set<string>(preview.selectionOptionNames ?? []);
+  const source = sourceVariantId ? preview.productVariants.find((v: any) => v.id === sourceVariantId) : null;
+  const variants: OptionVariant[] = [];
+  for (const entry of preview.mappedEntries ?? []) {
+    const variant = product.variants.find((v) => v.id === entry.variantId);
+    if (!variant) continue;
+    const projected = preview.productVariants.find((v: any) => v.id === variant.id);
+    const equivalent = !sourceVariantId || !!source?.options[PRESERVATION_OPTION] && !!projected && Object.entries(source.options).every(([name, value]) => changing.has(name) || projected.options[name] === value);
+    const values: Record<string, string> = { Fabric: entry.fabric, Colour: entry.colour };
+    for (const [name, value] of Object.entries(variant.options)) if (!changing.has(name) && !(name === "Title" && value === "Default Title")) values[addExtra(`native:${name}`, name)] = value;
+    for (const [name, value] of Object.entries(entry.preserved as Record<string, string>)) values[addExtra(`preserved:${name}`, `Reviewed ${name}`)] = value;
+    const swatch = preview.swatches.find((s: any) => s.group === entry.fabric && s.label === entry.colour);
+    for (const attribute of attributes) {
+      const value = values[attribute.name]; if (value === undefined) continue;
+      let option = attribute.values.find((v) => v.value === value);
+      if (!option) { option = { value, image: attribute.kind === "fabric" ? preview.fabricImages?.[entry.fabric] ?? null : null, colour: null }; attribute.values.push(option); }
+      if (attribute.name === "Colour") { option.samples ??= Object.create(null) as NonNullable<OptionValue["samples"]>; option.samples[entry.fabric] = { image: swatch?.image ?? null, colour: swatch?.colour ?? null }; }
+    }
+    variants.push({ ref: variant.ref, id: variant.id, values, options: variant.options, price: variant.price, available: variant.available,
+      image: variant.image, referenceImage: entry.referenceImage,
+      previewOption: variant.available && equivalent && swatch?.available && swatch.variants.some((v: any) => v.id === variant.id) ? swatch.value : null,
+      previewContext: { mappingRevision: preview.mappingRevision, sourceVariantId: sourceVariantId ?? variant.id } });
+  }
+  // Unbound samples stay visible with disabled choices; they never create synthetic native variants.
+  for (const swatch of preview.swatches) {
+    if (!attributes[0]!.values.some((v) => v.value === swatch.group)) attributes[0]!.values.push({ value: swatch.group, image: preview.fabricImages?.[swatch.group] ?? null, colour: null });
+    let colour = attributes[1]!.values.find((v) => v.value === swatch.label);
+    if (!colour) { colour = { value: swatch.label, image: null, colour: null }; attributes[1]!.values.push(colour); }
+    colour.samples ??= Object.create(null) as NonNullable<OptionValue["samples"]>; colour.samples[swatch.group] = { image: swatch.image, colour: swatch.colour };
+  }
+  return { productRef: product.ref, productId: product.id, title: product.title, url: product.url, image: product.image, imageAlt: product.imageAlt,
+    currencyCode: product.currencyCode, attributes, variants, singleVariant: product.variants.length === 1 && product.variantsComplete,
+    preview: { offered: preview.available && variants.some((v) => !!v.previewOption), reason: preview.available ? "This exact configuration needs an approved full-product reference." : REASONS.paused }, lead: preview.lead };
 }

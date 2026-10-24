@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isFabricDocument, parseFabricDocument } from "./fabric-manager";
 import type { NativeVariant } from "../core/customization";
 
 export const PRESERVATION_OPTION = "__tryora_preserved_configuration__";
@@ -28,6 +29,23 @@ export function preservationKey(entry: ManualEntry) { return createHash("sha256"
 
 /** Strict input boundary. Labels and full native strings are never parsed by delimiter. */
 export function parseManualMapping(input: unknown, shopId: string, productId: string): ManualMapping {
+  if (isFabricDocument(input)) {
+    const document = parseFabricDocument(input, shopId, productId), published = document.published;
+    if (published) {
+      if (!Array.isArray(published.entries) || canonicalOptions(document.draft.roles as Record<string, string>) !== canonicalOptions(published.roles as Record<string, string>)) throw new Error("Conflicting published roles.");
+      const samples = new Set(document.draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]).filter(Boolean));
+      for (const e of published.entries) {
+        const binding = document.draft.bindings.find((b) => b.id === e?.id), fabric = document.draft.fabrics.find((f) => f.id === e?.fabric?.id);
+        const colour = fabric?.colours.find((c) => c.id === e?.colour?.id);
+        if (!binding || !fabric?.enabled || !colour?.enabled || !binding.reviewed || Object.keys(binding.externalValues).length ||
+            binding.fabricId !== fabric.id || binding.colourId !== colour.id || e.fabric.label !== fabric.name || e.colour.label !== colour.name ||
+            binding.variantId !== e.variantId || canonicalOptions(binding.nativeOptions) !== canonicalOptions(e.nativeOptions) ||
+            canonicalOptions(binding.preserved) !== canonicalOptions(e.preserved) || JSON.stringify(binding.referenceMediaIds) !== JSON.stringify(e.referenceMediaIds) ||
+            (colour.swatchMediaId ?? undefined) !== e.swatchMediaId || e.referenceMediaIds.some((id) => samples.has(id))) throw new Error("Published mapping conflicts with merchant-reviewed fabric data.");
+      }
+    }
+    input = published;
+  }
   if (!record(input) || !exactKeys(input, ["schemaVersion", "providerId", "shopId", "productId", "reviewed", "roles", "entries"]) ||
     input.schemaVersion !== 1 || input.providerId !== "manual_mapping" || input.shopId !== shopId || input.productId !== productId ||
     input.reviewed !== true || !record(input.roles) || !exactKeys(input.roles, ["fabric", "colour", "composite", "size"]) ||
