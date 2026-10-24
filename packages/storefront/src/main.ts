@@ -881,7 +881,7 @@ export class Tryora {
       (mobile && all.length > 5 ? '<button class="tryora__link" data-act="more">All ' + all.length + ' options</button>' : '') +
       (all.some((x) => !this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">Some options cannot be previewed with your selected size and configuration. Keep your product-page choices or ask the store about a verified preview.</p>' : '') +
       (this.cfg.fabricOptionName && !all.some((x) => this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">No supported colours for this fabric and the selected product options.</p>' : '') +
-      (!this.cfg.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? '') ? '<p class="tryora__small">Colour choices have not been mapped for this preview. Only verified fabric configurations can be previewed.</p>' : '') + '</div>';
+      (!this.cfg.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? '') ? '<p class="tryora__small">This store has not linked separate colour choices to these fabrics for AI preview yet. Select an available verified fabric above, or ask the store to complete its fabric and colour mapping.</p>' : '') + '</div>';
   }
 
   private selectedVariant(value: string): VariantChoice | null {
@@ -902,11 +902,14 @@ export class Tryora {
     const available = x.available && !!this.selectedVariant(x.value);
     const disabled = locked || (!available && !viewed);
     const label = x.label ?? x.value;
-    const text = !x.image && !x.colour;
+    // A Shopify colour chip is not a fabric texture. Without a real sample image, display
+    // a readable fabric label instead of a large, misleading solid-colour tile.
+    const fabricOnly = !this.cfg.fabricOptionName && /fabric/i.test(this.cfg.selectorLabel ?? this.cfg.optionName ?? "");
+    const text = !x.image && (fabricOnly || !x.colour);
     return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-unavailable ' : '') + (text ? 'is-text' : '') +
       '" data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
       ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', preview not supported for selected options' : '') + '">' +
-      '<span class="tryora__chip"' + (!x.image && x.colour ? ' style="background:' + esc(x.colour) + '"' : '') + '>' +
+      '<span class="tryora__chip"' + (!text && !x.image && x.colour ? ' style="background:' + esc(x.colour) + '"' : '') + '>' +
       (x.image ? '<img src="' + esc(x.image) + '" alt="' + esc(label) + '" loading="lazy">' : text ? esc(label) : '') + '</span>' +
       (text ? '' : '<span class="tryora__sname">' + esc(label) + '</span>') +
       (locked && !selected ? '<span class="tryora__lock" aria-hidden="true">' + LOCK + '</span>' : '') +

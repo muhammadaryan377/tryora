@@ -91,14 +91,16 @@ describe.skipIf(process.env.TRYORA_E2E !== "1")("premium popup in Chrome (synthe
     const source = { id: "1", image: null, options: { Fabric: labels[0], Size: "King", Composite: "opaque cream tuple" } };
     const config = { ...base, fabricOptionName: null, optionName: "Fabric", selectorLabel: "Fabric",
       selectionOptionNames: ["Fabric"], productVariants: [source],
-      swatches: labels.map((value, i) => ({ value, label: value, group: null, image: null, colour: null,
+      swatches: labels.map((value, i) => ({ value, label: value, group: null, image: null, colour: i === 0 ? "#b91c1c" : null,
         available: true, variants: i ? [{ ...source, id: String(i + 1), options: { ...source.options, Fabric: value, Composite: "different exact tuple" } }] : [source] })) };
     const { page, context } = await open(config, width);
     try {
       expect(await page.locator(".tryora__s:disabled").count()).toBe(4);
       expect(await page.locator(".tryora__sold").count()).toBe(0);
       expect(await page.locator(".tryora__s img").count()).toBe(0);
-      expect(await page.locator(".tryora__sw").textContent()).toContain("Colour choices have not been mapped");
+      expect(await page.locator('.tryora__s').first().getAttribute('class')).toContain('is-text');
+      expect(await page.locator('.tryora__chip').first().getAttribute('style')).toBeNull();
+      expect(await page.locator(".tryora__sw").textContent()).toContain("has not linked separate colour choices");
       const chips = await page.locator(".tryora__chip").evaluateAll((elements: Element[]) => elements.map((element) => {
         const rect = element.getBoundingClientRect();
         return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom,

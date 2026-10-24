@@ -445,8 +445,19 @@ html.tryora-assistant-locked { overflow: hidden; }
 
 /* Product preview selector: verified samples and fabric text have different geometry. */
 .tryora__sw--fabric .tryora__swrow {
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(86px, 104px));
+  justify-content: start;
   align-items: start;
+}
+.tryora__sw--fabric .tryora__s:not(.is-text) .tryora__chip {
+  max-height: 104px;
+  border-radius: 10px;
+}
+.tryora__sw--fabric .tryora__swrow--scroll {
+  display: flex;
+}
+.tryora__sw--fabric .tryora__swrow--scroll .tryora__s {
+  flex: 0 0 96px;
 }
 .tryora__sw--fabric .tryora__s.is-text .tryora__chip {
   box-sizing: border-box; width: 100%; min-height: 44px; overflow-wrap: anywhere;

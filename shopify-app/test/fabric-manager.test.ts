@@ -154,6 +154,15 @@ describe("authenticated two-mode admin", () => {
     expect(view.selected).toMatchObject({ title: "Synthetic bed", mode: "native", explicitlyOff: true });
     expect(state.writes).toEqual([]);
   });
+  it("keeps native management available when the reviewed provider table is absent", async () => {
+    vi.mocked(prisma.customizationConfig.findMany).mockRejectedValueOnce(
+      Object.assign(new Error("Missing provider table"), { code: "P2021" }));
+    const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
+    expect(view.installationReady).toBe(false);
+    expect(view.manualSetupReason).toContain("customization database table");
+    expect(view.selected?.mode).toBe("native");
+    expect(state.writes).toEqual([]);
+  });
   it("saves product-scoped Manual then Native mode while preserving explicit OFF and the manual draft", async () => {
     const f = snapshot();
     await saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft: f.draft });
@@ -235,6 +244,38 @@ describe("authenticated two-mode admin", () => {
     await expect(action({ request: request({}) } as any)).rejects.toMatchObject({ status: 401 });
     state.authenticate.mockResolvedValue({ admin: state.admin, session: { shop: shopId } });
     expect(await action({ request: request({}, "gid://shopify/Product/999") } as any)).toHaveProperty("error");
+    expect(state.writes).toEqual([]);
+  });
+  it("allows an authorized merchant to upload a fabric swatch before the first Manual Setup save", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+    const original = state.admin.graphql;
+    let marker = "";
+    state.admin.graphql = async (query: string, variables: any) => {
+      if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: {
+        stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/sample.jpg", parameters: [] }],
+        userErrors: [],
+      } } });
+      if (query.includes("TryoraAttachFabricImage")) {
+        marker = variables.variables.media[0].alt;
+        return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } });
+      }
+      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: {
+        nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/sample.jpg" } }],
+      } } } });
+      return original(query, variables);
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+    const form = new FormData();
+    form.set("intent", "upload"); form.set("mode", "manual"); form.set("purpose", "sample"); form.set("revision", "");
+    form.set("image", new Blob([image], { type: "image/png" }), "fabric.png");
+    const result = await action({ request: new Request(
+      `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`,
+      { method: "POST", body: form },
+    ) } as any);
+    expect(result).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991" } });
+    expect(state.rows).toEqual([]); // Upload does not activate Manual Setup or authorize previews.
+    expect(state.config.enabled).toBe(false);
     expect(state.writes).toEqual([]);
   });
   it("blocks native-mode image uploads before any Shopify mutation", async () => {

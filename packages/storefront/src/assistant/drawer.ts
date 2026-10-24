@@ -1159,6 +1159,7 @@ export class RoomAssistant {
     const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
     const choose = !!item.hasOptions && !item.variantRef && item.previewStatus === "choose_options";
     const unavailable = !item.previewAvailable && !choose;
+    const tryAnotherAppearance = unavailable && item.hasOptions === true && item.purchaseAvailable && item.previewStatus === "unavailable" && this.config.previewsAvailable !== false;
     const reason = item.previewStatus === "not_configured" ? "AI room preview is not configured for this product." : item.previewReason ?? (item.previewStatus === "product_page"
       ? "This configuration cannot be safely previewed in chat yet. Choose another verified appearance or product."
       : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
@@ -1184,7 +1185,9 @@ export class RoomAssistant {
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" href="${escapeHtml(item.url)}">View details</a>
           ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : "Preview in my room"}</button>`
-            : choose ? `<button type="button" class="tryora-assistant__primary" data-ta="options" data-card="${escapeHtml(key)}">Preview in my room</button>` : unavailable ? `<button type="button" class="tryora-assistant__primary" disabled aria-describedby="ta-why-${id}">Preview in my room</button>` : ""}
+            : choose ? `<button type="button" class="tryora-assistant__primary" data-ta="options" data-card="${escapeHtml(key)}">Choose a preview option</button>`
+            : tryAnotherAppearance ? `<button type="button" class="tryora-assistant__primary" data-ta="options" data-card="${escapeHtml(key)}" aria-describedby="ta-why-${id}">Check other appearances</button>`
+            : unavailable ? `<button type="button" class="tryora-assistant__primary" disabled aria-describedby="ta-why-${id}">Preview in my room</button>` : ""}
         </div>
         ${unavailable ? `<p class="tryora-assistant__image-note" id="ta-why-${id}">${escapeHtml(reason)}</p>` : ""}
         ${choose && !panel ? `<p class="tryora-assistant__image-note">Choose an available fabric or colour to check your preview.</p>` : ""}

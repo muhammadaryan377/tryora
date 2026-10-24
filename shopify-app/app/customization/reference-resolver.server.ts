@@ -5,7 +5,7 @@ import type { NativeVariant } from "../core/customization";
 export async function nativeSnapshot(admin: AdminGraphql, productId: string, includeMedia = true, prefetched?: { product: any; variants: NativeVariant[] }) {
   let product: any = prefetched?.product;
   if (product?.id && product.id !== productId) throw new TryoraError("NOT_FOUND");
-  const variants: NativeVariant[] = [...(prefetched?.variants ?? [])], media: { id: string; image?: { url: string } | null }[] = [];
+  const variants: NativeVariant[] = [...(prefetched?.variants ?? [])], media: { id: string; alt?: string | null; image?: { url: string } | null }[] = [];
   const deadline = Date.now() + 20_000;
   async function pages(query: string, field: "variants" | "media") {
     let after: string | null = null;
