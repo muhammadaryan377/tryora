@@ -20,7 +20,7 @@ export const PREVIEW_PRODUCT_QUERY = `#graphql
 export const PREVIEW_MEDIA_QUERY = `#graphql
   query TryoraPreviewMedia($id: ID!, $after: String) {
     product(id: $id) { media(first: 250, after: $after) {
-      nodes { ... on MediaImage { id image { url } } }
+      nodes { ... on MediaImage { id alt image { url } } }
       pageInfo { hasNextPage endCursor }
     } }
   }`;
