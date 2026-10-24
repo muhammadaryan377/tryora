@@ -458,6 +458,13 @@ export class RoomAssistant {
   /** Starts an AI preview for one verified card. Needs a room photo; asks for one if missing. */
   async startPreview(item: Recommendation) {
     if (!item.previewAvailable || this.config.previewsAvailable === false) return;
+    if (item.previewContext?.pageSourceVariantId && numeric(this.context.productId) === numeric(item.productId)) {
+      const current = this.context.currentVariantId?.();
+      if (current && numeric(current) !== numeric(item.previewContext.pageSourceVariantId)) {
+        this.state.entries.push({ id: uid(), kind: "notice", text: "The selected Shopify configuration changed. Reopen the product options before creating a preview.", at: Date.now() });
+        this.save(); this.renderAll(); return;
+      }
+    }
     // One job per card at a time: a double click never starts (or charges for) a second preview.
     if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === item.id)) return;
     if (this.attachment && !this.roomPhoto) { this.roomPhoto = this.attachment; this.attachment = null; this.renderComposer(); }
@@ -1387,7 +1394,7 @@ export class RoomAssistant {
    * cards for one product never disagree about whether it can be previewed.
    */
   private syncCards(items: Recommendation[], from?: string) {
-    const fields = ["price", "maxPrice", "currencyCode", "purchaseAvailable", "previewAvailable", "previewStatus", "previewReason", "optionValue", "referenceImage"] as const;
+    const fields = ["price", "maxPrice", "currencyCode", "purchaseAvailable", "previewAvailable", "previewStatus", "previewReason", "optionValue", "referenceImage", "previewContext"] as const;
     for (const item of items) {
       for (const entry of this.state.entries) {
         if (entry.kind !== "assistant" || entry.id === from) continue;
@@ -1414,17 +1421,25 @@ export class RoomAssistant {
       this.cardOptions.delete(key);
       return this.renderEntry(card.entry.id);
     }
-    const cached = this.optionsCache.get(card.item.productId);
+    const pageProduct = numeric(this.context.productId) === numeric(card.item.productId);
+    const rawSource = pageProduct ? this.context.currentVariantId?.() : null;
+    const sourceVariant = rawSource ? rawSource.startsWith("gid://") ? rawSource : `gid://shopify/ProductVariant/${rawSource}`
+      : card.item.previewContext?.sourceVariantId ?? card.item.variantId ?? "";
+    const cacheKey = `${card.item.productId}:${sourceVariant}`;
+    const cached = this.optionsCache.get(cacheKey);
     const panel: CardOptionsState = { productId: card.item.productId, data: cached ?? null, selections: cached ? selectionsFor(cached, card.item.variantRef) : {}, loading: !cached, error: "" };
     this.cardOptions.set(key, panel);
     this.renderEntry(card.entry.id);
     if (cached) return;
     try {
-      const response = await fetch(`${PROXY}/assistant/options?product=${encodeURIComponent(card.item.productId)}&visitor=${encodeURIComponent(storedVisitorId())}`, { credentials: "same-origin" });
+      const response = await fetch(`${PROXY}/assistant/options?product=${encodeURIComponent(card.item.productId)}&visitor=${encodeURIComponent(storedVisitorId())}${sourceVariant ? `&sourceVariant=${encodeURIComponent(sourceVariant)}` : ""}`, { credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok || !Array.isArray(body.variants)) throw new Error(body.error ?? "REQUEST_FAILED");
-      this.optionsCache.set(card.item.productId, body as ProductOptions);
+      this.optionsCache.set(cacheKey, body as ProductOptions);
       panel.data = body as ProductOptions;
+      if (pageProduct && rawSource) for (const v of panel.data.variants) {
+        if (v.previewContext) v.previewContext.pageSourceVariantId = sourceVariant;
+      }
       panel.selections = selectionsFor(panel.data, card.item.variantRef);
     } catch {
       panel.error = "Options couldn't be loaded just now. Please try again.";
@@ -1441,11 +1456,11 @@ export class RoomAssistant {
     if (!panel?.data || !card) return;
     const data = panel.data;
     panel.selections = { ...panel.selections, [attribute]: value };
-    // Drop earlier choices that no variant combines with this one (e.g. a colour from another fabric family).
-    for (const other of data.attributes) {
-      if (other.name === attribute || panel.selections[other.name] === undefined) continue;
-      const compatible = data.variants.some((variant) => Object.entries(panel.selections).every(([name, chosen]) => variant.values[name] === chosen));
-      if (!compatible) delete panel.selections[other.name];
+    // Fabric changes clear only its dependent colour. Size and other configuration never disappear.
+    const changed = data.attributes.find((a) => a.name === attribute);
+    if (changed?.kind === "fabric") {
+      const colour = data.attributes.find((a) => a.kind === "colour");
+      if (colour) delete panel.selections[colour.name];
     }
     const variant = resolveVariant(data, panel.selections);
     if (variant) {
@@ -1457,6 +1472,9 @@ export class RoomAssistant {
       this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef, source: "options" };
       this.syncCards([updated], card.entry.id);
       this.save();
+    } else {
+      card.entry.recommendations[card.index] = { ...card.item, previewAvailable: false, optionValue: null,
+        previewReason: "Complete the fabric and colour selection before previewing this configuration." };
     }
     this.renderAll();
   }

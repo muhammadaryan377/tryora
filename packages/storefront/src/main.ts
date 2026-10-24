@@ -53,6 +53,7 @@ interface Config {
   selectorLabel?: string | null;
   swatches: Swatch[];
   fabricOptionName?: string | null;
+  fabricImages?: Record<string, string>;
   selectionOptionNames?: string[];
   productVariants?: VariantChoice[];
   singleVariants?: VariantChoice[];
@@ -854,7 +855,7 @@ export class Tryora {
     const fabrics = [...new Set(this.cfg.swatches.map((x) => x.group).filter((v): v is string => !!v))];
     return '<p class="tryora__label">Choose fabric</p><div class="tryora__chips" role="group" aria-label="Fabric">' +
       fabrics.map((f) => '<button type="button" class="tryora__gchip" data-act="fabric" data-value="' + esc(f) +
-        '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + esc(f) + '</button>').join("") + '</div>';
+        '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + (this.cfg.fabricImages && Object.prototype.hasOwnProperty.call(this.cfg.fabricImages, f) && this.cfg.fabricImages[f] ? '<img class="tryora__fabric-image" src="' + esc(this.cfg.fabricImages[f]!) + '" alt="" loading="lazy">' : '') + esc(f) + '</button>').join("") + '</div>';
   }
 
   private swatches(locked = false): string {

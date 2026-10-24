@@ -521,3 +521,7 @@ html.tryora-assistant-locked { overflow: hidden; }
 }
 
 .tryora-assistant__heading h2 { font-family: Georgia, "Times New Roman", serif; font-weight: 700; letter-spacing: -.025em; }
+
+/* Merchant-provided fabric samples; no generated texture fallbacks. */
+.tryora__gchip:has(.tryora__fabric-image) { display: inline-flex; align-items: center; gap: 8px; border-radius: 12px; }
+.tryora__fabric-image { width: 36px; height: 36px; border-radius: 8px; object-fit: cover; flex: none; }

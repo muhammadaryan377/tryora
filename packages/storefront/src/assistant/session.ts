@@ -31,6 +31,7 @@ export interface Recommendation extends Money {
   /** Server-provided explanation when previewAvailable is false (optional for older saved conversations). */
   previewReason?: string | null;
   optionValue: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string; pageSourceVariantId?: string };
   variantCount?: number;
   hasOptions?: boolean;
   reason: string;

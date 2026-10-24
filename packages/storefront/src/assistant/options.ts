@@ -5,7 +5,7 @@
  */
 import type { Recommendation } from "./session.js";
 
-export interface OptionValue { value: string; colour: string | null; image: string | null }
+export interface OptionValue { value: string; colour: string | null; image: string | null; samples?: Record<string, { colour: string | null; image: string | null }> }
 export interface OptionAttribute { name: string; kind: "fabric" | "colour" | "size" | "headboard" | "storage" | "other"; values: OptionValue[] }
 export interface OptionVariant {
   ref: string;
@@ -16,6 +16,8 @@ export interface OptionVariant {
   available: boolean;
   image: string | null;
   previewOption: string | null;
+  referenceImage?: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string; pageSourceVariantId?: string };
 }
 export interface ProductOptions {
   productRef: string;
@@ -43,12 +45,16 @@ const matches = (variant: OptionVariant, selections: Record<string, string>, exc
 export function valuesFor(data: ProductOptions, attribute: OptionAttribute, selections: Record<string, string>): ValueState[] {
   const fabric = data.attributes.find((entry) => entry.kind === "fabric" && entry !== attribute);
   const family = attribute.kind === "colour" && fabric ? selections[fabric.name] : undefined;
+  const sampleFor = (option: OptionValue) => family && option.samples && Object.prototype.hasOwnProperty.call(option.samples, family) ? option.samples[family] : undefined;
   return attribute.values
-    .filter((option) => !family || data.variants.some((variant) => variant.values[fabric!.name] === family && variant.values[attribute.name] === option.value))
+    .filter((option) => !family || !!sampleFor(option) || data.variants.some((variant) => variant.values[fabric!.name] === family && variant.values[attribute.name] === option.value))
     .map((option) => {
-      const candidates = data.variants.filter((variant) => variant.values[attribute.name] === option.value && matches(variant, selections, attribute.name));
+      const dependentColour = attribute.kind === "fabric" ? data.attributes.find((a) => a.kind === "colour")?.name : undefined;
+      const kept = Object.fromEntries(Object.entries(selections).filter(([name]) => name !== dependentColour));
+      const candidates = data.variants.filter((variant) => variant.values[attribute.name] === option.value && matches(variant, kept, attribute.name));
       return {
         ...option,
+        ...(sampleFor(option) ?? {}),
         selected: selections[attribute.name] === option.value,
         disabled: candidates.length === 0,
         soldOut: candidates.length > 0 && candidates.every((variant) => !variant.available),
@@ -95,7 +101,8 @@ export function cardForVariant(item: Recommendation, data: ProductOptions, varia
     image: variant.image ?? data.image,
     imageAlt: optionText ? `${data.title}, ${optionText}` : data.title,
     imageSource: variant.image ? "variant" : data.image ? "product" : null,
-    referenceImage: null,
+    referenceImage: variant.referenceImage ?? null,
+    previewContext: variant.previewContext,
     previewAvailable: preview,
     previewStatus: preview ? "available" : data.preview.offered ? "unavailable" : "not_configured",
     previewReason: reason,

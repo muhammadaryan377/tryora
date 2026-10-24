@@ -803,6 +803,17 @@ describe("in-card options and conversation memory", () => {
     expect(JSON.parse(String(proxy.forms.at(-1)!.get("shown")))).toEqual([{ productRef: "3", variantRef: "32" }]);
   });
 
+  it("retains the selected size on a fabric change and cannot preview the old variant while colour is incomplete", async () => {
+    proxy.options = egerieOptions();
+    const chosen = { ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32", options: { Fabric: "Boucle", Colour: "Beige", Size: "King" }, previewAvailable: true, previewStatus: "available", optionValue: "Beige" };
+    await showCards([chosen]); click("[data-ta='options']"); await settle();
+    choose("Fabric", "Velvet");
+    expect(opt("Size", "King")!.getAttribute("aria-pressed")).toBe("true");
+    expect(opt("Colour", "Emerald")!.getAttribute("aria-pressed")).toBe("false");
+    expect($(".tryora-assistant__card [data-ta='preview']")).toBeNull();
+    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+    expect($(".tryora-assistant__card")!.textContent).toContain("Complete the fabric and colour selection");
+  });
   it("keeps preview disabled, with the reason, for an option that is not approved", async () => {
     proxy.options = egerieOptions();
     await showCards([egerieCard()]);
@@ -1071,6 +1082,27 @@ describe("catalogue welcome copy without question chips", () => {
   });
 });
 
+
+describe("managed preview transport", () => {
+  it("sends the exact reviewed revision and source variant through the existing preview backend", async () => {
+    const item = card({ previewContext: { mappingRevision: "reviewed-revision", sourceVariantId: "gid://shopify/ProductVariant/11" } });
+    const assistant = makeAssistant(); assistant.open(); await attachFile();
+    proxy.script([{ type: "visualise", item }], [{ type: "final", reply: { message: "Confirm this exact reference.", recommendations: [] } }, { type: "done" }]);
+    await type("Show this in my room"); click("[data-ta='send']"); await settle(60);
+    click(".tryora-assistant__visualise [data-ta='preview']"); await settle(1500);
+    const posted = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!.body!;
+    expect(posted.get("mappingRevision")).toBe("reviewed-revision");
+    expect(posted.get("sourceVariant")).toBe("gid://shopify/ProductVariant/11");
+    expect(posted.get("variant")).toBe("gid://shopify/ProductVariant/11");
+    expect($(".tryora-assistant__preview [download]")).not.toBeNull();
+  });
+  it("does not start a managed preview after its captured Shopify page configuration changes", async () => {
+    const assistant = makeAssistant({ currentVariantId: () => "12" }); assistant.open();
+    await assistant.startPreview(card({ previewContext: { mappingRevision: "r", sourceVariantId: "gid://shopify/ProductVariant/11", pageSourceVariantId: "gid://shopify/ProductVariant/11" } }));
+    expect($(".tryora-assistant__notice")!.textContent).toContain("Shopify configuration changed");
+    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+});
 
 describe("chat card popup handoff", () => {
   const result = () => ({

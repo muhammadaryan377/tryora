@@ -1,6 +1,6 @@
 ﻿/** Real Chrome rendering of the built popup with synthetic product/proxy data.
  * Opt in with TRYORA_E2E=1. No Shopify, OpenAI or production calls are made. */
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -19,6 +19,7 @@ const base = {
   enabled: true, available: true, productId: "gid://shopify/Product/1", product: "Synthetic Bed",
   productImage: null, itemNoun: "bed", placement: "replace", setting: "indoor",
   optionName: "Colour", selectorLabel: "Colour", fabricOptionName: "Fabric",
+  fabricImages: { Velvet: "/sample.svg", Boucle: "/sample.svg" },
   selectionOptionNames: ["Fabric", "Colour"], productVariants: variants, singleVariants: [],
   swatches: variants.map((v) => ({
     value: JSON.stringify([v.options.Fabric, v.options.Colour]), label: v.options.Colour,
@@ -66,6 +67,11 @@ describe.skipIf(process.env.TRYORA_E2E !== "1")("premium popup in Chrome (synthe
     const { page, context } = await open(base, width);
     try {
       expect(await page.locator(".tryora__sname").allTextContents()).toEqual(["Cream"]);
+      expect(await page.locator(".tryora__fabric-image").count()).toBe(2);
+      if (process.env.TRYORA_E2E_SCREENSHOTS) {
+        mkdirSync(process.env.TRYORA_E2E_SCREENSHOTS, { recursive: true });
+        await page.screenshot({ path: join(process.env.TRYORA_E2E_SCREENSHOTS, `manager-customer-selector-${width}.png`) });
+      }
       const sample = page.locator(".tryora__s img");
       expect(await sample.getAttribute("src")).toBe("/sample.svg");
       expect(await page.locator(".tryora__chip").first().evaluate((e: Element) => getComputedStyle(e).borderRadius)).toBe("50%");

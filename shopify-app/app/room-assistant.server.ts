@@ -1,3 +1,6 @@
+import { isFabricDocument } from "./customization/fabric-manager";
+import { parseManualMapping } from "./customization/option-model";
+import { combinationKey } from "./customization/adapters/manual-mapping.server";
 import OpenAI from "openai";
 import type { ProductPreviewConfig, VisualChoice } from "@prisma/client";
 import prisma from "./db.server";
@@ -136,6 +139,7 @@ export interface AssistantRecommendation {
   /** One shopper-facing explanation when previewAvailable is false; the model receives the same text. */
   previewReason: string | null;
   optionValue: string | null;
+  previewContext?: { mappingRevision: string; sourceVariantId: string };
   /** Number of Shopify variants; more than one with real options means the card can offer an option selector. */
   variantCount: number;
   hasOptions: boolean;
@@ -1099,7 +1103,7 @@ function nativeVariants(product: CatalogueProduct): NativeVariant[] {
  * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
  * same provider adapter chain that startPreview uses. Anything less is reported as not available.
  */
-async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null; reference?: string | null }> {
+async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<{ status: PreviewStatus; optionValue: string | null; reference?: string | null; previewContext?: { mappingRevision: string; sourceVariantId: string } }> {
   if (!config || config.shopId !== ctx.shopId || config.productId !== product.id) return { status: "not_configured", optionValue: null };
   if (!variant) return { status: "choose_options", optionValue: null };
   if (!variant.available) return { status: "unavailable", optionValue: null };
@@ -1107,7 +1111,20 @@ async function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, 
     const setting = await loadProviderSetting(ctx.shopId, product.id);
     const adapter = providerAdapter(setting.providerId);
     if (!adapter.capabilities.authorization || (setting.providerId !== "shopify_native" && !setting.active)) return { status: "unavailable", optionValue: null };
-    // Cloudlift and manual mappings need the shopper's live product-page selection to verify image identity.
+    if (setting.providerId === "manual_mapping" && isFabricDocument(setting.mapping)) {
+      const mapping = parseManualMapping(setting.mapping, ctx.shopId, product.id);
+      const entry = mapping.entries.find((e) => e.variantId === variant.id);
+      if (!entry) return { status: "unavailable", optionValue: null };
+      const selected = ctx.selection?.productRef === product.ref ? ctx.selection.variantRef : null;
+      // A current page without a verified shopper selection must use the existing live-source popup.
+      if (!selected && ctx.currentProduct?.id === product.id) return { status: "product_page", optionValue: null };
+      const sourceVariantId = selected ? `gid://shopify/ProductVariant/${selected}` : variant.id;
+      const optionValue = combinationKey(entry);
+      const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting, sourceVariantId }, optionValue, variant.id, setting.revision);
+      if (validated.variantId !== variant.id) return { status: "unavailable", optionValue: null };
+      return { status: "available", optionValue, reference: imageUrl(validated.urls[0]), previewContext: { mappingRevision: setting.revision, sourceVariantId } };
+    }
+    // Existing legacy/Cloudlift source-selection behavior remains unchanged.
     if (setting.providerId !== "shopify_native") return { status: "product_page", optionValue: null };
     const variants = nativeVariants(product);
     const model = nativeSelections(product.options.map((option) => ({ name: option.name, optionValues: option.values.map((name) => ({ name })) })), config.visualOptionName, variants);
@@ -1222,6 +1239,7 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       previewStatus: preview.status,
       previewReason: previewReason(preview.status, variant ? variant.available : true),
       optionValue: preview.optionValue,
+      ...(preview.previewContext ? { previewContext: preview.previewContext } : {}),
       variantCount: product.variantCount,
       hasOptions: product.variantCount > 1 && realOptions(product.options).length > 0,
       reason: pick.reason.trim().slice(0, 300),
