@@ -13,7 +13,8 @@ export type AssistantLogEvent =
   | "timeout"
   | "rate_limited"
   | "catalogue_loaded"
-  | "recommendation_dropped";
+  | "recommendation_dropped"
+  | "auto_config_failure";
 
 type Field = string | number | boolean | null | undefined;
 

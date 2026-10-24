@@ -46,7 +46,11 @@ export async function ensureAutoProductConfig(admin: AdminGraphql, shopId: strin
     }`, { variables: { id: gid } });
   const body: any = await res.json();
   const product = body.data?.product;
-  if (!res.ok || body.errors?.length || !product) return null;
+  if (!res.ok || body.errors?.length || !product) {
+    // Distinguishes "could not check" from "not eligible" in logs; both still mean no auto-configuration now.
+    console.warn(JSON.stringify({ component: "auto-products", event: "admin_query_failed", status: res.status, errors: body.errors?.length ?? 0 }));
+    return null;
+  }
   const media = (product.media?.nodes ?? []).filter((m: any) => m?.id && m?.image?.url);
   if (!isAutoEligibleProduct({ ...product, media })) return null;
   const category = autoFurnitureCategory(product.productType, product.title)!;
