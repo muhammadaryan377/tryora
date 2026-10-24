@@ -1,4 +1,4 @@
-import { useLoaderData, useActionData, useNavigation, useSubmit, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useActionData, useNavigation, useSubmit, useRouteError, isRouteErrorResponse, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { FabricColourManager } from "../components/fabric-colour-manager";
@@ -21,18 +21,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url), productId = productScope(request);
   const products = await fabricProducts(admin, url.searchParams.get("after") ?? undefined);
-  const access = providerAccess(session.shop), installationReady = access.enabled;
-  const manualSetupReason = access.reason === "rollout_disabled" ? "The app administrator must complete the reviewed provider-table rollout and enable the server feature gate. Shopify-native previews continue to work."
+  const access = providerAccess(session.shop); let installationReady = access.enabled;
+  let manualSetupReason = access.reason === "rollout_disabled" ? "The app administrator must complete the reviewed provider-table rollout and enable the server feature gate. Shopify-native previews continue to work."
     : access.reason === "invalid_allowlist" ? "The server customization allowlist is invalid. The app administrator must correct it before enabling Manual Setup. Shopify-native previews continue to work."
     : access.reason ? "The app administrator must authorize this Shopify installation in the server customization allowlist. Shopify-native previews continue to work." : "";
   if (!productId) return { products, installationReady, manualSetupReason, selected: null };
   let snapshot: Awaited<ReturnType<typeof nativeSnapshot>>;
   try { snapshot = await nativeSnapshot(admin, productId); }
   catch { throw new Response("This product could not be refreshed from Shopify. Return to Products or refresh to try again. Saved configuration is unchanged.", { status: 502 }); }
-  const [rows, config] = await Promise.all([
-    installationReady ? prisma.customizationConfig.findMany({ where: { shopId: session.shop, productId: { in: [STORE_DEFAULT, productId] } } }) : Promise.resolve([]),
-    prisma.productPreviewConfig.findUnique({ where: { shopId_productId: { shopId: session.shop, productId } }, include: { choices: true } }),
-  ]);
+  // The provider table has a separately reviewed migration. A partially deployed installation
+  // must not crash the entire merchant screen or silently create/modify its schema.
+  const config = await prisma.productPreviewConfig.findUnique({ where: { shopId_productId: { shopId: session.shop, productId } }, include: { choices: true } });
+  let rows: Awaited<ReturnType<typeof prisma.customizationConfig.findMany>> = [];
+  if (installationReady) {
+    try {
+      rows = await prisma.customizationConfig.findMany({ where: { shopId: session.shop, productId: { in: [STORE_DEFAULT, productId] } } });
+    } catch (error) {
+      if (!(error && typeof error === "object" && "code" in error && error.code === "P2021")) throw error;
+      installationReady = false;
+      manualSetupReason = "The customization database table is not installed. The app operator must complete the reviewed provider-table rollout before enabling Manual Setup. Shopify Native previews are unaffected.";
+    }
+  }
   const own = rows.find((r) => r.productId === productId), effective = effectiveSetting(session.shop, productId, rows);
   let importBlocked = false;
   let draft = emptyFabricDraft(), diagnostics: Record<string, string> = {}, warning = "";
@@ -99,4 +108,21 @@ export default function FabricsPage() {
       if (result.pending) throw new Error("Shopify is processing this image. Refresh from Shopify, then select the new image; do not upload it again.");
       return result.media;
     }} />;
+}
+
+/** Show a useful recovery screen rather than an empty Shopify embedded app on a loader failure. */
+export function ErrorBoundary() {
+  const error = useRouteError();
+  const detail = isRouteErrorResponse(error)
+    ? error.status === 502 ? "The Shopify product or media request failed. Try refreshing the product."
+      : error.status === 404 ? "This product is no longer available to this Shopify installation."
+      : `The page could not load (HTTP ${error.status}).`
+    : "The Fabrics & Colours page could not load its current product settings. Check the app installation and provider-table rollout.";
+  return <s-page heading="Fabrics & Colours">
+    <s-section heading="Configuration temporarily unavailable">
+      <s-banner heading="Couldn't open the fabric manager" tone="critical"><p role="alert">{detail}</p></s-banner>
+      <p>No product configuration has been changed by this failed page load.</p>
+      <s-link href="/app/fabrics">Return to product selection</s-link>
+    </s-section>
+  </s-page>;
 }
