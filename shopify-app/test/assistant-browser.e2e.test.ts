@@ -21,7 +21,11 @@ vi.mock("../app/db.server", () => ({
     productPreviewConfig: {
       findMany: vi.fn(async (args: any) => state.configs.filter((config) => config.shopId === args.where.shopId &&
         (!args.where.productId?.in || args.where.productId.in.includes(config.productId)))),
+      // The exact-variant preview check reads the same saved configuration.
+      findUnique: vi.fn(async (args: any) => state.configs.find((config) => config.shopId === args.where.shopId_productId.shopId && config.productId === args.where.shopId_productId.productId) ?? null),
+      findFirst: vi.fn(async (args: any) => state.configs.find((config) => config.shopId === args.where.shopId && config.productId === args.where.productId && config.enabled && config.readiness === "ready") ?? null),
     },
+    shop: { findUnique: vi.fn(async () => ({ autoEnableProducts: false })) },
     customizationConfig: { findMany: vi.fn(async () => []) },
   },
 }));
@@ -44,7 +48,7 @@ vi.mock("../app/storefront.server", () => ({
 import { loadCatalogueWelcome } from "../app/assistant/suggestions.server";
 import { cancelAssistantTurn, readAssistantTurn, startAssistantTurn, streamAssistantTurn } from "../app/assistant/turn-routes.server";
 import { setAssistantClientForTests } from "../app/room-assistant.server";
-import { productOptionsForAssistant } from "../app/assistant/options.server";
+import { checkVariantPreview, productOptionsForAssistant } from "../app/assistant/options.server";
 import { setAssistantLogSink } from "../app/assistant/log.server";
 import { fixtureAdmin, fixtureProduct, furnitureCatalogue, finalAnswer, toolCall } from "./fixtures/assistant-store";
 
@@ -230,6 +234,7 @@ async function route(req: IncomingMessage): Promise<Response> {
       return json({ ok: true });
     }
     if (path === "/apps/tryora/assistant/options") return json(await productOptionsForAssistant(admin, SHOP, url.searchParams.get("product") ?? ""));
+    if (path === "/apps/tryora/assistant/preview-check") return json(await checkVariantPreview(admin, SHOP, url.searchParams.get("product") ?? "", url.searchParams.get("variant") ?? "", url.searchParams.get("sourceVariant") || undefined));
   } catch (error: any) {
     if (process.env.TRYORA_E2E_DEBUG) console.error("harness", path, error);
     return json({ error: error?.code ?? "UNEXPECTED" }, 400);

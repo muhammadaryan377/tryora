@@ -246,6 +246,10 @@ describe("store-wide grounding", () => {
     expect(requests[0].input.at(-1).content[1].image_url).toMatch(/^data:image\/jpeg;base64,/);
     expect(requests[1].input.some((item: any) => item.type === "function_call_output")).toBe(true);
     expect(requests.every((request) => request.store === false)).toBe(true);
+    // Natural, concise replies by default; longer only when details are asked for.
+    expect(requests[0].instructions).toContain("Default to 1-3 short sentences, ideally under 50 words.");
+    expect(requests[0].instructions).toContain("Ask at most one follow-up question");
+    expect(requests[0].instructions).toContain("never repeat what the cards show");
     expect(prisma.productPreviewConfig.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ shopId: SHOP }) }));
   });
 
@@ -383,6 +387,20 @@ describe("visualisation in the conversation", () => {
     state.providerRows = [{ shopId: SHOP, productId: aria.id, providerId: "cloudlift", revision: "r1", active: true, mapping: null }];
     const cloudlift = await run(ref(aria.id), ref(variantOf(aria, { Colour: "Cream", Size: "King" }).id));
     expect(cloudlift.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not verified for an in-chat preview/) });
+  });
+
+  it("explains a missing exact reference precisely instead of a generic refusal, and logs the merchant action", async () => {
+    // Aurora-style dependent Fabric -> Colour product: the variant is eligible, but has no variant image and no approved
+    // reference for its exact fabric and colour, so the same validation as /preview refuses it.
+    const aurora = fixtureProduct({ id: 41, title: "Aurora Bed", productType: "Bed", options: { Fabric: ["Plush Velvet", "Boucle"], Colour: ["Cream", "Grey"] }, price: 899,
+      variantImage: () => null, media: [{ id: "gid://shopify/MediaImage/1", url: "https://cdn.shopify.com/aurora.jpg" }] });
+    state.configs = [{ ...ariaConfig(), productId: aurora.id, visualOptionName: "Colour", frozenContext: {}, referenceMediaId: "gid://shopify/MediaImage/1" }];
+    const velvet = variantOf(aurora, { Fabric: "Plush Velvet", Colour: "Cream" });
+    const { client } = scriptedModel([recommend([{ productRef: ref(aurora.id), variantRef: ref(velvet.id), reason: "Soft velvet suits the room." }]), finalAnswer("Option 1 suits it.")]);
+    const reply = await ask(fixtureAdmin([aurora]), client, "Recommend a bed", { shown: [{ productRef: ref(aurora.id), variantRef: ref(velvet.id) }] });
+    expect(reply.recommendations[0]).toMatchObject({ variantId: velvet.id, previewAvailable: false, previewStatus: "unavailable", optionValue: null,
+      previewReason: "The store hasn't approved a photo of this exact option for AI room preview yet." });
+    expect(logs).toContainEqual(expect.objectContaining({ event: "preview_unavailable", reason: "missing_reference", product: ref(aurora.id), variant: ref(velvet.id) }));
   });
 
   it("remembers stated preferences for later questions", async () => {

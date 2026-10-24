@@ -1464,11 +1464,45 @@ export class RoomAssistant {
       this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef, source: "options" };
       this.syncCards([updated], card.entry.id);
       this.save();
+      if (updated.previewAvailable) void this.confirmPreview(key, updated);
     } else {
       card.entry.recommendations[card.index] = { ...card.item, previewAvailable: false, optionValue: null,
         previewReason: "Complete the fabric and colour selection before previewing this configuration." };
     }
     this.renderAll();
+  }
+
+  /**
+   * The options model only says the popup would list this option. Before the card offers a preview, the server runs the
+   * same exact-variant validation as /preview (approved reference, fixed options, reviewed mapping) and gives the precise
+   * reason when it fails, so the button never starts a preview that can only be refused.
+   */
+  private async confirmPreview(key: string, item: Recommendation) {
+    const current = () => this.cardAt(key);
+    const stillShown = () => current()?.item.id === item.id;
+    const apply = (patch: Partial<Recommendation>) => {
+      const card = current();
+      if (!card || !stillShown()) return;
+      card.entry.recommendations[card.index] = { ...card.item, ...patch };
+      this.syncCards([card.entry.recommendations[card.index]!], card.entry.id);
+      this.save(); this.renderEntry(card.entry.id);
+    };
+    apply({ previewAvailable: false, previewStatus: "unavailable", previewReason: "Checking AI room preview for this option…" });
+    const params = new URLSearchParams({ product: item.productId, variant: item.variantId ?? "", visitor: storedVisitorId() });
+    if (item.previewContext?.sourceVariantId && item.previewContext.sourceVariantId !== item.variantId) params.set("sourceVariant", item.previewContext.sourceVariantId);
+    try {
+      const response = await fetch(`${PROXY}/assistant/preview-check?${params}`, { credentials: "same-origin" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.variantId !== item.variantId) throw new Error(body.error ?? "REQUEST_FAILED");
+      apply({
+        previewAvailable: !!body.previewAvailable, previewStatus: body.previewStatus, previewReason: body.previewReason ?? null,
+        optionValue: body.previewAvailable ? body.optionValue : null, referenceImage: body.referenceImage ?? item.referenceImage ?? null,
+        // The page source captured when the options opened still guards against a product-page change.
+        previewContext: body.previewContext ? { ...body.previewContext, pageSourceVariantId: item.previewContext?.pageSourceVariantId } : item.previewContext,
+      });
+    } catch {
+      apply({ previewAvailable: false, previewStatus: "unavailable", optionValue: null, previewReason: "AI room preview couldn't be checked just now. Please try again shortly." });
+    }
   }
 
   private optionsPanelHtml(key: string, panel: CardOptionsState) {
@@ -1490,7 +1524,7 @@ export class RoomAssistant {
           <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}">${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
-        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}">${buttons}</div></fieldset>`;
+        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}">${buttons}</div></fieldset>`;
     }).join("");
     const missing = data.attributes.filter((attribute) => panel.selections[attribute.name] === undefined).map((attribute) => attribute.name.toLowerCase());
     const status = missing.length ? (data.attributes.some((a) => a.kind === "size" && panel.selections[a.name] === undefined) ? "A verified product configuration is needed before this appearance can be previewed. No configuration has been chosen automatically." : `Choose ${missing.join(", ")}.`) : resolveVariant(data, panel.selections) ? "" : "That combination isn't available. Choose another option.";

@@ -47,6 +47,12 @@ function fakeProxy() {
     if (url.startsWith("/apps/tryora/preview/job1")) return respond({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "tok", expiresAt: Date.now() + 60_000 });
     if (url === "/apps/tryora/ack") return respond({ ok: true });
     if (url.startsWith("/apps/tryora/assistant/options?")) return proxy.options ? respond(proxy.options) : respond({ error: "NOT_FOUND" }, 404);
+    if (url.startsWith("/apps/tryora/assistant/preview-check?")) {
+      // By default the server confirms what the options model offered; a test can return a precise refusal instead.
+      const variantId = new URL(url, "https://shop.example").searchParams.get("variant");
+      const variant = proxy.options?.variants.find((v: any) => v.id === variantId);
+      return respond(proxy.check ?? { variantId, previewAvailable: true, previewStatus: "available", previewReason: null, optionValue: variant?.previewOption ?? null, referenceImage: null });
+    }
     if (url === "/apps/tryora/lead") {
       const email = String((init.body as FormData).get("email") ?? "");
       return email.includes("@") ? respond({ ok: true }) : respond({ error: "BAD_EMAIL" }, 400);
@@ -57,7 +63,7 @@ function fakeProxy() {
   const proxy = {
     suggestions: [] as string[],
     recommendation: null as any,
-    fetcher, forms, calls, turns, previewError: "" as string, options: null as any,
+    fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any,
     script(...batches: any[][]) { turns.push(batches); },
     hold() { let release!: () => void; pollGate = new Promise((resolve) => { release = resolve; }); return () => { pollGate = null; release(); }; },
   };
@@ -812,6 +818,10 @@ describe("in-card options and conversation memory", () => {
     expect(opt("Size", "King")).toBeNull();
     expect(opt("Colour", "Grey")!.classList.contains("is-soldout")).toBe(true);
     choose("Colour", "Beige");
+    // The exact selection is confirmed by the same server validation as /preview before the button is offered.
+    expect($(".tryora-assistant__card")!.textContent).toContain("Checking AI room preview for this option");
+    await settle(30);
+    expect(proxy.calls.some((call) => call.url.startsWith("/apps/tryora/assistant/preview-check?product=gid%3A%2F%2Fshopify%2FProduct%2F3&variant=gid%3A%2F%2Fshopify%2FProductVariant%2F32"))).toBe(true);
     expect($(".tryora-assistant__options [role='status']")).toBeNull();
     const egerie = $(".tryora-assistant__card")!;
     expect(egerie.querySelector(".tryora-assistant__price")!.textContent).toMatch(/899\.00/);
@@ -852,6 +862,19 @@ describe("in-card options and conversation memory", () => {
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
     expect($(".tryora-assistant__card")!.textContent).toContain("Complete the fabric and colour selection");
   });
+  it("shows the server's precise reason and never offers a preview the exact-variant check refuses", async () => {
+    proxy.options = egerieOptions();
+    proxy.check = { variantId: "gid://shopify/ProductVariant/32", previewAvailable: false, previewStatus: "unavailable", optionValue: null, referenceImage: null,
+      previewReason: "The store hasn't approved a photo of this exact option for AI room preview yet." };
+    await showCards([{ ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32" }]);
+    click("[data-ta='options']"); await settle(30);
+    choose("Fabric", "Boucle"); choose("Colour", "Beige"); await settle(30);
+    const egerie = $(".tryora-assistant__card")!;
+    expect(egerie.querySelector("[data-ta='preview']")).toBeNull();
+    expect(egerie.textContent).toContain("The store hasn't approved a photo of this exact option for AI room preview yet.");
+    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+
   it("keeps preview disabled, with the reason, for an option that is not approved", async () => {
     proxy.options = egerieOptions();
     await showCards([{ ...egerieCard(), variantRef: "31", variantId: "gid://shopify/ProductVariant/31" }]);
