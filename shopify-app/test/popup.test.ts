@@ -238,3 +238,73 @@ describe("dependent fabric and colour popup", () => {
     expect(popup.selectedVariant("__single__").id).toBe("4");
   });
 });
+
+
+describe("assistant-only popup delivery", () => {
+  function ready() {
+    const v = { id: "gid://shopify/ProductVariant/11", image: null, options: { Size: "King" } };
+    popup.cfg = { ...popup.cfg, productId: "gid://shopify/Product/1", product: "Aria Bed", singleVariants: [v], productVariants: [v] };
+    popup.pageOptions = { Size: "King" };
+    popup.state.generation = { option: "__single__", stage: "generating" };
+    vi.stubGlobal("document", { getElementById: () => null, querySelector: () => ({ value: "11" }) });
+    vi.stubGlobal("Image", class { src = ""; decode() { return Promise.resolve(); } });
+    URL.createObjectURL = vi.fn(() => "blob:decoded");
+    URL.revokeObjectURL = vi.fn();
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith("/preview")) return Response.json({ jobId: "job-chat" });
+      if (url.endsWith("/preview/job-chat")) return Response.json({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "token" });
+      if (url.startsWith("data:")) return new Response(new Blob(["image"], { type: "image/jpeg" }));
+      return Response.json({ ok: true });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    return fetcher;
+  }
+  it("delivers exact validated identity and blobs to chat, then acknowledges once", async () => {
+    const fetcher = ready();
+    const deliver = vi.fn((_result: unknown) => true);
+    popup.handoff = { deliver, closed: vi.fn(), leadDone: () => true };
+    const run = popup.generate("__single__", "photo");
+    await vi.advanceTimersByTimeAsync(1500); await run;
+    expect(deliver).toHaveBeenCalledOnce();
+    expect(deliver.mock.calls[0]![0]).toMatchObject({
+      jobId: "job-chat", productId: "gid://shopify/Product/1", variantId: "gid://shopify/ProductVariant/11",
+      selectedOptions: { Size: "King" }, image: expect.any(Blob), room: expect.any(Blob),
+    });
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/ack"))).toHaveLength(1);
+    expect(popup.state.results).toEqual({});
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:decoded");
+  });
+  it("does not acknowledge an image rejected by the chat destination", async () => {
+    const fetcher = ready();
+    popup.handoff = { deliver: vi.fn(() => false), closed: vi.fn(), leadDone: () => false };
+    const run = popup.generate("__single__", "photo");
+    await vi.advanceTimersByTimeAsync(1500); await run;
+    expect(fetcher.mock.calls.some(([url]) => url.endsWith("/ack"))).toBe(false);
+  });
+  it("keeps normal popup results local and never invokes the assistant destination", async () => {
+    const fetcher = ready();
+    const run = popup.generate("__single__", "photo");
+    await vi.advanceTimersByTimeAsync(1500); await run;
+    expect(popup.state.results.__single__.imageHandle).toBe("blob:decoded");
+    expect(popup.state.step).toBe("result");
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith("/ack"))).toHaveLength(1);
+  });
+  it("cannot retarget an in-flight result by replacing the open-session hooks", async () => {
+    ready();
+    const first = vi.fn(() => true), second = vi.fn(() => true);
+    popup.handoff = { deliver: first, closed: vi.fn(), leadDone: () => false };
+    const run = popup.generate("__single__", "photo");
+    popup.handoff = { deliver: second, closed: vi.fn(), leadDone: () => false };
+    await vi.advanceTimersByTimeAsync(1500); await run;
+    expect(first).toHaveBeenCalledOnce(); expect(second).not.toHaveBeenCalled();
+  });
+  it("retains the after-first-preview email gate for later assistant popup generations", () => {
+    popup.open = vi.fn();
+    popup.cfg.lead = { mode: "required", timing: "after" };
+    popup.state.leadTiming = "after"; popup.state.leadDone = false;
+    popup.assistantDelivered = true;
+    popup.openForAssistant({ deliver: () => true, closed: () => {}, leadDone: () => false });
+    expect(popup.state.leadTiming).toBe("before");
+    expect(popup.state.leadDone).toBe(false);
+  });
+});

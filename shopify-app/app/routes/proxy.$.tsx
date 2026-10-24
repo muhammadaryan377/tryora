@@ -25,6 +25,7 @@ import {
   streamAssistantTurn,
 } from "../assistant/turn-routes.server";
 import { warmAssistantCatalogue } from "../assistant/catalogue.server";
+import { loadCatalogueSuggestions } from "../assistant/suggestions.server";
 import { logAssistant } from "../assistant/log.server";
 
 /**
@@ -68,6 +69,15 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Load the shop's catalogue in the background so the first question does not wait for it.
     if (config.enabled) warmAssistantCatalogue(admin, session.shop);
     return json(config);
+  }
+  if (path === "assistant/suggestions") {
+    try {
+      guardAssistantRead(session.shop, url.searchParams.get("visitor") ?? "");
+      await requireAssistantEnabled(session.shop);
+      return json({ suggestions: await loadCatalogueSuggestions(admin, session.shop, url.searchParams.get("product") ?? undefined) });
+    } catch {
+      return json({ suggestions: [] });
+    }
   }
   if (path === "assistant/options") {
     try {
