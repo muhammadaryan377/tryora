@@ -47,7 +47,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, importBlocked,
     explicitlyOff: !!config && !config.autoConfigured && !config.enabled,
     options: snapshot.product.options as { name: string; optionValues: { name: string; swatch?: { color?: string; image?: { image?: { url: string } } } }[] }[],
-    variants: snapshot.variants, media: snapshot.media.flatMap((m) => m.image?.url ? [{ id: m.id, url: m.image.url }] : []),
+    variants: snapshot.variants, media: snapshot.media.flatMap((m) => m.image?.url ? [{ id: m.id, url: m.image.url, alt: m.alt ?? null }] : []),
     native: { optionName: model.optionName, fabricOptionName: model.fabricOptionName, issue: model.issue ?? null, selections: model.selections.map((s) => ({ ...s, available: snapshot.variants.some((v) => v.availableForSale && Object.entries(s.options).every(([name, value]) => v.selectedOptions.some((o) => o.name === name && o.value === value))) })) },
     syncedAt: new Date().toISOString(), saved: url.searchParams.get("saved") === "1",
   } };
@@ -62,10 +62,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const revision = String(form.get("revision") ?? "");
   try {
     if (form.get("intent") === "upload") {
+      // A merchant may upload a sample while preparing an unsaved Manual Setup draft.
+      // Uploads do not activate a mapping, alter provider mode or authorize a preview.
+      if (form.get("mode") !== "manual") throw new FabricConfigError("Select Manual Setup before uploading a fabric or colour sample.");
       // Ownership is read from this authenticated shop, never a submitted shop ID.
       await nativeSnapshot(admin, productId, false);
       const saved = await prisma.customizationConfig.findUnique({ where: { shopId_productId: { shopId: session.shop, productId } } });
-      if (!saved || saved.revision !== revision || !["manual_mapping", "cloudlift"].includes(saved.providerId)) throw new FabricConfigError("Save Manual Setup for this product before uploading; reload if another session changed it.");
+      if ((saved?.revision ?? "") !== revision) throw new FabricConfigError("Product settings changed in another session. Reload before uploading.");
+      if (saved && !["shopify_native", "manual_mapping", "cloudlift"].includes(saved.providerId)) throw new FabricConfigError("Review this product's existing provider before uploading samples.");
       const file = form.get("image");
       if (!(file instanceof Blob)) throw new FabricConfigError("Choose an image to upload.");
       return await uploadFabricMedia(admin, productId, file);
@@ -86,7 +90,7 @@ export default function FabricsPage() {
   return <FabricColourManager data={data} error={actionData && "error" in actionData ? actionData.error : undefined} busy={navigation.state !== "idle"}
     save={(mode, draft) => submit({ intent: "save", mode, revision: data.selected?.revision ?? "", draft: JSON.stringify(draft) }, { method: "post" })}
     upload={async (file) => {
-      const form = new FormData(); form.set("intent", "upload"); form.set("revision", data.selected?.revision ?? ""); form.set("image", file);
+      const form = new FormData(); form.set("intent", "upload"); form.set("mode", "manual"); form.set("revision", data.selected?.revision ?? ""); form.set("image", file);
       const response = await fetch(window.location.href, { method: "POST", body: form, credentials: "same-origin" });
       const result = await response.json();
       if (!response.ok || result.error) throw new Error(result.error ?? "Upload failed. Please try again.");
