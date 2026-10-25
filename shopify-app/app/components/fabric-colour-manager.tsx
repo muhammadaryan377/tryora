@@ -218,9 +218,12 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     const states = draft.bindings.filter((b) => b.fabricId === f.id && b.colourId === c.id).map(readiness);
     if (states.some((s) => s.key === "ready")) return { label: "Ready for AI preview", tone: "success" };
     if (states.length) return { label: states[0]!.label, tone: states[0]!.tone };
-    return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : { label: "Needs sample", tone: "neutral" };
+    return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : c.hex ? { label: "HEX added", tone: "neutral" } : { label: "Needs HEX or image", tone: "attention" };
   };
-  const ready = draft.bindings.filter((b) => readiness(b).key === "ready").length;
+  const mappedReady = draft.bindings.filter((b) => readiness(b).key === "ready").length;
+  const configuredColours = draft.fabrics.reduce((count, fabric) => count +
+    fabric.colours.filter((colour) => colour.enabled && sampleReady(colour.name, colour.hex, colour.swatchMediaId)).length, 0);
+  const ready = draft.bindings.length ? mappedReady : configuredColours;
   const invalidSamples = draft.fabrics.some((f) =>
     !sampleReady(f.name, f.hex, f.textureMediaId) ||
     f.colours.some((c) => !sampleReady(c.name, c.hex, c.swatchMediaId)));
@@ -263,7 +266,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
         {p && <div className="fm-subhead">
           <span className="fm-muted">{p.title} · <s-link href={`/app/products/${p.productId.split("/").pop()}`}>Product preview settings</s-link></span>
           {manual && <ol className="fm-steps" aria-label="Setup progress">{steps.map((s) => <li key={s.label} className={s.done ? "is-done" : ""}><span aria-hidden="true">{s.done ? "✓" : ""}</span>{s.label}{s.done ? <span className="fm-sr"> (done)</span> : null}</li>)}</ol>}
-          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} preview-ready colour configurations</span>}
+          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} {draft.bindings.length ? "preview-ready colour configurations" : "configured colour choices"}</span>}
         </div>}
         {saveHint && <p className="fm-muted fm-save-hint" role="status">{saveHint}</p>}
         {pendingProduct && <div className="fm-navigation-confirm" role="alert">
