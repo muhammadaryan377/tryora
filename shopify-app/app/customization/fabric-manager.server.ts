@@ -4,9 +4,10 @@ import prisma from "../db.server";
 import type { AdminGraphql } from "../preview-product.server";
 import { nativeSnapshot } from "./reference-resolver.server";
 import { canonicalOptions, optionsOf, parseManualMapping, safeShopifyMediaUrl, validateNativeBindings, type ManualMapping } from "./option-model";
-import { emptyFabricDraft, isFabricDocument, parseFabricDocument, parseFabricDraft, type FabricDocument, type FabricDraft, type ManagedFabric } from "./fabric-manager";
+import { emptyFabricDraft, isFabricDocument, parseFabricDocument, parseFabricDraft, validateFabricAppearance, type FabricDocument, type FabricDraft, type ManagedFabric } from "./fabric-manager";
 import { providerSettingsEnabled } from "./provider-config.server";
 import { isSampleMedia } from "./media-roles";
+import { sampleMediaIds, savedFabricSampleFiles } from "./fabric-sample-files.server";
 
 export const FABRIC_PRODUCTS_QUERY = `#graphql
 query TryoraFabricProducts($after: String) {
@@ -79,6 +80,17 @@ export async function saveFabricConfiguration(admin: AdminGraphql, shopId: strin
   if (!providerSettingsEnabled(shopId)) throw new FabricConfigError("Manual setup requires the reviewed provider-table rollout and server authorization for this installation. Native previews remain unchanged.");
   if (!["native", "manual"].includes(input.mode)) throw new FabricConfigError("Choose Shopify Native or Manual Setup.");
   const snapshot = await nativeSnapshot(admin, productId);
+  if (input.mode === "manual") {
+    const draft = parseFabricDraft(input.draft);
+    // Existing mapped products remain compatible. New merchant preview-only
+    // entries must have names and a HEX colour or isolated Shopify Files sample.
+    if (!draft.bindings.length) validateFabricAppearance(draft);
+    try {
+      snapshot.media.push(...await savedFabricSampleFiles(admin, sampleMediaIds(draft), new Set(snapshot.media.map((m) => m.id))));
+    } catch {
+      throw new FabricConfigError("Shopify Files samples could not be verified. Check the app's file permissions before saving.");
+    }
+  }
   // Never update productPreviewConfig: explicit OFF settings and auto-enable behavior remain authoritative.
   const result = input.mode === "manual" ? compileFabricDocument(input.draft, shopId, productId, snapshot)
     : { document: { kind: "fabric_colour_manager" as const, schemaVersion: 1 as const, shopId, productId, draft: emptyFabricDraft(), published: null }, diagnostics: {} };

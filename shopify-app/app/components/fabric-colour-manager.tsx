@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { hexToRgb } from "../customization/colour-values";
-import { emptyFabricDraft, type FabricDraft, type ManagedBinding, type ManagedColour, type ManagedFabric } from "../customization/fabric-manager";
+import { DEFAULT_SWATCH_PRESENTATION, emptyFabricDraft, type FabricDraft, type ManagedBinding, type ManagedColour, type ManagedFabric } from "../customization/fabric-manager";
 import { referenceChoices, sampleChoices } from "../customization/media-roles";
 
 type Media = { id: string; url: string; alt?: string | null };
 export interface FabricManagerData {
   installationReady: boolean;
+  /** Sidebar entry opens the merchant workspace, without saving a provider change. */
+  startInManualMode?: boolean;
   /** Keep legacy reviewed variant editor out of the simple merchant setup. */
   advanced?: boolean;
   manualSetupReason?: string;
   products: { nodes: { id: string; title: string }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
   selected: null | {
     productId: string; title: string; image: string | null; mode: "native" | "manual"; providerId: string; revision: string;
-    draft: FabricDraft; importBlocked?: boolean; diagnostics: Record<string, string>; warning: string; sampleNotice?: string; explicitlyOff: boolean;
+    draft: FabricDraft; importBlocked?: boolean; diagnostics: Record<string, string>; warning: string; sampleNotice?: string; legacyGallerySamples?: number; explicitlyOff: boolean;
     options: { name: string; optionValues: { name: string; swatch?: { color?: string; image?: { image?: { url: string } } } }[] }[];
     variants: { id: string; availableForSale: boolean; image?: { url: string } | null; selectedOptions: { name: string; value: string }[] }[];
     media: Media[]; native: { issue: string | null; optionName: string | null; fabricOptionName: string | null; selections: { value: string; label?: string; group: string | null; image: string | null; colour: string | null; available?: boolean }[] };
@@ -57,7 +59,7 @@ function MediaField({ label, role, value, media, change, upload, disabled, kind,
     <Thumb url={selected?.url} label={`Selected ${role}`} empty={`No ${role}`} size={72} />
     <div className="fm-media-body">
       <strong>{selected ? `${role[0]!.toUpperCase()}${role.slice(1)}` : `No ${role} yet`}</strong>
-      {value && !selected && <p role="alert" className="fm-error">This image is no longer on the product. Choose it again.</p>}
+      {value && !selected && <p role="alert" className="fm-error">This image is no longer available in Shopify. Choose it again.</p>}
       <div className="fm-actions">
         <label className={`fm-btn${disabled || busy ? " is-disabled" : ""}`}>
           {busy ? "Uploading…" : selected ? "Replace image" : "Upload image"}
@@ -97,6 +99,22 @@ function RemoveButton({ label, onConfirm, disabled }: { label: string; onConfirm
   </span>;
 }
 
+function workspaceMode(data: FabricManagerData): "native" | "manual" {
+  return data.startInManualMode && data.installationReady && !data.selected?.importBlocked && data.selected
+    ? "manual" : data.selected?.mode ?? "native";
+}
+
+/** A client-only draft shown for a new product. No Shopify configuration is written until Save. */
+function workspaceDraft(data: FabricManagerData): FabricDraft {
+  const draft = data.selected?.draft ?? emptyFabricDraft();
+  if (!data.startInManualMode || !data.installationReady || data.selected?.importBlocked ||
+      !data.selected || draft.fabrics.length) return draft;
+  const productNumber = data.selected.productId.split("/").pop() ?? "first";
+  return { ...draft, fabrics: [{
+    id: `draft_${productNumber}`, name: "", description: "", enabled: true, textureMediaId: null, colours: [],
+  }] };
+}
+
 export function FabricColourManager({ data, save, upload, selectProduct, error, busy = false }: {
   data: FabricManagerData; save: (mode: "native" | "manual", draft: FabricDraft) => void;
   upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>;
@@ -105,8 +123,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   error?: string; busy?: boolean;
 }) {
   const p = data.selected;
-  const [mode, setMode] = useState<"native" | "manual">(p?.mode ?? "native"), [draft, setDraft] = useState<FabricDraft>(p?.draft ?? emptyFabricDraft());
-  const [fabricId, setFabricId] = useState(p?.draft.fabrics[0]?.id ?? ""), [media, setMedia] = useState(p?.media ?? []);
+  const [mode, setMode] = useState<"native" | "manual">(() => workspaceMode(data)), [draft, setDraft] = useState<FabricDraft>(() => workspaceDraft(data));
+  const [fabricId, setFabricId] = useState(() => workspaceDraft(data).fabrics[0]?.id ?? ""), [media, setMedia] = useState(p?.media ?? []);
   const [editingFabric, setEditingFabric] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<string | null>(null);
   const [colourDraft, setColourDraft] = useState<(ManagedColour & { isNew: boolean }) | null>(null);
@@ -117,10 +135,11 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   const initial = useRef(JSON.stringify({ mode: p?.mode ?? "native", draft: p?.draft ?? emptyFabricDraft() }));
   const saving = useRef(false);
   useEffect(() => {
-    setMode(p?.mode ?? "native"); setDraft(p?.draft ?? emptyFabricDraft()); setMedia(p?.media ?? []); setFabricId(p?.draft.fabrics[0]?.id ?? "");
+    const openedDraft = workspaceDraft(data);
+    setMode(workspaceMode(data)); setDraft(openedDraft); setMedia(p?.media ?? []); setFabricId(openedDraft.fabrics[0]?.id ?? "");
     setColourDraft(null); setEditingFabric(false); setPendingProduct(null); saving.current = false;
     initial.current = JSON.stringify({ mode: p?.mode ?? "native", draft: p?.draft ?? emptyFabricDraft() });
-  }, [p?.productId, p?.revision]);
+  }, [p?.productId, p?.revision, data.startInManualMode, data.installationReady]);
   useEffect(() => { setMappingPage(0); setColourDraft(null); }, [fabricId]);
   const dirty = JSON.stringify({ mode, draft }) !== initial.current;
   const switchProduct = (next: string) => {
@@ -141,6 +160,12 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   }, [dirty]);
 
   const fabric = draft.fabrics.find((f) => f.id === fabricId);
+  const swatchShape = draft.presentation?.shape ?? DEFAULT_SWATCH_PRESENTATION.shape;
+  const swatchSize = draft.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
+  const sampleReady = (name: string, hex: string | null | undefined, image: string | null | undefined) =>
+    !!name.trim() && (!!image || !!hex && HEX.test(hex));
+  const updateSwatchPresentation = (patch: Partial<{ shape: "round" | "square"; size: number }>) =>
+    setDraft((value) => ({ ...value, presentation: { shape: swatchShape, size: swatchSize, ...patch } }));
   const mediaUrl = (id: string | null) => media.find((m) => m.id === id)?.url;
   const sampleIds = new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]).filter((id): id is string => !!id));
   const manual = mode === "manual";
@@ -154,7 +179,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   });
   const updateBinding = (id: string, patch: Partial<ManagedBinding>) => setDraft((d) => ({ ...d, bindings: d.bindings.map((b) => b.id === id ? { ...b, ...patch, reviewed: patch.reviewed ?? false } : b) }));
   const uploadImage = async (file: File, purpose: "sample" | "reference") => { const m = await upload(file, purpose); if (m) setMedia((all) => [...all.filter((x) => x.id !== m.id), m]); return m; };
-  const addFabric = () => { const id = uid(); setDraft((d) => ({ ...d, fabrics: [...d.fabrics, { id, name: "", description: "", enabled: true, textureMediaId: null, colours: [] }] })); setFabricId(id); setEditingFabric(true); };
+  const addFabric = () => { const id = uid(); setDraft((d) => ({ ...d, fabrics: [...d.fabrics, { id, name: "", description: "", enabled: true, textureMediaId: null, hex: null, colours: [] }] })); setFabricId(id); setEditingFabric(true); };
   const removeFabric = (id: string) => { setDraft((d) => ({ ...d, fabrics: d.fabrics.filter((x) => x.id !== id), bindings: d.bindings.filter((b) => b.fabricId !== id) })); setFabricId(draft.fabrics.find((x) => x.id !== id)?.id ?? ""); setEditingFabric(false); };
   const addMapping = (colourId?: string) => {
     const c = colourId ? fabric?.colours.find((x) => x.id === colourId) : fabric?.colours[0]; if (!fabric || !c) return;
@@ -165,7 +190,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     requestAnimationFrame(() => document.getElementById("fm-mapping")?.scrollIntoView({ block: "start" }));
   };
   const saveColour = () => {
-    if (!fabric || !colourDraft) return;
+    if (!fabric || !colourDraft || !sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)) return;
     const { isNew, ...colour } = colourDraft;
     updateFabric(fabric.id, { colours: isNew ? [...fabric.colours, colour] : fabric.colours.map((x) => x.id === colour.id ? colour : x) });
     setColourDraft(null);
@@ -193,20 +218,26 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     const states = draft.bindings.filter((b) => b.fabricId === f.id && b.colourId === c.id).map(readiness);
     if (states.some((s) => s.key === "ready")) return { label: "Ready for AI preview", tone: "success" };
     if (states.length) return { label: states[0]!.label, tone: states[0]!.tone };
-    return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : { label: "Needs sample", tone: "neutral" };
+    return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : c.hex ? { label: "HEX added", tone: "neutral" } : { label: "Needs HEX or image", tone: "attention" };
   };
-  const ready = draft.bindings.filter((b) => readiness(b).key === "ready").length;
-  const unnamed = draft.fabrics.some((f) => !f.name.trim() || f.colours.some((c) => !c.name.trim()));
-  const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || unnamed || !!colourDraft);
+  const mappedReady = draft.bindings.filter((b) => readiness(b).key === "ready").length;
+  const configuredColours = draft.fabrics.reduce((count, fabric) => count +
+    fabric.colours.filter((colour) => colour.enabled && sampleReady(colour.name, colour.hex, colour.swatchMediaId)).length, 0);
+  const ready = draft.bindings.length ? mappedReady : configuredColours;
+  const invalidSamples = !draft.bindings.length && draft.fabrics.some((f) =>
+    !sampleReady(f.name, f.hex, f.textureMediaId) ||
+    f.colours.some((c) => !sampleReady(c.name, c.hex, c.swatchMediaId)));
+  const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || invalidSamples || !!colourDraft);
   const saveHint = !manual || !data.installationReady ? "" : p?.importBlocked ? "This product's existing integration must be reviewed before editing." :
-    colourDraft ? "Save or cancel the colour you're editing first." : unnamed ? "Name every fabric and colour before saving." : "";
-  const link = p ? `/app/fabrics?product=${encodeURIComponent(p.productId)}` : "/app/fabrics";
+    colourDraft ? "Save or cancel the colour you're editing first." : invalidSamples ? "Each fabric and colour needs a name plus a HEX colour or sample image before saving." : "";
+  const workspaceQuery = data.startInManualMode ? "&workspace=manual" : "";
+  const link = p ? `/app/fabrics?product=${encodeURIComponent(p.productId)}${workspaceQuery}` : data.startInManualMode ? "/app/fabrics?workspace=manual" : "/app/fabrics";
   const scoped = draft.bindings.filter((b) => mappingScope === "all" || b.fabricId === fabricId);
   const pageCount = Math.max(1, Math.ceil(scoped.length / MAPPINGS_PER_PAGE));
   const currentPage = Math.min(mappingPage, pageCount - 1);
   const steps = [
-    { label: "Fabric & texture", done: draft.fabrics.some((f) => f.name.trim() && f.textureMediaId) },
-    { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => c.swatchMediaId || c.hex)) },
+    { label: "Fabric & texture", done: draft.fabrics.some((f) => sampleReady(f.name, f.hex, f.textureMediaId)) },
+    { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => sampleReady(c.name, c.hex, c.swatchMediaId))) },
     { label: "Saved", done: !dirty && !!p?.revision },
   ];
 
@@ -229,13 +260,13 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
           </label>}
           {p && <div className="fm-save">
             <span className={`fm-pill fm-pill--${dirty || colourDraft ? "attention" : "success"}`} role="status">{colourDraft ? "Editing a colour" : dirty ? "Unsaved changes" : p.saved ? "Saved" : "No unsaved changes"}</span>
-            <button className="fm-btn fm-btn--primary" type="button" disabled={busy || saveBlocked} onClick={() => { saving.current = true; save(mode, draft); }}>{busy ? "Saving…" : "Save changes"}</button>
+            <button className="fm-btn fm-btn--primary" type="button" disabled={busy || saveBlocked} onClick={() => { saving.current = true; save(mode, manual ? { ...draft, presentation: draft.presentation ?? DEFAULT_SWATCH_PRESENTATION } : draft); }}>{busy ? "Saving…" : "Save changes"}</button>
           </div>}
         </div>
         {p && <div className="fm-subhead">
           <span className="fm-muted">{p.title} · <s-link href={`/app/products/${p.productId.split("/").pop()}`}>Product preview settings</s-link></span>
           {manual && <ol className="fm-steps" aria-label="Setup progress">{steps.map((s) => <li key={s.label} className={s.done ? "is-done" : ""}><span aria-hidden="true">{s.done ? "✓" : ""}</span>{s.label}{s.done ? <span className="fm-sr"> (done)</span> : null}</li>)}</ol>}
-          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} preview-ready colour configurations</span>}
+          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} {draft.bindings.length ? "preview-ready colour configurations" : "configured colour choices"}</span>}
         </div>}
         {saveHint && <p className="fm-muted fm-save-hint" role="status">{saveHint}</p>}
         {pendingProduct && <div className="fm-navigation-confirm" role="alert">
@@ -245,7 +276,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
           </div>
         </div>}
-        {!p && data.products.pageInfo.hasNextPage && <s-link href={`${link}?after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
+        {p && <s-link href={`/app/fabrics?browse=1${workspaceQuery}`}>Browse more products</s-link>}
+        {!p && data.products.pageInfo.hasNextPage && <s-link href={`/app/fabrics?browse=1&after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}${workspaceQuery}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
       {p && <>
@@ -255,6 +287,9 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
         {!data.installationReady && <s-banner heading="Manual setup is not enabled" tone="info"><p>{data.manualSetupReason || "Your app administrator needs to authorize merchant-managed customization for this installation. Shopify-native previews continue to work."}</p></s-banner>}
         {p.warning && <s-banner heading="Saved mapping needs attention" tone="warning"><p>{p.warning}</p></s-banner>}
         {p.sampleNotice && <s-banner heading="Some samples need real sample images" tone="warning"><p>{p.sampleNotice}</p></s-banner>}
+        {!!p.legacyGallerySamples && <s-banner heading="Older fabric samples are still in the product gallery" tone="warning">
+          <p>{p.legacyGallerySamples} previously uploaded sample image(s) are attached to this Shopify product. New sample uploads use Shopify Files and will not be added to the product gallery. Review existing samples and remove their product-media copies only after confirming any saved references are updated; Tryora does not delete product images automatically.</p>
+        </s-banner>}
         {p.providerId === "cloudlift" && <p className="fm-muted">Existing reviewed Cloudlift native-linked mapping is preserved under Manual Setup. Saving does not create an automatic third-party integration.</p>}
 
         {!manual ? <section className="fm-card" aria-labelledby="fm-native-title">
@@ -278,7 +313,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
               <div className="fabric-list fm-fabric-list" role="list">{draft.fabrics.map((f) => {
                 const draftItem = !f.name.trim();
                 return <button role="listitem" className="fabric-list-item fm-fabric-item" type="button" key={f.id} aria-pressed={f.id === fabricId} onClick={() => { if (f.id !== fabricId) { setFabricId(f.id); setEditingFabric(draftItem); } }}>
-                  <Thumb url={mediaUrl(f.textureMediaId)} label={`${f.name || "Untitled fabric"} texture`} empty="No texture" size={44} />
+                  <Thumb url={mediaUrl(f.textureMediaId)} hex={f.hex && HEX.test(f.hex) ? f.hex : null} label={`${f.name || "Untitled fabric"} texture`} empty="No texture" size={44} />
                   <span className="fm-fabric-text"><strong>{draftItem ? "Untitled fabric" : f.name}</strong>
                     <small>{f.colours.length} {f.colours.length === 1 ? "colour" : "colours"}{f.enabled ? "" : " · Disabled"}</small></span>
                   {draftItem && <span className="fm-pill fm-pill--attention">Draft</span>}
@@ -290,7 +325,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <section className="fm-card fm-detail" aria-label="Selected fabric">
               {!fabric ? <div className="fm-empty"><h2>Add a fabric to begin</h2><p className="fm-muted">Each fabric holds its own colours and samples, such as Plush Velvet with Cream, Grey and Navy.</p></div> : <>
                 <div className="fm-fabric-head">
-                  <Thumb url={mediaUrl(fabric.textureMediaId)} label={`${fabric.name || "Untitled fabric"} texture`} empty="No texture" size={64} />
+                  <Thumb url={mediaUrl(fabric.textureMediaId)} hex={fabric.hex && HEX.test(fabric.hex) ? fabric.hex : null} label={`${fabric.name || "Untitled fabric"} texture`} empty="No texture" size={64} />
                   <div className="fm-grow"><h2>{fabric.name || "Untitled fabric"}</h2>
                     <p className="fm-muted">{fabric.description || (fabric.textureMediaId ? "Fabric texture added." : "Upload a close-up of this fabric's texture.")}</p></div>
                   {!fabric.enabled && <span className="fm-pill fm-pill--neutral">Disabled</span>}
@@ -302,7 +337,18 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                       aria-invalid={!fabric.name.trim()} onChange={(e) => updateFabric(fabric.id, { name: e.currentTarget.value })} /></label>
                     <label className="fm-field"><span className="fm-label">Description <span className="fm-muted">(optional)</span></span><textarea rows={2} maxLength={1000} value={fabric.description} onChange={(e) => updateFabric(fabric.id, { description: e.currentTarget.value })} /></label>
                   </div>
+                  <div className="fm-field"><span className="fm-label">Fabric HEX colour <span className="fm-muted">(or add a texture image)</span></span>
+                    <div className="fm-hex">
+                      <input type="color" aria-label={`Pick fabric colour ${fabric.id}`} value={HEX.test(fabric.hex ?? "") ? fabric.hex! : "#ffffff"}
+                        onChange={(e) => updateFabric(fabric.id, { hex: e.currentTarget.value })} />
+                      <input aria-label={`Fabric HEX ${fabric.id}`} placeholder="#RRGGBB" maxLength={7}
+                        value={fabric.hex ?? ""} aria-invalid={!!fabric.hex && !HEX.test(fabric.hex)}
+                        onChange={(e) => updateFabric(fabric.id, { hex: e.currentTarget.value.trim() || null })} />
+                      {fabric.hex && <button type="button" className="fm-link" onClick={() => updateFabric(fabric.id, { hex: null })}>Clear</button>}
+                    </div>
+                  </div>
                   <MediaField label={`Fabric texture ${fabric.name}`} role="fabric texture" kind="sample" sampleIds={sampleIds} value={fabric.textureMediaId} media={media} change={(id) => updateFabric(fabric.id, { textureMediaId: id })} upload={uploadImage} disabled={disabledUpload} />
+                  {!sampleReady(fabric.name, fabric.hex, fabric.textureMediaId) && <p className="fm-muted" role="status">Fabric name and either HEX colour or texture image are required.</p>}
                   <div className="fm-editor-foot">
                     <label className="fm-check"><input type="checkbox" checked={fabric.enabled} onChange={(e) => updateFabric(fabric.id, { enabled: e.currentTarget.checked })} />Show this fabric to shoppers</label>
                     <RemoveButton label="Remove fabric" onConfirm={() => removeFabric(fabric.id)} />
@@ -312,15 +358,25 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 </div>}
 
                 <div className="fm-section-head fm-colours-head"><h3>Colours <span className="fm-count">{fabric.colours.length}</span></h3>
+                  <div className="fm-swatch-prefs" role="group" aria-label="Swatch appearance">
+                    <span className="fm-label">Swatch shape</span>
+                    <button type="button" className="fm-btn fm-shape" aria-label="Circle swatches" aria-pressed={swatchShape === "round"} onClick={() => updateSwatchPresentation({ shape: "round" })}><span className="fm-shape-circle" /></button>
+                    <button type="button" className="fm-btn fm-shape" aria-label="Square swatches" aria-pressed={swatchShape === "square"} onClick={() => updateSwatchPresentation({ shape: "square" })}><span className="fm-shape-square" /></button>
+                    <label className="fm-swatch-size">Swatch size
+                      <input aria-label="Swatch size" type="number" min={25} max={100} step={1} value={swatchSize}
+                        onChange={(e) => { const n = Number(e.currentTarget.value); if (Number.isInteger(n) && n >= 25 && n <= 100) updateSwatchPresentation({ size: n }); }} />
+                      <span>px</span>
+                    </label>
+                  </div>
                   <button className="fm-btn" type="button" disabled={!!colourDraft} onClick={() => setColourDraft({ id: uid(), name: "", enabled: true, swatchMediaId: null, hex: null, isNew: true })}>+ Add colour</button></div>
                 {fabric.colours.length ? <ul className="fm-colour-grid">{fabric.colours.map((c) => {
                   const status = colourStatus(fabric, c);
                   return <li key={c.id}><button type="button" className={`fm-colour${colourDraft?.id === c.id ? " is-editing" : ""}${c.enabled ? "" : " is-off"}`} aria-label={`Edit colour ${c.name}`} onClick={() => setColourDraft({ ...c, isNew: false })}>
-                    <Thumb url={mediaUrl(c.swatchMediaId)} hex={HEX.test(c.hex ?? "") ? c.hex : null} label={`${fabric.name} ${c.name} sample`} empty="No sample" shape="round" size={44} />
+                    <Thumb url={mediaUrl(c.swatchMediaId)} hex={HEX.test(c.hex ?? "") ? c.hex : null} label={`${fabric.name} ${c.name} sample`} empty="No sample" shape={swatchShape} size={swatchSize} />
                     <span className="fm-colour-text"><strong>{c.name}</strong><small className="fm-tabular">{c.swatchMediaId ? "Sample photo" : c.hex ? c.hex.toUpperCase() : "No sample yet"}</small></span>
                     <span className={`fm-pill fm-pill--${status.tone}`}>{status.label}</span>
                   </button></li>;
-                })}</ul> : !colourDraft && <p className="fm-muted">No colours for {fabric.name || "this fabric"} yet. Add each colour with its own sample photo.</p>}
+                })}</ul> : !colourDraft && <p className="fm-muted">No colours for {fabric.name || "this fabric"} yet. Each colour needs a name and HEX colour or sample photo.</p>}
 
                 {colourDraft && <div className="fm-editor fm-colour-editor" role="group" aria-label={colourDraft.isNew ? "New colour" : `Edit ${colourDraft.name}`}>
                   <h3>{colourDraft.isNew ? `New colour for ${fabric.name || "this fabric"}` : `Edit ${colourDraft.name || "colour"}`}</h3>
@@ -334,7 +390,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                           onChange={(e) => setColourDraft({ ...colourDraft, hex: e.currentTarget.value.trim() || null })} />
                         {colourDraft.hex && <button type="button" className="fm-link" onClick={() => setColourDraft({ ...colourDraft, hex: null })}>Clear</button>}
                       </div>
-                      <span className="fm-muted fm-tabular fm-rgb" aria-live="polite">{colourDraft.hex && HEX.test(colourDraft.hex) ? `RGB ${hexToRgb(colourDraft.hex)}` : colourDraft.hex ? "" : "Shown only when there is no sample photo."}</span>
+                      <span className="fm-muted fm-tabular fm-rgb" aria-live="polite">{colourDraft.hex && HEX.test(colourDraft.hex) ? `RGB ${hexToRgb(colourDraft.hex)}` : colourDraft.hex ? "" : "Provide a HEX colour or sample photo. Both are allowed."}</span>
                       {colourDraft.hex && !HEX.test(colourDraft.hex) && <span role="alert" className="fm-error">Use the #RRGGBB format, for example #F2E8D5.</span>}
                     </div>
                   </div>
@@ -345,7 +401,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                     {!colourDraft.isNew && <RemoveButton label="Remove colour" onConfirm={() => { const id = colourDraft.id; updateFabric(fabric.id, { colours: fabric.colours.filter((x) => x.id !== id) }); setDraft((d) => ({ ...d, bindings: d.bindings.filter((b) => b.colourId !== id) })); setColourDraft(null); }} />}
                     <span className="fm-grow" />
                     <button type="button" className="fm-btn" onClick={() => setColourDraft(null)}>Cancel</button>
-                    <button type="button" className="fm-btn fm-btn--primary" disabled={!colourDraft.name.trim() || !!colourDraft.hex && !HEX.test(colourDraft.hex)} onClick={saveColour}>Save colour</button>
+                    <button type="button" className="fm-btn fm-btn--primary" disabled={!sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)} onClick={saveColour}>Save colour</button>
                   </div>
                 </div>}
               </>}
@@ -411,7 +467,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
           </details>}
-          <p className="fm-muted fm-footnote">Uploads are added to this product's Shopify media. Removing a fabric, colour or mapping from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
+          <p className="fm-muted fm-footnote">Fabric textures and colour samples are saved to Shopify Files, not the product gallery. Full furniture reference photos may use product media. Removing selections from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>
       </>}
@@ -442,6 +498,13 @@ const STYLES = `
 .fm-header{display:grid;gap:10px}.fm-product{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .fm-product-image{width:56px;height:56px;border-radius:10px;object-fit:cover;flex:none}
 .fm-subhead{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;border-top:1px solid var(--fm-line);padding-top:10px}
+.fm-swatch-prefs{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fm-shape{display:grid;place-items:center;width:42px;height:42px;padding:7px}
+.fm-shape[aria-pressed="true"]{border-color:var(--fm-accent);box-shadow:0 0 0 1px var(--fm-accent)}
+.fm-shape-circle,.fm-shape-square{width:22px;height:22px;background:var(--fm-accent)}
+.fm-shape-circle{border-radius:50%}.fm-shape-square{border-radius:3px}
+.fm-swatch-size{display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-left:10px}
+.fabric-manager .fm-swatch-size input[type=number]{width:64px!important;min-width:64px!important;min-height:36px;border:1px solid var(--fm-line-strong);border-radius:8px;padding:5px}
 .fm-ready-count{margin-left:auto}
 .fm-save{display:flex;align-items:center;gap:10px;margin-left:auto}.fm-save-hint{text-align:right}
 .fm-field{display:grid;gap:4px;min-width:0;align-content:start}.fm-label{font-weight:550;font-size:12px}

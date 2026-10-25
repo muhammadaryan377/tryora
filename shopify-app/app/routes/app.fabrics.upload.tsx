@@ -13,11 +13,13 @@ import { providerSettingsEnabled } from "../customization/provider-config.server
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   try {
-    const productId = productScope(request), marker = new URL(request.url).searchParams.get("marker") ?? "";
+    const productId = productScope(request), url = new URL(request.url);
+    const marker = url.searchParams.get("marker") ?? "";
+    const fileId = url.searchParams.get("fileId") ?? undefined;
     if (!productId || !UPLOAD_MARKER.test(marker)) return Response.json({ error: "Upload not recognised. Refresh the page." }, { status: 400 });
     if (!providerSettingsEnabled(session.shop)) return Response.json({ error: "Manual setup is not enabled for this installation." }, { status: 403 });
-    const media = await findUploadedMedia(admin, productId, marker);
-    return Response.json(media ? { pending: false, media } : { pending: true, marker });
+    const media = await findUploadedMedia(admin, productId, marker, fileId);
+    return Response.json(media ? { pending: false, media } : { pending: true, marker, ...(fileId ? { fileId } : {}) });
   } catch (e) {
     // A temporary Shopify error while checking is not a failed upload: the browser simply checks again. It is still logged.
     if (!(e instanceof FabricConfigError)) logUploadFailure("status", e);

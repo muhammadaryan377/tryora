@@ -137,6 +137,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         await guardPreview(shopId, field("visitor"));
         const photo = await photoFrom(form);
         if (!photo) return json({ error: "BAD_PHOTO" }, 400);
+        // Email-free chat previews are server-authorized only for an enabled assistant.
+        // The ordinary product popup retains the merchant's lead policy.
+        const assistantPreview = field("channel") === "assistant";
+        if (assistantPreview) await requireAssistantEnabled(shopId);
         return json(
           await startPreview({
             admin,
@@ -149,6 +153,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             visitorId: field("visitor"),
             idempotencyKey: field("key"),
             leadStepDone: field("leadDone") === "1",
+            assistantPreview,
             room: photo,
           }),
         );

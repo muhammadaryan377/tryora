@@ -8,6 +8,21 @@ export const STAGE_FABRIC_IMAGE = `#graphql
 mutation TryoraStageFabricImage($input: [StagedUploadInput!]!) {
   stagedUploadsCreate(input: $input) { stagedTargets { url resourceUrl parameters { name value } } userErrors { message } }
 }`;
+// Samples belong to Shopify Files, NOT the product's media gallery. fileCreate
+// requires the merchant-approved write_files (or write_images) scope.
+export const CREATE_FABRIC_SAMPLE = `#graphql
+mutation TryoraCreateFabricSample($files: [FileCreateInput!]!) {
+  fileCreate(files: $files) {
+    files { id fileStatus alt ... on MediaImage { image { url } } }
+    userErrors { message }
+  }
+}`;
+export const FABRIC_FILE_UPLOAD_STATUS = `#graphql
+query TryoraFabricFileUploadStatus($id: ID!) {
+  node(id: $id) {
+    ... on MediaImage { id alt fileStatus image { url } }
+  }
+}`;
 export const ATTACH_FABRIC_IMAGE = `#graphql
 mutation TryoraAttachFabricImage($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
   productUpdate(product: $product, media: $media) { product { id } userErrors { message } }
@@ -82,6 +97,26 @@ export async function uploadFabricMedia(admin: AdminGraphql, productId: string, 
   try { uploaded = await fetch(destination, { method: "POST", body: form, redirect: "error", signal: AbortSignal.timeout(30_000) }); }
   catch (error) { logUploadFailure("transfer", error, { host: new URL(destination).hostname }); throw new FabricConfigError("The image could not be sent to Shopify's upload storage. Check the connection and try again; no fabric configuration was changed."); }
   if (!uploaded.ok) { logUploadFailure("transfer", null, { status: uploaded.status, host: new URL(destination).hostname }); throw new FabricConfigError(`Shopify's upload storage refused the image (HTTP ${uploaded.status}). Try again; no fabric configuration was changed.`); }
+  if (purpose === "sample") {
+    // A sample is a palette/texture reference, not a purchasable product photo.
+    // Never fall back to productUpdate when Shopify Files permission is missing.
+    const created = (await result(admin, CREATE_FABRIC_SAMPLE, { files: [{ contentType: "IMAGE", originalSource: resourceUrl, alt: marker }] }, "create-file", "save the sample to Shopify Files")).fileCreate;
+    const fileId = created?.files?.[0]?.id;
+    if (created?.userErrors?.length || !/^gid:\/\/shopify\/MediaImage\/\d{1,20}$/.test(fileId ?? "") || created.files.length !== 1) {
+      throw refused("create-file", "save the sample to Shopify Files", created?.userErrors ?? []);
+    }
+    for (const delay of UPLOAD_STATUS_DELAYS_MS) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      const media = await findUploadedMedia(admin, productId, marker, fileId).catch((error) => {
+        if (error instanceof FabricConfigError) throw error;
+        logUploadFailure("file-status", error);
+        return null;
+      });
+      if (media) return { media, pending: false };
+    }
+    return { media: null, pending: true, marker, fileId };
+  }
+  // Only complete furniture reference photos may be attached to product media.
   const attached = (await result(admin, ATTACH_FABRIC_IMAGE, { product: { id: productId }, media: [{ mediaContentType: "IMAGE", originalSource: resourceUrl, alt: marker }] }, "attach", "attach the image to this product")).productUpdate;
   if (attached?.userErrors?.length || attached?.product?.id !== productId) throw refused("attach", "attach the image to this product", attached?.userErrors ?? []);
   // The image is now attached; Shopify processes it in the background. Wait a little, never failing the upload on a
@@ -99,7 +134,20 @@ export const UPLOAD_STATUS_DELAYS_MS = [0, 1000, 1500, 2000, 3000, 4000];
 export const UPLOAD_MARKER = /^Tryora (fabric sample|furniture reference) [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The processed image carrying this upload's marker, or null while Shopify is still processing it. */
-export async function findUploadedMedia(admin: AdminGraphql, productId: string, marker: string) {
+export async function findUploadedMedia(admin: AdminGraphql, productId: string, marker: string, fileId?: string) {
+  if (fileId) {
+    if (!/^gid:\/\/shopify\/MediaImage\/\d{1,20}$/.test(fileId) || !UPLOAD_MARKER.test(marker) || !marker.startsWith("Tryora fabric sample ")) {
+      throw new FabricConfigError("Invalid isolated sample upload.");
+    }
+    const response = await admin.graphql(FABRIC_FILE_UPLOAD_STATUS, { variables: { id: fileId } });
+    const json: any = await response.json();
+    if (!response.ok || json?.errors?.length || !json?.data) throw new Error("Shopify Files upload status unavailable.");
+    const file = json.data.node;
+    if (!file || file.id !== fileId || file.alt !== marker) throw new FabricConfigError("Isolated sample upload could not be verified.");
+    if (file.fileStatus === "FAILED") throw new FabricConfigError("Shopify could not process this fabric sample. Try another image.");
+    return file.fileStatus === "READY" && file.image?.url && safeShopifyMediaUrl(file.image.url)
+      ? { id: fileId, url: file.image.url as string, alt: marker } : null;
+  }
   // Any Shopify error here only means "not confirmed yet" (thrown as a plain error); callers check again.
   const response = await admin.graphql(FABRIC_UPLOAD_STATUS, { variables: { id: productId } });
   const json: any = await response.json();

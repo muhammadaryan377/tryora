@@ -67,6 +67,7 @@ export async function generatePreview(input: {
       visitor: input.visitor,
       key: crypto.randomUUID(),
       leadDone: input.leadDone,
+      channel: "assistant",
     }, input.signal));
     jobId = String(started.jobId);
   } catch (error: any) {

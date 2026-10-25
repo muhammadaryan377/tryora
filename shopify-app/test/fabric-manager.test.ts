@@ -15,7 +15,7 @@ vi.mock("../app/db.server", () => {
   return { default: { ...db, $transaction: async (fn: any) => { const original = structuredClone(state.rows), writes = state.writes.length; try { return await fn(db); } catch (e) { state.rows = original; state.writes.length = writes; throw e; } } } };
 });
 import prisma from "../app/db.server";
-import { emptyFabricDraft, parseFabricDraft, parseFabricDocument } from "../app/customization/fabric-manager";
+import { emptyFabricDraft, parseFabricDraft, parseFabricDocument, validateFabricAppearance, DEFAULT_SWATCH_PRESENTATION } from "../app/customization/fabric-manager";
 import { compileFabricDocument, draftFromMapping, saveFabricConfiguration } from "../app/customization/fabric-manager.server";
 import { cleanFabricImage, fabricForm, uploadFabricMedia } from "../app/customization/fabric-media.server";
 import { parseManualMapping } from "../app/customization/option-model";
@@ -40,6 +40,37 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("fabric and colour data boundary", () => {
+  it("saves 25-100px round/square swatch preferences without changing legacy documents", () => {
+    const old = emptyFabricDraft();
+    expect(parseFabricDraft(old).presentation).toBeUndefined();
+    const modern = { ...old, presentation: { shape: "square", size: 100 } };
+    expect(parseFabricDraft(modern).presentation).toEqual({ shape: "square", size: 100 });
+    expect(DEFAULT_SWATCH_PRESENTATION).toEqual({ shape: "round", size: 50 });
+    expect(parseFabricDraft({ ...old, presentation: { shape: "round", size: 25 } }).presentation?.size).toBe(25);
+    for (const size of [24, 101, 50.5, NaN]) {
+      expect(() => parseFabricDraft({ ...old, presentation: { shape: "round", size } })).toThrow(/Invalid or oversized/);
+    }
+    expect(() => parseFabricDraft({ ...old, presentation: { shape: "triangle", size: 50 } })).toThrow();
+  });
+
+  it("requires a name and either HEX or a real sample ID for both fabric and colour", () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: "#e0ddcf",
+      colours: [{ id: "stone", name: "Stone Grey", enabled: true, hex: "#888888", swatchMediaId: null }] });
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
+    draft.fabrics[0]!.hex = null;
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).toThrow(/Each fabric needs/);
+    draft.fabrics[0]!.textureMediaId = "gid://shopify/MediaImage/201";
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
+    draft.fabrics[0]!.colours[0]!.hex = null;
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).toThrow(/Each colour needs/);
+    draft.fabrics[0]!.colours[0]!.swatchMediaId = "gid://shopify/MediaImage/201";
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
+    draft.fabrics[0]!.colours[0]!.name = "";
+    expect(() => parseFabricDraft(draft)).toThrow();
+  });
+
+
   it("imports existing exact native-linked mappings without parsing composite values", () => {
     const f = snapshot(), compiled = compileFabricDocument(f.draft, shopId, productId, f);
     expect(compiled.document.draft.bindings.map((b) => b.nativeOptions)).toEqual(f.mapping.entries.map((e) => e.nativeOptions));
@@ -193,6 +224,36 @@ describe("shared storefront and server preview authority", () => {
 });
 
 describe("authenticated two-mode admin", () => {
+  it("rejects incomplete preview-only sample catalogues before any database writes", async () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, hex: null,
+      textureMediaId: null, colours: [{ id: "beige", name: "Beige", enabled: true, hex: null, swatchMediaId: null }] });
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft }))
+      .rejects.toThrow(/Each fabric needs/);
+    expect(state.writes).toEqual([]);
+    draft.fabrics[0]!.hex = "#dddddd";
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft }))
+      .rejects.toThrow(/Each colour needs/);
+    expect(state.writes).toEqual([]);
+  });
+
+
+  it("honours the merchant workspace URL without switching the saved Shopify provider", async () => {
+    const view = await loader({ request: new Request(
+      `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}&workspace=manual`,
+    ) } as any);
+    expect(view.startInManualMode).toBe(true);
+    expect(view.selected?.productId).toBe(productId);
+    expect(view.selected?.mode).toBe("native");
+    expect(state.rows).toEqual([]);
+  });
+
+  it("supplies the first Shopify product for embedded-safe default selection", async () => {
+    const page = await loader({ request: new Request("https://tryora.example/app/fabrics") } as any);
+    expect(page.selected).toBeNull();
+    expect(page.products.nodes[0]?.id).toBe(productId);
+  });
+
   it("loads product-owned evidence without changing merchant config or product data", async () => {
     const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
     expect(view.selected).toMatchObject({ title: "Synthetic bed", mode: "native", explicitlyOff: true });
@@ -295,18 +356,18 @@ describe("authenticated two-mode admin", () => {
     const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
     const original = state.admin.graphql;
     let marker = "";
+    const shopifyOperations: string[] = [];
     state.admin.graphql = async (query: string, variables: any) => {
+      shopifyOperations.push(query);
       if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: {
         stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/sample.jpg", parameters: [] }],
         userErrors: [],
       } } });
-      if (query.includes("TryoraAttachFabricImage")) {
-        marker = variables.variables.media[0].alt;
-        return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } });
+      if (query.includes("TryoraCreateFabricSample")) {
+        marker = variables.variables.files[0].alt;
+        return Response.json({ data: { fileCreate: { files: [{ id: "gid://shopify/MediaImage/991" }], userErrors: [] } } });
       }
-      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: {
-        nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/sample.jpg" } }],
-      } } } });
+      if (query.includes("TryoraFabricFileUploadStatus")) return Response.json({ data: { node: { id: "gid://shopify/MediaImage/991", alt: marker, fileStatus: "READY", image: { url: "https://cdn.shopify.com/sample.jpg" } } } });
       return original(query, variables);
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
@@ -318,6 +379,8 @@ describe("authenticated two-mode admin", () => {
       { method: "POST", body: form },
     ) } as any);
     expect(result).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991" } });
+    expect(shopifyOperations.some((query) => query.includes("TryoraCreateFabricSample"))).toBe(true);
+    expect(shopifyOperations.some((query) => query.includes("TryoraAttachFabricImage") || query.includes("productUpdate("))).toBe(false);
     expect(state.rows).toEqual([]); // Upload does not activate Manual Setup or authorize previews.
     expect(state.config.enabled).toBe(false);
     expect(state.writes).toEqual([]);
@@ -340,8 +403,8 @@ describe("upload route answers JSON, never the HTML page", () => {
     const original = state.admin.graphql; let marker = "";
     state.admin.graphql = async (query: string, variables: any) => {
       if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } });
-      if (query.includes("TryoraAttachFabricImage")) { marker = variables.variables.media[0].alt; return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } }); }
-      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/s.jpg" } }] } } } });
+      if (query.includes("TryoraCreateFabricSample")) { marker = variables.variables.files[0].alt; return Response.json({ data: { fileCreate: { files: [{ id: "gid://shopify/MediaImage/991" }], userErrors: [] } } }); }
+      if (query.includes("TryoraFabricFileUploadStatus")) return Response.json({ data: { node: { id: "gid://shopify/MediaImage/991", alt: marker, fileStatus: "READY", image: { url: "https://cdn.shopify.com/s.jpg" } } } });
       return original(query, variables);
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
@@ -374,7 +437,7 @@ describe("upload route answers JSON, never the HTML page", () => {
     const original = state.admin.graphql;
     const attempt = async (graphql: (query: string, variables: any) => Promise<Response>) => {
       state.admin.graphql = async (query: string, variables: any) => (/TryoraStageFabricImage|TryoraAttachFabricImage|TryoraFabricUploadStatus/.test(query) || query.includes("TryoraPreviewProduct")) ? graphql(query, variables) : original(query, variables);
-      const form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      const form = uploadForm({ purpose: "reference" }); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       const response = await post(form);
       expect(response.headers.get("content-type")).toContain("application/json");
       return (await response.json()).error as string;
@@ -422,7 +485,7 @@ describe("upload route answers JSON, never the HTML page", () => {
       };
       vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
       // Still processing after the server's wait: the reply is "pending" with this upload's marker, not an error.
-      let form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      let form = uploadForm({ purpose: "reference" }); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       const pending = await (await post(form)).json();
       expect(pending).toEqual({ media: null, pending: true, marker });
       const status = (m: string) => uploadStatus({ request: new Request(`https://tryora.example/app/fabrics/upload?product=${encodeURIComponent(productId)}&marker=${encodeURIComponent(m)}`) } as any);
@@ -431,7 +494,7 @@ describe("upload route answers JSON, never the HTML page", () => {
       expect(await (await status(marker)).json()).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/993", url: "https://cdn.shopify.com/993.jpg", alt: marker } });
       expect((await status("not-a-marker")).status).toBe(400);
       // A failed status check followed by a processed image is a successful upload.
-      checks = 0; form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      checks = 0; form = uploadForm({ purpose: "reference" }); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       expect(await (await post(form)).json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/993" } });
       expect(warn.mock.calls.some((call) => String(call[0]).includes('"step":"status"'))).toBe(true);
       // An image Shopify could not process is reported, never left "pending" forever.
@@ -478,7 +541,7 @@ describe("actual merchant image uploads", () => {
     await expect(cleanFabricImage(new Blob(["not an image"], { type: "image/jpeg" }))).rejects.toThrow(/validated/);
     await expect(cleanFabricImage(new Blob([new Uint8Array(8 * 1024 * 1024 + 1)]))).rejects.toThrow(/8 MB/);
   });
-  it("uses Shopify-issued staged uploads and attaches media only to the authenticated product", async () => {
+  it("uses Shopify-issued staged uploads and attaches full furniture references only to the authenticated product", async () => {
     const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#ddd" } }).png().toBuffer();
     let alt = "";
     const admin = { graphql: vi.fn(async (query: string, init: any) => {
@@ -487,9 +550,9 @@ describe("actual merchant image uploads", () => {
       return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/999", alt, image: { url: "https://cdn.shopify.com/upload.jpg" } }] } } } });
     }) };
     const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => new Response("", { status: 201 })); vi.stubGlobal("fetch", fetcher);
-    expect(await uploadFabricMedia(admin, productId, new Blob([image]))).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg", alt } });
+    expect(await uploadFabricMedia(admin, productId, new Blob([image]), "reference")).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg", alt } });
     // The sample marker comes back so the manager keeps a fresh upload out of the full-product reference picker.
-    expect(alt).toMatch(/^Tryora fabric sample /);
+    expect(alt).toMatch(/^Tryora furniture reference /);
     expect(fetcher.mock.calls[0]![0]).toBe("https://shopify-staged-uploads.storage.googleapis.com/");
     expect(state.writes).toEqual([]); // an upload alone never approves a reference or creates a mapping
   });

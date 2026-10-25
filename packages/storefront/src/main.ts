@@ -54,6 +54,8 @@ interface Config {
   swatches: Swatch[];
   fabricOptionName?: string | null;
   fabricImages?: Record<string, string>;
+  fabricColours?: Record<string, string>;
+  swatchPresentation?: { shape: "round" | "square"; size: number };
   selectionOptionNames?: string[];
   productVariants?: VariantChoice[];
   singleVariants?: VariantChoice[];
@@ -244,6 +246,14 @@ export class Tryora {
     const root = document.createElement("div");
     root.className = "tryora";
     root.dataset.tryoraStyle = this.cfg.style.template;
+    // Scoped cosmetic choices; do not change Shopify variants or checkout.
+    const presentation = this.cfg.swatchPresentation;
+    if (presentation && (presentation.shape === "round" || presentation.shape === "square") &&
+        Number.isInteger(presentation.size) && presentation.size >= 25 && presentation.size <= 100) {
+      root.dataset.tryoraSwatchShape = presentation.shape;
+      root.style.setProperty("--t-merchant-sw-size", presentation.size + "px");
+      root.style.setProperty("--t-merchant-sw-radius", presentation.shape === "round" ? "50%" : "5px");
+    }
     if (this.cfg.style.accent) root.style.setProperty("--t-accent", this.cfg.style.accent);
     if (this.cfg.style.useThemeFont) root.classList.add("tryora--theme-font");
     root.addEventListener("click", (e) => this.onClick(e));
@@ -860,7 +870,7 @@ export class Tryora {
     const fabrics = [...new Set(this.cfg.swatches.map((x) => x.group).filter((v): v is string => !!v))];
     return '<p class="tryora__label">Choose fabric</p><div class="tryora__chips" role="group" aria-label="Fabric">' +
       fabrics.map((f) => '<button type="button" class="tryora__gchip" data-act="fabric" data-value="' + esc(f) +
-        '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + (this.cfg.fabricImages && Object.prototype.hasOwnProperty.call(this.cfg.fabricImages, f) && this.cfg.fabricImages[f] ? '<img class="tryora__fabric-image" src="' + esc(this.cfg.fabricImages[f]!) + '" alt="" loading="lazy">' : '') + esc(f) + '</button>').join("") + '</div>';
+        '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + (this.cfg.fabricImages?.[f] ? '<img class="tryora__fabric-image" src="' + esc(this.cfg.fabricImages[f]!) + '" alt="" loading="lazy">' : this.cfg.fabricColours?.[f] ? '<span class="tryora__fabric-colour" style="background:' + esc(this.cfg.fabricColours[f]!) + '"></span>' : '') + esc(f) + '</button>').join("") + '</div>';
   }
 
   private swatches(locked = false): string {

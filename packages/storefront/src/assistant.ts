@@ -3,6 +3,7 @@
  * The drawer itself lives in ./assistant/drawer.ts.
  */
 import { escapeHtml } from "./assistant/format.js";
+import { applyAssistantTheme, storefrontAssistantTheme } from "./assistant/theme.js";
 import type { AssistantConfig } from "./assistant/drawer.js";
 
 export { RoomAssistant, type AssistantConfig, type AssistantContext } from "./assistant/drawer.js";
@@ -34,7 +35,7 @@ export function buildAssistantLauncher(config: AssistantConfig, open: () => void
   const button = document.createElement("button");
   button.type = "button";
   button.className = `tryora-assistant-launch tryora-assistant-launch--${config.launcher.position}`;
-  button.style.setProperty("--ta-accent", config.launcher.colour);
+  applyAssistantTheme(button, storefrontAssistantTheme());
   button.setAttribute("aria-label", `${config.launcher.label}, AI shopping assistant`);
   button.setAttribute("aria-haspopup", "dialog");
   button.setAttribute("aria-expanded", "false");
