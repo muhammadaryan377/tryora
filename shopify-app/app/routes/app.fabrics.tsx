@@ -45,6 +45,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   let draft = emptyFabricDraft(), diagnostics: Record<string, string> = {}, warning = "";
   try { draft = draftFromMapping(own?.mapping ?? effective.mapping, session.shop, productId); }
   catch { importBlocked = true; warning = "Existing integration cannot be imported safely. Its settings are preserved. Review existing integration settings before editing this profile."; }
+  const legacyGallerySamples = snapshot.media.filter(isSampleMedia).length;
   // Add standalone Shopify Files ONLY for saved sample IDs; keep actual product photos
   // in the original snapshot so fabric swatches never become gallery images.
   try {
@@ -69,7 +70,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return { products, installationReady, manualSetupReason, advanced: url.searchParams.get("advanced") === "1", selected: {
     productId, title: String(snapshot.product.title), image: snapshot.media[0]?.image?.url ?? null,
     mode: effective.providerId === "shopify_native" ? "native" as const : "manual" as const,
-    providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, sampleNotice, importBlocked,
+    providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, sampleNotice, importBlocked, legacyGallerySamples,
     explicitlyOff: !!config && !config.autoConfigured && !config.enabled,
     options: snapshot.product.options as { name: string; optionValues: { name: string; swatch?: { color?: string; image?: { image?: { url: string } } } }[] }[],
     variants: snapshot.variants, media: snapshot.media.flatMap((m) => m.image?.url ? [{ id: m.id, url: m.image.url, alt: m.alt ?? null }] : []),
