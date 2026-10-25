@@ -1,4 +1,4 @@
-import { useLoaderData, useActionData, useNavigation, useSubmit, useRouteError, isRouteErrorResponse, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useActionData, useNavigate, useNavigation, useSubmit, useRouteError, isRouteErrorResponse, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { FabricColourManager } from "../components/fabric-colour-manager";
@@ -92,7 +92,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 export default function FabricsPage() {
   const data = useLoaderData<typeof loader>(), actionData = useActionData<typeof action>(), navigation = useNavigation(), submit = useSubmit();
+  const navigate = useNavigate();
   return <FabricColourManager data={data} error={actionData && "error" in actionData ? actionData.error : undefined} busy={navigation.state !== "idle"}
+    selectProduct={(productId) => navigate(`/app/fabrics?product=${encodeURIComponent(productId)}`)}
     save={(mode, draft) => submit({ intent: "save", mode, revision: data.selected?.revision ?? "", draft: JSON.stringify(draft) }, { method: "post" })}
     upload={(file, purpose) => requestFabricUpload({ productId: data.selected?.productId ?? "", revision: data.selected?.revision ?? "", file, purpose })} />;
 }
