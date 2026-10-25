@@ -970,6 +970,30 @@ const cardSummary = (item: AssistantRecommendation, index: number) => ({
         : "no image",
 });
 
+/** Keep explicit product-type requests grounded; catalogue searches and model suggestions can be broader. */
+function requestedCardCategory(message: string): "bed" | "sofa" | null {
+  if (!/\b(show|recommend|find|looking|suggest|more|different|prices?|options?)\b/i.test(message)) return null;
+  const beds = /\b(beds?|bed\s*frames?|divans?)\b/i.test(message);
+  const sofas = /\b(sofas?|couches?|settees?)\b/i.test(message);
+  return beds === sofas ? null : beds ? "bed" : "sofa";
+}
+
+function matchesRequestedCardCategory(product: CatalogueProduct, category: "bed" | "sofa" | null): boolean {
+  if (!category) return true;
+  const description = `${product.title} ${product.productType} ${product.category ?? ""}`;
+  return category === "bed" ? /\b(beds?|bed\s*frames?|divans?)\b/i.test(description)
+    : /\b(sofas?|couches?|settees?)\b/i.test(description);
+}
+
+/** A price comparison must be based on the prices of actual verified cards, not model order. */
+export function orderPriceComparison<T extends { price: string | null; productRef: string }>(items: T[], request: string): T[] {
+  if (!/\b(different prices?|price ranges?|prices? (?:from|between)|cheaper|cheapest|affordable|low(?:er)? to high(?:er)?|budget (?:and|to) premium)\b/i.test(request)) return items;
+  const unique = [...new Map(items.map((item) => [item.productRef, item])).values()];
+  const sorted = unique.sort((a, b) => (Number(a.price ?? Infinity) - Number(b.price ?? Infinity)));
+  if (sorted.length <= 3) return sorted;
+  return [sorted[0]!, sorted[Math.floor((sorted.length - 1) / 2)]!, sorted[sorted.length - 1]!];
+}
+
 async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendation[] }) {
   const requested = Array.isArray(args.items) ? args.items : [];
   const excluded: { title: string; reason: string }[] = [];
@@ -980,7 +1004,9 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
     const known = isRef(entry?.productRef) ? ctx.fresh.get(entry.productRef) ?? ctx.snapshot?.byRef.get(entry.productRef) : undefined;
     const issue = known ? constraintIssue(ctx, known, known.minPrice) : null;
     if (issue) excluded.push({ title: known!.title, reason: ISSUE_TEXT[issue](ctx) });
-    return !issue;
+    const wrongCategory = !!known && !matchesRequestedCardCategory(known, requestedCardCategory(ctx.latestMessage));
+    if (wrongCategory) excluded.push({ title: known!.title, reason: "Not the furniture type the shopper asked for." });
+    return !issue && !wrongCategory;
   });
   // Each card shows its own explanation: ask once for distinct reasons rather than show repeated text on the cards.
   if (!ctx.reasonsRevised && !cardReasonsDistinct(items)) {
@@ -994,13 +1020,14 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
     const product = ctx.fresh.get(item.productRef);
     const issue = product ? constraintIssue(ctx, product, Number(item.price)) : null;
     if (issue) excluded.push({ title: item.title, reason: ISSUE_TEXT[issue](ctx) });
-    return !issue;
+    return !issue && (!product || matchesRequestedCardCategory(product, requestedCardCategory(ctx.latestMessage)));
   });
   // Previewable cards come first. For an explicit "see it in my room" request, cards that cannot be previewed are left
   // out when at least one previewable product exists; eligibility itself is never relaxed.
   const previewable = (item: AssistantRecommendation) => item.previewAvailable || item.previewStatus === "choose_options";
   const roomPreview = wantsRoomPreview(ctx.latestMessage) && fitting.some(previewable);
-  const verified = roomPreview ? fitting.filter(previewable) : [...fitting.filter(previewable), ...fitting.filter((item) => !previewable(item))];
+  const ranked = roomPreview ? fitting.filter(previewable) : [...fitting.filter(previewable), ...fitting.filter((item) => !previewable(item))];
+  const verified = orderPriceComparison(ranked, ctx.latestMessage);
   const notPreviewable = fitting.length - verified.length;
   if (verified.length) {
     ctx.recommendations = verified;
@@ -1317,9 +1344,13 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       logAssistant("recommendation_dropped", { shop: ctx.shopId, reason: "not_found_fresh" }, "info");
       return null;
     }
-    // A product with exactly one variant ("Default Title") needs no choice: use that variant.
+    // Never guess a colour or size: use an exact stated variant, a single variant, or the one
+    // uniquely identifiable Shopify variant photo. Ambiguous photos remain unpreviewable.
     const only = !pick.variantRef && product.variantsComplete && product.variants.length === 1 ? product.variants[0]! : null;
-    const variant = pick.variantRef ? product.variants.find((entry) => entry.ref === pick.variantRef) ?? null : only;
+    const pictured = !pick.variantRef && product.variantsComplete && product.image
+      ? product.variants.filter((entry) => entry.image && entry.image === product.image) : [];
+    const onePictured = pictured.length === 1 ? pictured[0]! : null;
+    const variant = pick.variantRef ? product.variants.find((entry) => entry.ref === pick.variantRef) ?? null : only ?? onePictured;
     if (pick.variantRef && !variant) {
       // Never substitute another variant, fabric, colour or size.
       logAssistant("recommendation_dropped", { shop: ctx.shopId, reason: "variant_not_found" }, "info");
@@ -1422,7 +1453,10 @@ Purpose:
 Grounding:
 - Use the tools before any factual claim about products, options, colours, sizes, materials, dimensions, prices, stock, AI room previews, delivery, returns, warranty, promotions or store policies. Never invent any of these.
 - A product exists only if a tool returned it. Recommend only productRef/variantRef values a tool returned; never alter or guess a ref, and never swap one variant for a similar one.
-- To show products, call recommend_products with two or three strong room matches by default (up to four only when the shopper asks for more). Each card shows its own 15-30 word reason, so put the explanation there: specific to that product and this room, never generic, never the same for two cards. The cards show verified images, prices and options, so do not restate them in prose; mention a price only if a tool returned it.
+- To show products, call recommend_products with two or three strong room matches by default (up to four only when the shopper asks for more). Each card shows its own 15-30 word reason, so put the explanation there: specific to that product and this room, never generic, never the same for two cards. The cards show verified images and prices, so do not restate them in prose; mention a price only if a tool returned it.
+- For a shopper who uploaded a room image, first record its actual visible design, wall/floor tones, furnishings and lighting, then look up real furniture with verified matching characteristics. Do not select random catalogue products merely to fill three slots. If evidence is weak, show fewer and explain uncertainty.
+- If the shopper asks for beds at different prices, search multiple price levels and return genuinely distinct prices, not repeated versions of the same bed. The final order is verified server-side.
+- Do not ask the shopper to choose fabric, colour, size or any configuration in chat. A preview is possible only when a single exact merchant-approved variant and its matching reference image are independently verified. Otherwise the card still shows the product but preview is unavailable.
 - "Show more", "other options", "something different": show the next up to four genuinely different matches, keeping the same room, budget and preferences. The server excludes products already shown. If no new verified matches remain, say so plainly in one sentence.
 - Set variantRef only when that exact variant matches the request; otherwise null. Cards let the shopper refine fabric and colour. Keep any established exact configuration internally; never choose a different variant or size to make a preview work.
 - Products marked singleVariant have no options: never ask the shopper to choose a size, fabric or colour for them.
@@ -1842,7 +1876,15 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   if (priced.removed) logAssistant("model_parse_failure", { shop: input.shopId, reason: "unverified_price_removed", products: priced.removed });
   const guarded = ctx.zeroVerified ? { message: priced.message, replaced: 0 } : guardAbsenceClaims(priced.message, ctx.currentProduct);
   if (guarded.replaced) logAssistant("model_parse_failure", { shop: input.shopId, reason: "unverified_absence_claim_removed", products: guarded.replaced });
-  const message = guarded.message;
+  // Model prose can contradict verified cards (for example "I found no beds" while cards exist).
+  // Prefer a concise grounded introduction over contradicting what was actually returned.
+  const contradictsCards = ctx.recommendations.length > 0 &&
+    /\b(?:found no|couldn['’]t find|cannot find|no (?:matching|suitable|available)|nothing matches|no beds|no sofas)\b/i.test(guarded.message);
+  const message = contradictsCards
+    ? (ctx.recommendations.length === 1
+      ? "Here is one verified option from this store to consider."
+      : "Here are verified options from this store to compare. You can preview an approved product in your room.")
+    : guarded.message;
   const reply: AssistantReply = {
     message,
     room: ctx.room,
