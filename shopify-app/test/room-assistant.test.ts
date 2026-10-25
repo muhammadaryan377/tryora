@@ -30,6 +30,7 @@ import {
   normaliseRoomContext,
   parseToolArguments,
   orderPriceComparison,
+  removeAppearanceChoiceRequests,
   runAssistantTurn,
   sanitiseMessage,
   wantsMoreOptions,
@@ -224,6 +225,17 @@ describe("input validation", () => {
     expect(orderPriceComparison(picks, "show me beds with different prices").map(p => p.price))
       .toEqual(["299.99", "319.99", "599.99"]);
     expect(orderPriceComparison(picks, "show me some beds")).toEqual(picks);
+  });
+
+  it("does not let model-generated option questions override the fixed photo-preview flow", () => {
+    expect(removeAppearanceChoiceRequests("Here are three beds. Which size would you like?"))
+      .toBe("Here are three beds.");
+    expect(removeAppearanceChoiceRequests("Please choose a fabric before we begin. Your room photo is ready."))
+      .toBe("Your room photo is ready.");
+    expect(removeAppearanceChoiceRequests("What colour do you prefer?"))
+      .toContain("Preview in my room");
+    expect(removeAppearanceChoiceRequests("The upholstered bed has a grey fabric finish."))
+      .toBe("The upholstered bed has a grey fabric finish.");
   });
 });
 
