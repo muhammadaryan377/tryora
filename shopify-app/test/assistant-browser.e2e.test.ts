@@ -121,7 +121,7 @@ const model = {
       }
       if (calls.includes("search_products") && !calls.includes("recommend_products")) {
         const found = JSON.parse(outputs.find((item, index) => calls[index] === "search_products")?.output ?? outputs.at(-1).output);
-        const items = (found.results ?? []).slice(0, /three/i.test(text) ? 3 : 2).map((result: any) => ({ productRef: result.productRef, variantRef: result.matchingVariants[0]?.variantRef ?? null, reason: "Its colour and shape suit the room." }));
+        const items = (found.results ?? []).slice(0, /three/i.test(text) ? 3 : 2).map((result: any) => ({ productRef: result.productRef, variantRef: result.matchingVariants[0]?.variantRef ?? null, reason: `The ${result.title} brings a colour and shape that suit the room.` }));
         if (items.length) return toolCall("recommend_products", { items });
       }
       const words = ["Here are ", /three/i.test(text) ? "three verified " : "two verified ", "options from ", "the store. ", "Option 1 suits ", "a bright, calm room."];
@@ -576,7 +576,8 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(await card.locator(".tryora-assistant__price").textContent()).toContain("899.00");
       expect(await card.locator(".tryora-assistant__thumb img").getAttribute("src")).toContain("cdn.shopify.com");
       expect(await card.locator(".tryora-assistant__badge").count()).toBe(0);
-      expect(await card.locator(".tryora-assistant__card-reason").textContent()).toBe("Its colour and shape suit the room.");
+      // The card's own description, not a shared one.
+      expect(await card.locator(".tryora-assistant__card-reason").textContent()).toBe("The Aria Upholstered Bed brings a colour and shape that suit the room.");
       expect(await card.locator(".tryora-assistant__tags").textContent()).not.toMatch(/Size|King/);
       expect(await card.locator(".tryora-assistant__card-actions").textContent()).toContain("Preview in my room");
       expect(await page.locator("[data-ta-room] [data-ta=edit-room]").count()).toBe(1);

@@ -61,9 +61,14 @@ import {
 const MAX_HISTORY = 12;
 const MAX_MESSAGE_LENGTH = 800;
 /** Tool rounds before the model must answer. One extra call may follow to force the final answer. */
-export const MAX_TOOL_ROUNDS = 4;
+// Room discovery can need list_collections, a search per suitable category and recommend_products in one turn.
+export const MAX_TOOL_ROUNDS = 6;
 const MAX_TOOL_CALLS = 8;
 const MAX_SHOWN = 6;
+/** Cards per recommendation batch. */
+export const MAX_CARDS = 4;
+/** Products already shown in this recommendation exploration, excluded when the shopper asks for more. */
+const MAX_EXPLORED = 24;
 const REQUEST_BUDGET_MS = 60_000;
 const MODEL_CALL_TIMEOUT_MS = 30_000;
 const CATALOGUE_WAIT_MS = 6_000;
@@ -320,9 +325,9 @@ export function normaliseEarlier(raw: unknown): string[] {
   return Array.isArray(raw) ? raw.map((entry) => plain(entry, 160)).filter(Boolean).slice(-6) : [];
 }
 
-export function normaliseShownRecommendations(raw: unknown): ShownRecommendation[] {
+export function normaliseShownRecommendations(raw: unknown, max = MAX_SHOWN): ShownRecommendation[] {
   if (!Array.isArray(raw)) return [];
-  return raw.slice(0, MAX_SHOWN).flatMap((entry) => {
+  return raw.slice(0, max).flatMap((entry) => {
     const productRef = (entry as ShownRecommendation | null)?.productRef;
     const variantRef = (entry as ShownRecommendation | null)?.variantRef;
     if (!isRef(productRef)) return [];
@@ -413,20 +418,20 @@ export const ASSISTANT_TOOLS = [
   {
     type: "function",
     name: "recommend_products",
-    description: "Show up to three verified product cards to the shopper. Use productRef/variantRef values returned by search_products or get_product_details. The server re-checks price, stock and AI preview eligibility and tells you which cards were shown; then write your reply referring to them as option 1, 2, 3.",
+    description: "Show up to four verified product cards to the shopper. Use productRef/variantRef values returned by search_products or get_product_details. Each card shows its own reason, so the reasons are the explanation. The server re-checks price, stock and AI preview eligibility and tells you which cards were shown.",
     parameters: {
       type: "object",
       properties: {
         items: {
           type: "array",
           minItems: 1,
-          maxItems: 3,
+          maxItems: MAX_CARDS,
           items: {
             type: "object",
             properties: {
               productRef: { type: "string" },
               variantRef: { type: ["string", "null"], description: "Exact variant matching the request, or null to let the shopper choose options." },
-              reason: { type: "string", description: "One short sentence (at most 170 characters) about verified colour, fabric or style matching the visible or stated room; no sizes, delivery details or technical preview status." },
+              reason: { type: "string", description: "15-30 words, shown inside this product's card: why this particular product suits this shopper's room, using what is visible or stated (style, wall/floor colours, lighting, existing furniture) and this product's verified colour, fabric or style. Different for every card; no sizes, prices, delivery or preview status." },
             },
             required: ["productRef", "variantRef", "reason"],
             additionalProperties: false,
@@ -563,7 +568,7 @@ export function parseToolArguments(name: string, raw: string): any {
     case "list_collections":
       return {};
     case "recommend_products": {
-      if (!Array.isArray(args.items) || !args.items.length || args.items.length > 3) throw new ToolArgumentError("items");
+      if (!Array.isArray(args.items) || !args.items.length || args.items.length > MAX_CARDS) throw new ToolArgumentError("items");
       return {
         items: args.items.map((item: any) => {
           if (!isRef(item?.productRef) || (item.variantRef !== null && !isRef(item.variantRef))) throw new ToolArgumentError("ref");
@@ -621,6 +626,12 @@ interface RequestContext {
   selection: Selection | null;
   /** Latest recommendations, in order, as the shopper sees them. */
   shownRefs: string[];
+  /** Every product shown in this recommendation exploration (all batches since the chat started). */
+  explored: Set<string>;
+  /** The latest message asks for more or different options: explored products are excluded. */
+  exploring: boolean;
+  /** recommend_products already asked once for distinct card reasons this request. */
+  reasonsRevised: boolean;
   candidates: Map<string, Candidate>;
   /** The shopper's latest message, for checking a tool's product against what they actually said. */
   latestMessage: string;
@@ -717,11 +728,21 @@ async function runSearch(ctx: RequestContext, requested: ProductQuery) {
         : liveFailed ? "searched a partial index only; Shopify search was unavailable"
           : ctx.snapshot ? "searched a partial index plus Shopify's own search"
             : "searched with Shopify's own search only";
-  const allMatches = merged(pools, query, ctx.currentProductId);
-  const matches = allMatches.filter(fits);
+  // "Show more": products already shown in this exploration are skipped, so a full page of new ones can still come back.
+  const fresh = (match: ProductMatch) => !ctx.exploring || !ctx.explored.has(match.product.ref);
+  const widened = ctx.exploring ? { ...query, limit: Math.min(10, query.limit + ctx.explored.size) } : query;
+  const allMatches = merged(pools, widened, ctx.currentProductId);
+  const matches = allMatches.filter((match) => fits(match) && fresh(match)).slice(0, query.limit);
   matches.forEach((match) => ctx.allowed.add(match.product.ref));
   if (matches.length) {
-    return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete }, appliedConstraints: applied };
+    return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete }, appliedConstraints: applied,
+      ...(ctx.exploring ? { excludedAlreadyShown: allMatches.filter((match) => !fresh(match)).length } : {}) };
+  }
+  if (ctx.exploring && allMatches.some((match) => !fresh(match))) {
+    return {
+      results: [], appliedConstraints: applied, catalogue: { coverage, complete },
+      note: "Every verified match for this search was already shown to the shopper. Try one different relevant search (another suitable category or style for their room); if that finds nothing new either, tell the shopper plainly that there are no more verified matches and offer to adjust the style, colour or budget.",
+    };
   }
   if (allMatches.length) {
     // Only children's products matched: say so instead of recommending them for an adult bedroom.
@@ -734,7 +755,7 @@ async function runSearch(ctx: RequestContext, requested: ProductQuery) {
   }
   // Nothing met every filter. Look for products of the right kind before anyone concludes the store has none.
   const relaxedAll = merged(pools, { ...query, colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: null, availableOnly: false, limit: 6 }, ctx.currentProductId);
-  const relaxed = relaxedAll.filter(fits);
+  const relaxed = relaxedAll.filter((match) => fits(match) && fresh(match));
   relaxed.forEach((match) => ctx.allowed.add(match.product.ref));
   if (relaxed.length) {
     const overBudget = budget !== null && relaxed.every((match) => match.product.minPrice > budget);
@@ -811,7 +832,7 @@ function knownRef(ctx: RequestContext, ref: string) {
 
 async function freshProducts(ctx: RequestContext, refs: string[], budget = ctx.budget) {
   const missing = [...new Set(refs.filter((ref) => !ctx.fresh.has(ref)))];
-  if (missing.length) for (const [ref, product] of await getProductDetails(ctx.admin, missing, budget)) ctx.fresh.set(ref, product);
+  if (missing.length) for (const [ref, product] of await getProductDetails(ctx.admin, missing, budget, MAX_CARDS)) ctx.fresh.set(ref, product);
 }
 
 async function runDetails(ctx: RequestContext, args: { productRefs: string[]; colour: string | null; size: string | null; material: string | null }) {
@@ -915,7 +936,7 @@ function referenceGuard(ctx: RequestContext, productRef: string, tool: "select_p
     if (ctx.selection) target = ctx.selection.productRef;
     // Guessing among the cards on screen is ambiguous; a product the model found for this message is not.
     else if (ctx.shownRefs.length > 1 && ctx.shownRefs.includes(productRef) && !mentionsProduct(ctx.latestMessage, titleOf(ctx, productRef))) {
-      return { error: "ambiguous_reference", instruction: `Ask which product to preview: ${ctx.shownRefs.slice(0, 3).map((ref, index) => `${index + 1}. ${titleOf(ctx, ref)}`).join("; ")}.` };
+      return { error: "ambiguous_reference", instruction: `Ask which product to preview: ${ctx.shownRefs.slice(0, MAX_CARDS).map((ref, index) => `${index + 1}. ${titleOf(ctx, ref)}`).join("; ")}.` };
     }
   }
   if (target && productRef !== target) {
@@ -947,7 +968,10 @@ const cardSummary = (item: AssistantRecommendation, index: number) => ({
 });
 
 async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendation[] }) {
+  const requested = Array.isArray(args.items) ? args.items : [];
   const excluded: { title: string; reason: string }[] = [];
+  const alreadyShown = ctx.exploring ? requested.filter((entry) => ctx.explored.has(entry?.productRef)).length : 0;
+  args = { items: ctx.exploring ? requested.filter((entry) => !ctx.explored.has(entry?.productRef)) : requested };
   // Drop known misfits before the three-card cap, so they never crowd out products that do fit.
   const items = (Array.isArray(args.items) ? args.items : []).filter((entry) => {
     const known = isRef(entry?.productRef) ? ctx.fresh.get(entry.productRef) ?? ctx.snapshot?.byRef.get(entry.productRef) : undefined;
@@ -955,6 +979,12 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
     if (issue) excluded.push({ title: known!.title, reason: ISSUE_TEXT[issue](ctx) });
     return !issue;
   });
+  // Each card shows its own explanation: ask once for distinct reasons rather than show repeated text on the cards.
+  if (!ctx.reasonsRevised && !cardReasonsDistinct(items)) {
+    ctx.reasonsRevised = true;
+    return { shown: [], error: "card_reasons_need_revision",
+      instruction: "Each card shows its own reason. Call recommend_products again with a different 15-30 word reason for every product, explaining why that particular product suits this room." };
+  }
   const all = await verifiedRecommendations(ctx, items);
   // Fresh prices can differ from the index: check again.
   const verified = all.filter((item) => {
@@ -965,6 +995,7 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   });
   if (verified.length) {
     ctx.recommendations = verified;
+    verified.forEach((item) => ctx.explored.add(item.productRef));
     ctx.emit({ type: "recommendations", items: verified });
   }
   verified.forEach((item) => notePrices(ctx, item.price, item.maxPrice));
@@ -972,8 +1003,11 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
     shown: verified.map(cardSummary),
     dropped: args.items.length - verified.length,
     excludedForShopperConstraints: excluded,
+    ...(alreadyShown ? { excludedAlreadyShown: alreadyShown } : {}),
     note: verified.length
-      ? "These cards are now visible with verified price, stock and AI preview status. Refer to them as option 1, 2, 3; do not contradict them."
+      ? "These cards are now visible with verified price, stock, AI preview status and their own reasons. Do not repeat the reasons or card details; at most one short sentence, or a single relevant question."
+      : alreadyShown && !excluded.length
+        ? "Those products were already shown in this conversation. Search for genuinely different matches; if there are none, say plainly that there are no more verified matches."
       : excluded.length
         ? "None of these fit the shopper's stated budget or needs, so no cards were shown. Say so honestly; do not present them as matches."
         : "None could be verified. Do not describe them as available; search again or explain.",
@@ -1178,6 +1212,25 @@ function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, varian
 
 interface ModelRecommendation { productRef: string; variantRef: string | null; reason: string }
 
+/** "Show more", "other options", "something different" and similar: the next batch must not repeat earlier cards. */
+export function wantsMoreOptions(message: string): boolean {
+  return /\b(show|see|give|any|got)\s+(me\s+)?(some\s+)?more\b|\bmore\s+(options|choices|ideas|products|like (this|these))\b|\b(other|different|another few|alternative)\s+(options|choices|ones|products|ideas|styles)\b|\bsomething\s+(else|different)\b|\banything\s+else\b|\baur\s+(dikhao|dikhaen|dikhayein)\b/i.test(message);
+}
+
+const reasonKey = (reason: unknown) => String(reason ?? "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
+/** With several cards, each needs its own explanation: no empty or repeated reasons. */
+export function cardReasonsDistinct(items: { reason?: unknown }[]): boolean {
+  if (items.length < 2) return true;
+  const keys = items.map((item) => reasonKey(item?.reason));
+  return keys.every(Boolean) && new Set(keys).size === keys.length;
+}
+/** The in-card description: at most about 30 words, ending on a whole word. */
+export function cardReason(reason: string): string {
+  const words = reason.trim().replace(/\s+/g, " ").split(" ").filter(Boolean);
+  const text = words.length > 34 ? `${words.slice(0, 32).join(" ").replace(/[,;:]$/, "")}…` : words.join(" ");
+  return text.slice(0, 300);
+}
+
 /** One consistent explanation for a preview that can't be offered, shared by the card and the model. */
 export function previewReason(status: PreviewStatus, available: boolean, issue?: PreviewIssue): string | null {
   switch (status) {
@@ -1205,7 +1258,7 @@ export function cardImage(product: Pick<CatalogueProduct, "title" | "image" | "i
 async function verifiedRecommendations(ctx: RequestContext, requested: ModelRecommendation[]): Promise<AssistantRecommendation[]> {
   const picks: ModelRecommendation[] = [];
   for (const entry of requested) {
-    if (picks.length >= 3) break;
+    if (picks.length >= MAX_CARDS) break;
     if (!isRef(entry?.productRef) || !ctx.allowed.has(entry.productRef)) {
       logAssistant("recommendation_dropped", { shop: ctx.shopId, reason: "not_returned_by_tools" }, "info");
       continue;
@@ -1215,7 +1268,7 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
     picks.push({ productRef: entry.productRef, variantRef, reason: String(entry.reason ?? "") });
   }
   // Fresh price, stock and variant data before anything actionable is shown.
-  try { await freshProducts(ctx, picks.map((pick) => pick.productRef), new ShopifyBudget(6)); }
+  try { await freshProducts(ctx, picks.map((pick) => pick.productRef), new ShopifyBudget(8)); }
   catch { /* Unverifiable recommendations are dropped below. */ }
   // Same as opening the product page: with the merchant's auto-enable setting, eligible products get a preview
   // configuration on first sight. Without the setting this only reads.
@@ -1275,7 +1328,7 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       ...(preview.previewContext ? { previewContext: preview.previewContext } : {}),
       variantCount: product.variantCount,
       hasOptions: product.variantCount > 1 && realOptions(product.options).length > 0,
-      reason: pick.reason.trim().slice(0, 300),
+      reason: cardReason(pick.reason),
     };
   }));
   return verified.filter((entry): entry is AssistantRecommendation => !!entry);
@@ -1340,13 +1393,15 @@ function openAIClient(env: NodeJS.ProcessEnv = process.env) {
 const INSTRUCTIONS = `You are Room Assistant, a conversational AI furniture previewer for exactly one Shopify store. You can see only this store's data, through the tools.
 Purpose:
 - Help the shopper find real furniture for their room, refine model, fabric and colour preferences, and see verified choices in their own space. Lead with room recommendations and previews rather than general product-information answers.
-- With a room photo and a recommendation request, analyse the room, apply the shopper's budget and preferences, search the actual catalogue, then show up to three relevant product cards when verified matches exist with concise, grounded reasons. Fewer verified matches are better than invented or unsuitable choices.
+- Room-based discovery: when the shopper asks what would suit their room without naming a category ("what furniture would look good here?", "recommend something for this room", "is room ke liye koi acha furniture dikhao"), use the room photo or the saved room notes: decide which furniture categories suit that room (call list_collections to see which categories this store actually sells; never assume beds), search the catalogue for each suitable category with the room's colours, materials and style plus the shopper's budget and preferences, then show up to four genuinely different matching products, mixing categories where that fits the room. Fewer verified matches are better than invented or unsuitable choices.
+- If a room-based request has no room photo in this message and no saved room notes, ask for a room photo in one short sentence instead of pretending to have seen the room. When saved room notes exist, reuse them; do not ask for the photo again.
 - Keep refinements conversational: use the saved room, selected product, colour, material and budget for "another option", "the second one in beige" or "try this one". Check real options and approved preview references before offering a changed combination.
 - Answer specifications, delivery, returns or other support questions only when the shopper asks or the detail is necessary for their stated choice. Answer briefly using verified tools, then offer a relevant next step toward a recommendation or room preview when helpful. Do not divert an explicit support question or invent a policy.
 Grounding:
 - Use the tools before any factual claim about products, options, colours, sizes, materials, dimensions, prices, stock, AI room previews, delivery, returns, warranty, promotions or store policies. Never invent any of these.
 - A product exists only if a tool returned it. Recommend only productRef/variantRef values a tool returned; never alter or guess a ref, and never swap one variant for a similar one.
-- To show products, call recommend_products, then write your reply referring to the cards as option 1, 2, 3. The cards show verified images and prices, so do not restate those in prose; mention a price only if a tool returned it.
+- To show products, call recommend_products with up to four products. Each card shows its own 15-30 word reason, so put the explanation there: specific to that product and this room, never generic, never the same for two cards. The cards show verified images, prices and options, so do not restate them in prose; mention a price only if a tool returned it.
+- "Show more", "other options", "something different": show the next up to four genuinely different matches, keeping the same room, budget and preferences. The server excludes products already shown. If no new verified matches remain, say so plainly in one sentence.
 - Set variantRef only when that exact variant matches the request; otherwise null. Cards let the shopper refine fabric and colour. Keep any established exact configuration internally; never choose a different variant or size to make a preview work.
 - Products marked singleVariant have no options: never ask the shopper to choose a size, fabric or colour for them.
 - "Available to buy" and "AI room preview" are different things. A product without AI preview is still sold by the store.
@@ -1372,11 +1427,11 @@ Room match:
 - Explain fit with what is visible or stated: style, wall and floor colours, lighting, existing furniture. Never give match percentages or scores, and never estimate exact dimensions from a photo.
 Style:
 - Sound like a friendly, knowledgeable person in the store, not a report. Plain text.
-- Default to 1-3 short sentences, ideally under 50 words. No long paragraphs, headings or bullet lists, and no repeated explanations or greetings.
-- With product cards, say briefly why they suit this room; never repeat what the cards show (photos, prices, options, preview availability).
+- Default to 1-2 short, natural sentences. No long introductions, paragraphs, headings or bullet lists, and no repeated explanations or greetings.
+- When cards are shown, the cards explain the choices: reply with at most one short sentence (or one relevant question), and never repeat what the cards show (reasons, photos, prices, options, preview availability).
 - Ask at most one follow-up question, and only when it helps.
 - Give a longer answer only when the shopper asks for details or a comparison. Never drop a required fact, safety point or essential clarification to stay short.
-- Example: "Based on your room, I'd recommend a cream upholstered bed for a warmer, more spacious look. I've picked two options that could work beautifully. Want to see one in your room?"`;
+- Example with cards: "Here are a few pieces that would suit your room. Want to see one in your room?"`;
 
 /** Loads the candidate titles and prices, then resolves what the latest message refers to. */
 async function resolveLatestReference(ctx: RequestContext, message: string) {
@@ -1386,9 +1441,9 @@ async function resolveLatestReference(ctx: RequestContext, message: string) {
   });
   // Recent and selected products first (fresh if not indexed), then the whole published catalogue for names.
   const recent = [...ctx.shownRefs, ...(ctx.selection ? [ctx.selection.productRef] : [])];
-  const missing = [...new Set(recent)].filter((ref) => !ctx.snapshot?.byRef.has(ref) && !ctx.fresh.has(ref)).slice(0, 3);
+  const missing = [...new Set(recent)].filter((ref) => !ctx.snapshot?.byRef.has(ref) && !ctx.fresh.has(ref)).slice(0, MAX_CARDS + 1);
   if (missing.length) {
-    try { for (const [ref, product] of await getProductDetails(ctx.admin, missing, new ShopifyBudget(3))) ctx.fresh.set(ref, product); }
+    try { for (const [ref, product] of await getProductDetails(ctx.admin, missing, new ShopifyBudget(4), MAX_CARDS + 1)) ctx.fresh.set(ref, product); }
     catch { /* Unknown refs simply cannot be named; they are still verified before use. */ }
   }
   for (const ref of recent) {
@@ -1411,6 +1466,9 @@ function stateMessage(ctx: RequestContext) {
   const budget = ctx.constraints;
   if (budget.budgetMax !== null || budget.budgetMin !== null) {
     lines.push(`- Budget: ${budget.budgetMin !== null ? `from ${budget.budgetMin} ` : ""}${budget.budgetMax !== null ? `up to ${budget.budgetMax}` : ""}${budget.budgetCurrency ? ` (the shopper wrote "${budget.budgetCurrency}")` : ""}. Compare with verified prices; the store's prices are in its own currency.`);
+  }
+  if (ctx.exploring) {
+    lines.push(`- The shopper asked for more options. ${ctx.explored.size} products were already shown in this conversation and are excluded from search and cards. Show up to ${MAX_CARDS} genuinely different matches for the same room, budget and preferences; if none remain, say plainly that there are no more verified matches.`);
   }
   lines.push(budget.forChildren
     ? "- The shopper is shopping for a child."
@@ -1517,6 +1575,8 @@ export interface AssistantTurnInput {
   preferences?: unknown;
   /** Older shopper messages beyond the verbatim history window. */
   earlier?: unknown;
+  /** Products shown in earlier recommendation batches of this chat. */
+  explored?: unknown;
   /** Budget and audience persisted from earlier turns. */
   constraints?: unknown;
   settings?: RoomAssistantSettings;
@@ -1598,6 +1658,9 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     resolution: { kind: "none" },
     selection,
     shownRefs: shown.map((entry) => entry.productRef),
+    explored: new Set([...normaliseShownRecommendations(input.explored, MAX_EXPLORED), ...shown].map((entry) => entry.productRef)),
+    exploring: false,
+    reasonsRevised: false,
     candidates: new Map(),
     latestMessage: history.at(-1)!.content,
     selectionSource: null,
@@ -1607,6 +1670,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     zeroVerified: false,
   };
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
+  ctx.exploring = ctx.explored.size > 0 && wantsMoreOptions(history.at(-1)!.content);
   await resolveLatestReference(ctx, history.at(-1)!.content);
   emit({ type: "constraints", constraints: ctx.constraints });
   if (current) {

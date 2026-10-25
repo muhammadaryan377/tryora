@@ -595,9 +595,9 @@ export async function liveSearch(admin: AdminGraphql, shopId: string, query: Pro
 }
 
 /** Fresh, complete product data (all variants up to a bound) for exact answers and recommendations. */
-export async function getProductDetails(admin: AdminGraphql, refs: string[], budget: ShopifyBudget): Promise<Map<string, CatalogueProduct>> {
+export async function getProductDetails(admin: AdminGraphql, refs: string[], budget: ShopifyBudget, max = 3): Promise<Map<string, CatalogueProduct>> {
   const result = new Map<string, CatalogueProduct>();
-  const unique = [...new Set(refs.filter(isRef))].slice(0, 3);
+  const unique = [...new Set(refs.filter(isRef))].slice(0, max);
   await Promise.all(unique.map(async (ref) => {
     let node: any = null;
     const variants: any[] = [];

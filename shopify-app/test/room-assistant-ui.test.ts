@@ -692,6 +692,36 @@ describe("product images in cards", () => {
     return assistant;
   }
 
+  it("shows four cards with their own descriptions, sends what was explored on show more, and keeps earlier batches", async () => {
+    const reasons = [
+      "Its oat linen picks up your warm beige walls and keeps the bright living room soft and relaxed.",
+      "The natural oak top matches your wooden floor and anchors the seating area without crowding it.",
+      "Ivory boucle adds texture beside the window and lifts the calm neutral palette you already have.",
+      "A jute rug grounds the light floor and brings the woven, natural feel of your space together.",
+    ];
+    const titles = ["Linen Sofa", "Oak Table", "Boucle Armchair", "Jute Rug"];
+    const batch = titles.map((title, i) => card({ id: `${i + 1}:`, productRef: String(i + 1), variantRef: null, productId: `gid://shopify/Product/${i + 1}`, title, reason: reasons[i] }));
+    await showCards(batch);
+    const first = [...document.querySelectorAll(".tryora-assistant__card")];
+    expect(first).toHaveLength(4);
+    // Each description sits inside its own card, in full, and matches that product.
+    first.forEach((node, i) => {
+      expect(node.querySelector("h4")!.textContent).toBe(titles[i]);
+      expect(node.querySelector(".tryora-assistant__card-reason")!.textContent).toBe(reasons[i]);
+    });
+    proxy.script([{ type: "recommendations", items: [card({ id: "5:", productRef: "5", variantRef: null, productId: "gid://shopify/Product/5", title: "Walnut Media Unit",
+      reason: "Warm walnut echoes the darker shelving and balances the pale walls in your living room nicely." })] }],
+      [{ type: "final", reply: { message: "One more idea.", recommendations: [] } }, { type: "done" }]);
+    await type("Show me more");
+    click("[data-ta='send']");
+    await settle(60);
+    expect(JSON.parse(String(proxy.forms.at(-1)!.get("explored"))).map((entry: any) => entry.productRef)).toEqual(["1", "2", "3", "4"]);
+    // The first batch stays in the conversation; the new card is added below it.
+    expect([...document.querySelectorAll(".tryora-assistant__card h4")].map((h) => h.textContent)).toEqual([...titles, "Walnut Media Unit"]);
+    const stored = JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!);
+    expect(stored.explored.map((entry: any) => entry.productRef)).toEqual(["1", "2", "3", "4", "5"]);
+  });
+
   it("renders the real Shopify thumbnail with alt text, a loading state and a loaded state", async () => {
     await showCards([card({ image: "https://cdn.shopify.com/s/files/chelsea.jpg", imageAlt: "Chelsea Luxe Bed in grey", imageSource: "product", variantRef: null })]);
     const thumb = $(".tryora-assistant__card .tryora-assistant__thumb")!;

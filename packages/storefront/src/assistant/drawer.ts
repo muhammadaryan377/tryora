@@ -198,6 +198,7 @@ export class RoomAssistant {
     this.pendingPreview = null;
     this.state.entries = [];
     this.state.shown = [];
+    this.state.explored = [];
     this.state.selected = null;
     this.state.constraints = null;
     this.state.preferences = null;
@@ -218,6 +219,7 @@ export class RoomAssistant {
     this.pendingPreview = null;
     this.state.entries = [];
     this.state.shown = [];
+    this.state.explored = [];
     this.state.selected = null;
     this.state.constraints = null;
     this.state.preferences = null;
@@ -322,6 +324,7 @@ export class RoomAssistant {
     form.set("hasPhoto", this.roomPhoto ? "1" : "0");
     if (this.state.room) form.set("room", JSON.stringify(this.state.room));
     if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 6)));
+    if (this.state.explored?.length) form.set("explored", JSON.stringify(this.state.explored.slice(-24)));
     if (this.state.selected) form.set("selected", JSON.stringify(this.state.selected));
     if (this.state.preferences) form.set("preferences", JSON.stringify(this.state.preferences));
     if (this.state.constraints) form.set("constraints", JSON.stringify(this.state.constraints));
@@ -384,6 +387,8 @@ export class RoomAssistant {
         reply.recommendations = (event.items ?? []) as Recommendation[];
         reply.focus = false;
         this.state.shown = reply.recommendations.map(({ productRef, variantRef }) => ({ productRef, variantRef }));
+        // Earlier batches stay in the chat history; the explored list keeps "show more" from repeating them.
+        this.state.explored = [...(this.state.explored ?? []).filter((ref) => !this.state.shown.some((s) => s.productRef === ref.productRef)), ...this.state.shown].slice(-24);
         this.syncCards(reply.recommendations, reply.id);
         this.save();
         this.renderAll();
@@ -1569,8 +1574,11 @@ export class RoomAssistant {
   private save() { saveState(this.state); }
 }
 
+/** The card's own room-matching description, shown in full at the usual 15-30 words; longer text keeps its first sentence. */
 function shortReason(reason: string): string {
-  const first = reason.trim().split(/(?<=[.!?])\s+/)[0] ?? "";
+  const text = reason.trim().replace(/\s+/g, " ");
+  if (text.split(" ").length <= 34 && text.length <= 260) return text;
+  const first = text.split(/(?<=[.!?])\s+/)[0] ?? "";
   return first.length > 170 ? first.slice(0, 167).trimEnd() + "..." : first;
 }
 function appearanceSummary(options: Record<string, string>): string {
