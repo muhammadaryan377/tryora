@@ -485,14 +485,24 @@ export class RoomAssistant {
   // ---------- previews ----------
 
   /** Starts an AI preview for one verified card. Needs a room photo; asks for one if missing. */
+  /** A chat recommendation cannot borrow a different product's Shopify page selection.
+   * Revalidation is available only to cards for this exact product, and it never
+   * unlocks a sold-out or completely unconfigured recommendation.
+   */
+  private currentPageVariantFor(item: Recommendation): string | null {
+    if (!this.context.productId || numeric(this.context.productId) !== numeric(item.productId) ||
+        numeric(item.productRef) !== numeric(item.productId) || item.purchaseAvailable === false ||
+        item.previewStatus === "not_configured" || item.previewStatus === "unavailable") return null;
+    return this.context.currentVariantId?.() ?? null;
+  }
+
   async startPreview(item: Recommendation) {
     if (this.config.previewsAvailable === false) return;
     let chosen = item;
     // When the shopper is viewing this very product, the product form is the
     // authoritative appearance selection; never generate an older chat variant.
-    const pageProduct = !!this.context.productId && numeric(this.context.productId) === numeric(item.productId);
-    const rawPageVariant = pageProduct ? this.context.currentVariantId?.() : null;
-    if (rawPageVariant && (numeric(rawPageVariant) !== numeric(item.variantId) || !item.previewAvailable)) {
+    const rawPageVariant = this.currentPageVariantFor(item);
+    if (rawPageVariant && numeric(rawPageVariant) !== numeric(item.variantId)) {
       if (this.previewChecks.has(item.id)) return;
       this.previewChecks.add(item.id);
       const variantId = rawPageVariant.startsWith("gid://") ? rawPageVariant : `gid://shopify/ProductVariant/${rawPageVariant}`;
@@ -1220,7 +1230,8 @@ export class RoomAssistant {
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const canCheckCurrentPage = !!this.context.currentVariantId?.() && numeric(this.context.productId) === numeric(item.productId);
+    const pageVariant = this.currentPageVariantFor(item);
+    const canCheckCurrentPage = !!pageVariant && numeric(pageVariant) !== numeric(item.variantId);
     const reason = item.previewAvailable || canCheckCurrentPage ? "" : item.previewStatus === "choose_options"
       ? "Choose an available product configuration on its product page before previewing."
       : item.previewReason ?? (item.previewStatus === "not_configured"
