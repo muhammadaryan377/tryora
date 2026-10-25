@@ -119,6 +119,8 @@ export class RoomAssistant {
   private readonly previewUrls = new Map<string, string>();
   private active: { controller: AbortController; entryId: string } | null = null;
   private readonly previews = new Map<string, AbortController>();
+  /** Blocks duplicate clicks while the selected product variant is being verified. */
+  private readonly previewChecks = new Set<string>();
   private pendingPreview: Recommendation | null = null;
   private pendingIntent: "recommend" | "visualise" | null = null;
   private menu: "none" | "more" | "attach" = "none";
@@ -490,6 +492,8 @@ export class RoomAssistant {
     const pageProduct = !!this.context.productId && numeric(this.context.productId) === numeric(item.productId);
     const rawPageVariant = pageProduct ? this.context.currentVariantId?.() : null;
     if (rawPageVariant && (numeric(rawPageVariant) !== numeric(item.variantId) || !item.previewAvailable)) {
+      if (this.previewChecks.has(item.id)) return;
+      this.previewChecks.add(item.id);
       const variantId = rawPageVariant.startsWith("gid://") ? rawPageVariant : `gid://shopify/ProductVariant/${rawPageVariant}`;
       try {
         const params = new URLSearchParams({
@@ -507,6 +511,8 @@ export class RoomAssistant {
       } catch {
         this.addNotice("The current Shopify product selection is not ready for an AI room preview. No credit was used.");
         return;
+      } finally {
+        this.previewChecks.delete(item.id);
       }
     }
     if (!chosen.previewAvailable || !chosen.variantId || !chosen.optionValue) return;
