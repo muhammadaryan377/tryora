@@ -70,10 +70,12 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
     .map((v) => ({ id: v.id, image: v.image?.url ?? null, options: optionsOf(v) }))
     .filter((v) => !!v.image || !!config.referenceMediaId) : [];
   const fabricImages: Record<string, string> = Object.create(null);
+  const fabricColours: Record<string, string> = Object.create(null);
   if (manager) {
     swatches = manager.draft.fabrics.filter((f) => f.enabled).flatMap((f) => {
       const texture = sampleUrl(f.textureMediaId);
       if (texture) fabricImages[f.name] = texture;
+      if (f.hex) fabricColours[f.name] = f.hex;
       return f.colours.filter((c) => c.enabled).map((c) => {
         const value = JSON.stringify([f.id, c.id]);
         const approved = swatches.find((s) => s.value === value);
@@ -95,5 +97,6 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
     optionName: "Colour", selectorLabel: "Colour", fabricOptionName: MAPPED_FABRIC_OPTION, singleVariants: [],
     ...(manager ? { managerManaged: true as const, previewOnly, mappedEntries: mapping.entries.map((e) => ({ variantId: e.variantId, fabric: e.fabric.label, colour: e.colour.label,
       preserved: e.preserved, referenceImage: snapshot.media.find((m) => m.id === e.referenceMediaIds[0])!.image!.url })) } : {}),
-    fabricImages, mappingRevision: setting.revision, providerId: "manual_mapping" };
+    fabricImages, fabricColours, ...(manager?.draft.presentation ? { swatchPresentation: manager.draft.presentation } : {}),
+    mappingRevision: setting.revision, providerId: "manual_mapping" };
 }
