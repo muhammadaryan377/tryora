@@ -26,7 +26,7 @@ export async function createWithRetry<T>(send: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try { return await send(); }
     catch (e: any) {
-      if (attempt >= 2 || (e?.code && e.code !== "REQUEST_FAILED")) throw e;
+      if (e?.name === "AbortError" || attempt >= 2 || (e?.code && e.code !== "REQUEST_FAILED")) throw e;
     }
   }
 }
