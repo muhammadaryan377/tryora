@@ -289,6 +289,8 @@ export class RoomAssistant {
     this.photoScreen = null;
     this.showWelcome = false;
     if (!text && !photo) return;
+    // A new question cancels any old pending preview confirmation.
+    if (!photo) this.pendingPreview = null;
     if (!text) text = this.pendingIntent === "visualise" ? "Show this product in my room." : this.pendingIntent === "recommend" ? "Which furniture from this store would suit my room?" : "Describe this room and help me with furniture choices.";
     text = text.slice(0, 800);
     const user: Entry = { id: uid(), kind: "user", text, photo: !!photo, at: Date.now() };
@@ -516,6 +518,46 @@ export class RoomAssistant {
     return this.context.currentVariantId?.() ?? null;
   }
 
+  /** Select a verified exact product card, but never start a paid generation from the card itself. */
+  private prepareCardPreview(item: Recommendation) {
+    const chosen = this.effective(item);
+    if (!chosen.previewAvailable || !chosen.variantId || !chosen.optionValue) return;
+    this.pendingPreview = chosen;
+    this.select(chosen, "card");
+    if (this.attachment) {
+      const previous = this.roomPhoto;
+      this.roomPhoto = this.attachment;
+      this.attachment = null;
+      if (previous?.url !== this.roomPhoto.url) this.state.room = null;
+    }
+    this.renderAll();
+    if (!this.roomPhoto) {
+      this.addNotice("Upload a room photo to continue. No preview starts until you confirm.");
+      this.openPicker("upload");
+    } else {
+      this.scrollToEnd(true);
+      this.root?.querySelector<HTMLElement>("[data-ta='confirm-preview']")?.focus();
+    }
+  }
+
+  /** Dedicated confirmation is outside the product card so its two CTAs stay unchanged. */
+  private previewConfirmationHtml() {
+    const item = this.pendingPreview;
+    if (!item || !this.roomPhoto || !item.previewAvailable || !item.variantId || !item.optionValue) return "";
+    const photo = item.referenceImage ?? item.image;
+    return `<section class="tryora-assistant__confirm" role="group" aria-label="Confirm room preview">
+      <div class="tryora-assistant__confirm-product">
+        ${this.thumbHtml(photo, item.title, photo ? "Preview reference" : "")}
+        <div><strong>${escapeHtml(item.title)}</strong><p>Preview this exact approved product in your uploaded room photo.</p></div>
+      </div>
+      <p class="tryora-assistant__confirm-note">Photo ready. Generation only starts when you press Generate preview.</p>
+      <div class="tryora-assistant__confirm-actions">
+        <button type="button" class="tryora-assistant__secondary" data-ta="cancel-confirm">Cancel</button>
+        <button type="button" class="tryora-assistant__primary" data-ta="confirm-preview">Generate preview</button>
+      </div>
+    </section>`;
+  }
+
   async startPreview(item: Recommendation) {
     if (this.config.previewsAvailable === false) return;
     let chosen = item;
@@ -680,7 +722,7 @@ export class RoomAssistant {
     if (!attached || epoch !== this.photoEpoch) return;
     if (this.pendingPreview) {
       const item = this.pendingPreview;
-      this.pendingPreview = null;
+      // Uploading a photo never triggers a charge. Keep the exact product pending for confirmation.
       this.roomPhoto = this.attachment;
       this.attachment = null;
       this.state.room = null;
@@ -823,12 +865,20 @@ export class RoomAssistant {
         return this.context.openCurrentPreview?.();
       case "preview": {
         const item = this.findItem(id);
-        if (item?.previewStatus === "choose_options" && !this.currentPageVariantFor(item)) {
-          this.selectCard(element.dataset.card ?? "");
-          void this.toggleOptions(element.dataset.card ?? "");
-        } else if (item) void this.startPreview(item);
+        if (item) this.prepareCardPreview(item);
         return;
       }
+      case "confirm-preview": {
+        const item = this.pendingPreview;
+        if (!item || !this.roomPhoto) return;
+        this.pendingPreview = null;
+        void this.startPreview(item);
+        return;
+      }
+      case "cancel-confirm":
+        this.pendingPreview = null;
+        this.renderAll();
+        return;
       case "unavailable-product": {
         const item = this.findItem(id);
         if (item) { this.leaveForProduct(); location.assign(item.url); }
@@ -837,20 +887,6 @@ export class RoomAssistant {
       case "compare": {
         this.comparisons.set(id, element.dataset.source ?? "preview");
         this.renderEntry(id); return;
-      }
-      case "change-colour": {
-        const item = this.findItem(id);
-        if (!item) return;
-        this.select(item, "card");
-        const existing = [...this.state.entries].reverse().find((entry) => entry.kind === "assistant" && entry.recommendations.some(card => card.id === item.id)) as AssistantEntry | undefined;
-        if (existing) {
-          const key = `${existing.id}:${existing.recommendations.findIndex(card => card.id === item.id)}`;
-          void this.toggleOptions(key).then(() => this.root?.querySelector(`[data-card="${CSS.escape(key)}"]`)?.scrollIntoView?.({ block: "center" }));
-        } else {
-          const entry: AssistantEntry = { id: uid(), kind: "assistant", text: "Choose another colour, then generate a new preview.", status: "done", replyTo: "", visualise: null, recommendations: [item], at: Date.now() };
-          this.state.entries.push(entry); this.renderAll(); void this.toggleOptions(`${entry.id}:0`);
-        }
-        return;
       }
       case "try-product": return void this.send("Show me two or three different products for the same room and preferences.");
       case "cancel-preview": return this.previews.get(id)?.abort();
@@ -1018,7 +1054,8 @@ export class RoomAssistant {
     this.renderHeader();
     const scroll = this.scroller()!;
     scroll.innerHTML = this.photoScreen ? this.photoScreenHtml() : !this.showWelcome && this.state.entries.length
-      ? this.state.entries.map((entry) => this.entryHtml(entry)).join("") : this.welcomeHtml();
+      ? this.state.entries.map((entry) => this.entryHtml(entry)).join("") + this.previewConfirmationHtml()
+      : this.welcomeHtml() + this.previewConfirmationHtml();
     this.root.querySelector<HTMLElement>(".tryora-assistant__composer")!.hidden = !!this.photoScreen;
     if (this.photoScreen || this.showWelcome || !this.state.entries.length) scroll.scrollTop = 0;
     this.renderComposer();
@@ -1298,8 +1335,7 @@ export class RoomAssistant {
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = item.previewAvailable && item.referenceImage ? "Preview reference" : generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const pageVariant = this.currentPageVariantFor(item);
-    const canCheckCurrentPage = false; // Never substitute the page variant for the clicked recommendation image.
+    const canCheckCurrentPage = false;
     const canChooseOptions = false; // Chat cards never ask shoppers to choose fabric, colour or size.
     const reason = item.previewAvailable || canCheckCurrentPage || canChooseOptions ? "" : item.previewStatus === "choose_options"
       ? "An exact approved preview image is not available for this product. View details for more information."
@@ -1309,7 +1345,6 @@ export class RoomAssistant {
     const selected = this.isSelected(raw);
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
-    const generating = this.generating(item);
     const canStartPreview = item.previewAvailable && !!item.variantId && !!item.optionValue && this.config.previewsAvailable !== false;
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(canStartPreview && item.referenceImage ? item.referenceImage : item.image, item.imageAlt || item.title, note)}
@@ -1329,11 +1364,10 @@ export class RoomAssistant {
   }
 
   private visualiseHtml(item: Recommendation) {
-    const options = appearanceSummary(item.options);
     // Show the exact approved reference the preview will be generated from, not a general product photo.
     const reference = item.referenceImage ?? (item.imageSource === "variant" || item.imageSource === "reference" ? item.image : null);
     return `<div class="tryora-assistant__visualise">
-      ${this.thumbHtml(reference, `${item.title}${options ? `, ${options}` : ""}`, reference ? "Preview reference" : "")}
+      ${this.thumbHtml(reference, item.title, reference ? "Preview reference" : "")}
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${escapeHtml(item.title)}</h4>
@@ -1356,7 +1390,7 @@ export class RoomAssistant {
     const comparison = this.comparisons.get(entry.id) ?? "preview";
     const comparedEntry = this.state.entries.find((p): p is PreviewEntry => p.kind === "preview" && p.id === comparison);
     const displayedItem = comparedEntry?.item ?? entry.item;
-    const displayedLabel = `${displayedItem.title}${appearanceSummary(displayedItem.options) ? " · " + appearanceSummary(displayedItem.options) : ""}`;
+    const displayedLabel = displayedItem.title;
     const shownUrl = comparison === "original" ? this.originals.get(entry.id) ?? url : comparison === "preview" ? url : this.previewUrls.get(comparison) ?? url;
     if (entry.status === "ready" && url) {
       const file = `${label} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
@@ -1366,14 +1400,13 @@ export class RoomAssistant {
           <div class="tryora-assistant__card-actions" role="group" aria-label="Compare room previews">
             ${this.originals.has(entry.id) ? `<button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="original" aria-pressed="${comparison === "original"}">Original</button>` : ""}
             <button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="preview" aria-pressed="${comparison === "preview"}">Preview</button>
-            ${this.state.entries.filter((p): p is PreviewEntry => p.kind === "preview" && p.id !== entry.id && p.status === "ready" && this.previewUrls.has(p.id)).map(p => `<button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="${escapeHtml(p.id)}" aria-pressed="${comparison === p.id}">Compare: ${escapeHtml(p.item.title)} ${escapeHtml(appearanceSummary(p.item.options))}</button>`).join("")}
+            ${this.state.entries.filter((p): p is PreviewEntry => p.kind === "preview" && p.id !== entry.id && p.status === "ready" && this.previewUrls.has(p.id)).map(p => `<button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="${escapeHtml(p.id)}" aria-pressed="${comparison === p.id}">Compare: ${escapeHtml(p.item.title)}</button>`).join("")}
           </div>
           <figcaption><strong>${escapeHtml(comparison === "original" ? "Original room" : displayedLabel)}</strong>
             <span>AI-generated visualisation for illustration only. Colour and placement may differ from the actual product.</span></figcaption>
           <div class="tryora-assistant__card-actions">
             <a class="tryora-assistant__primary" href="${escapeHtml(url)}" download="${escapeHtml(file)}">Download</a>
             <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(entry.item.url)}">View product</a>
-            <button type="button" class="tryora-assistant__secondary" data-ta="change-colour" data-id="${escapeHtml(entry.item.id)}">Change colour</button>
             <button type="button" class="tryora-assistant__secondary" data-ta="try-product">Try another product</button>
           </div>
         </figure></div>`;
