@@ -1,4 +1,4 @@
-import { useLoaderData, useActionData, useNavigation, useSubmit, useRouteError, isRouteErrorResponse, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
+import { useLoaderData, useActionData, useNavigate, useNavigation, useSubmit, useRouteError, isRouteErrorResponse, redirect, type LoaderFunctionArgs, type ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { FabricColourManager } from "../components/fabric-colour-manager";
@@ -21,7 +21,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   let manualSetupReason = access.reason === "rollout_disabled" ? "The app administrator must complete the reviewed provider-table rollout and enable the server feature gate. Shopify-native previews continue to work."
     : access.reason === "invalid_allowlist" ? "The server customization allowlist is invalid. The app administrator must correct it before enabling Manual Setup. Shopify-native previews continue to work."
     : access.reason ? "The app administrator must authorize this Shopify installation in the server customization allowlist. Shopify-native previews continue to work." : "";
-  if (!productId) return { products, installationReady, manualSetupReason, selected: null };
+  if (!productId) return { products, installationReady, manualSetupReason, advanced: url.searchParams.get("advanced") === "1", selected: null };
   let snapshot: Awaited<ReturnType<typeof nativeSnapshot>>;
   try { snapshot = await nativeSnapshot(admin, productId); }
   catch { throw new Response("This product could not be refreshed from Shopify. Return to Products or refresh to try again. Saved configuration is unchanged.", { status: 502 }); }
@@ -57,7 +57,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   if (!importBlocked) try { diagnostics = compileFabricDocument(draft, session.shop, productId, snapshot).diagnostics; }
   catch { warning = "Saved mapping or product media needs review. Existing settings were preserved. Re-select stale variants/references, or inspect existing integration settings."; }
   const model = nativeSelections(snapshot.product.options ?? [], config ? config.visualOptionName : discoverNativeOptions(snapshot.product.options ?? []).recommendedName, snapshot.variants);
-  return { products, installationReady, manualSetupReason, selected: {
+  return { products, installationReady, manualSetupReason, advanced: url.searchParams.get("advanced") === "1", selected: {
     productId, title: String(snapshot.product.title), image: snapshot.media[0]?.image?.url ?? null,
     mode: effective.providerId === "shopify_native" ? "native" as const : "manual" as const,
     providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, sampleNotice, importBlocked,
@@ -92,7 +92,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 export default function FabricsPage() {
   const data = useLoaderData<typeof loader>(), actionData = useActionData<typeof action>(), navigation = useNavigation(), submit = useSubmit();
+  const navigate = useNavigate();
   return <FabricColourManager data={data} error={actionData && "error" in actionData ? actionData.error : undefined} busy={navigation.state !== "idle"}
+    selectProduct={(productId) => navigate(`/app/fabrics?product=${encodeURIComponent(productId)}`)}
     save={(mode, draft) => submit({ intent: "save", mode, revision: data.selected?.revision ?? "", draft: JSON.stringify(draft) }, { method: "post" })}
     upload={(file, purpose) => requestFabricUpload({ productId: data.selected?.productId ?? "", revision: data.selected?.revision ?? "", file, purpose })} />;
 }

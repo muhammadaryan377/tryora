@@ -328,6 +328,7 @@ export async function startPreview(input: {
     placement: config.placement as Placement,
     urls: product.urls,
     description: product.description,
+    appearance: product.previewOnlyAppearance,
     analysisCost: analysis.costMicros,
   });
   return { jobId: job.id };
@@ -335,7 +336,7 @@ export async function startPreview(input: {
 async function run(
   jobId: string,
   t: Transient,
-  req: { room: Uint8Array; optionValue: string; itemNoun: string; placement: PlacementType; urls: string[]; description: string; analysisCost: number },
+  req: { room: Uint8Array; optionValue: string; itemNoun: string; placement: PlacementType; urls: string[]; description: string; appearance?: GenerateRequest["previewOnlyAppearance"]; analysisCost: number },
 ) {
   const signal = t.controller.signal;
   try {
@@ -347,6 +348,7 @@ async function run(
       roomImage: req.room,
       productReferences: references,
       productDescription: req.description,
+      previewOnlyAppearance: req.appearance,
       itemNoun: req.itemNoun,
       optionValue: req.optionValue,
       placement: req.placement,

@@ -281,6 +281,9 @@ export class RoomAssistant {
       this.photoUrls.set(user.id, photo.url);
       this.roomPhoto = photo;
       this.attachment = null;
+      // A newly uploaded room supersedes earlier visual observations. Never send
+      // the previous room's walls, colours or lighting with the new photograph.
+      this.state.room = null;
     }
     if (this.pendingIntent === "visualise" && this.context.productId) {
       const variant = this.context.currentVariantId?.();
@@ -306,11 +309,16 @@ export class RoomAssistant {
     if (!failed || (failed.status !== "error" && failed.status !== "stopped")) return;
     const user = this.state.entries.find((entry) => entry.id === failed.replyTo);
     if (!user || user.kind !== "user") return;
+    // A retry must not silently analyse a newer room under an older message.
+    const originalPhoto = user.photo && this.photoUrls.get(user.id) === this.roomPhoto?.url ? this.roomPhoto?.blob : undefined;
+    if (user.photo && !originalPhoto) {
+      this.addNotice("The original room photo is no longer available. Re-upload it and send the request again.");
+      return;
+    }
     this.state.entries = this.state.entries.filter((entry) => entry.id !== entryId);
     this.save();
     this.renderAll();
-    // The same question is re-sent once; a photo is re-sent only if it is still in memory.
-    await this.ask(user.id, user.photo && this.photoUrls.has(user.id) ? this.roomPhoto?.blob : undefined);
+    await this.ask(user.id, originalPhoto);
   }
 
   private async ask(userId: string, photo?: Blob) {
@@ -613,13 +621,9 @@ export class RoomAssistant {
       }
     }
     if (!attached || epoch !== this.photoEpoch) return;
-    const textarea = this.textarea();
-    if (textarea && !textarea.value.trim()) {
-      if (this.pendingIntent === "recommend") textarea.value = "Which furniture from this store would suit this room?";
-      if (this.pendingIntent === "visualise") textarea.value = this.context.productId ? "Show this product in my room." : "Show me how a product would look in this room.";
-      this.autosize();
-    }
-    textarea?.focus();
+    // Keep the composer empty after photo upload; do not overwrite shopper text.
+    // The chosen welcome-card intent is handled only when Send is pressed.
+    this.textarea()?.focus();
     if (this.pendingPreview) {
       const item = this.pendingPreview;
       this.pendingPreview = null;

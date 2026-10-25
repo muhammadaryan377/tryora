@@ -85,7 +85,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
         }
         const data = await loader({ request } as any);
         res.setHeader("Content-Type", "text/html");
-        res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script><style>body{margin:0;background:#fafafa}#root{padding:16px}</style></head><body><div id="root"></div><script>window.managerData=${JSON.stringify(data).replace(/</g, "\\u003c")}</script><script src="/manager.js"></script></body></html>`);
+        res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script><style>body{margin:0;background:#fafafa}#root{padding:16px}</style></head><body><div id="root"></div><script>window.managerData=${JSON.stringify({ ...data, advanced: true }).replace(/</g, "\\u003c")}</script><script src="/manager.js"></script></body></html>`);
       } catch (err) { res.writeHead(500); res.end("Local fixture error"); }
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)); origin = `http://127.0.0.1:${server.address().port}`;
@@ -139,7 +139,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect(await page.locator('.fm-fabric-item[aria-pressed=true]').textContent()).toContain("Velvet");
       expect(await cards()).toEqual(["Cream", "Grey"]);
       expect(await page.locator(".fm-pill", { hasText: "No unsaved changes" }).count()).toBe(1);
-      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 of 4 mappings ready for AI preview");
+      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 preview-ready colour configurations");
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await fits()).toBe(true);
 
@@ -231,7 +231,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       const incomplete = page.locator('.fm-map-row').last();
       expect(await incomplete.locator(".fm-map-status").textContent()).toBe("Colour requires mapping");
       expect(await incomplete.locator('select[aria-label^="Variant "]').inputValue()).toBe("");
-      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 of 5 mappings ready for AI preview");
+      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 preview-ready colour configurations");
       await incomplete.scrollIntoViewIfNeeded();
       await screenshot(page, `manager-incomplete-mapping-${width}`);
       await savePage(page);

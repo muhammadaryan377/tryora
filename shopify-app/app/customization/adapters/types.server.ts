@@ -11,7 +11,10 @@ export interface ProviderContext {
   setting: ProviderSetting;
   sourceVariantId?: string;
 }
-export type PreviewProduct = Awaited<ReturnType<typeof resolvePreviewProduct>>;
+export type PreviewProduct = Awaited<ReturnType<typeof resolvePreviewProduct>> & {
+  /** Never treat a virtual AI recolour as a Shopify sale variant. */
+  previewOnlyAppearance?: { fabric: string; colour: string; hex: string | null };
+};
 /** issue explains a rejection precisely; it never changes whether the request is approved. */
 export type ProviderValidation = CustomizationValidation & { product?: PreviewProduct; issue?: PreviewIssue };
 export interface ProviderAdapter extends CustomizationAdapter<ProviderContext> {

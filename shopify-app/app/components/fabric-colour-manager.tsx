@@ -6,6 +6,8 @@ import { referenceChoices, sampleChoices } from "../customization/media-roles";
 type Media = { id: string; url: string; alt?: string | null };
 export interface FabricManagerData {
   installationReady: boolean;
+  /** Keep legacy reviewed variant editor out of the simple merchant setup. */
+  advanced?: boolean;
   manualSetupReason?: string;
   products: { nodes: { id: string; title: string }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
   selected: null | {
@@ -95,14 +97,18 @@ function RemoveButton({ label, onConfirm, disabled }: { label: string; onConfirm
   </span>;
 }
 
-export function FabricColourManager({ data, save, upload, error, busy = false }: {
+export function FabricColourManager({ data, save, upload, selectProduct, error, busy = false }: {
   data: FabricManagerData; save: (mode: "native" | "manual", draft: FabricDraft) => void;
-  upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>; error?: string; busy?: boolean;
+  upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>;
+  /** Production uses the authenticated React Router transition, not a full iframe reload. */
+  selectProduct?: (productId: string) => void;
+  error?: string; busy?: boolean;
 }) {
   const p = data.selected;
   const [mode, setMode] = useState<"native" | "manual">(p?.mode ?? "native"), [draft, setDraft] = useState<FabricDraft>(p?.draft ?? emptyFabricDraft());
   const [fabricId, setFabricId] = useState(p?.draft.fabrics[0]?.id ?? ""), [media, setMedia] = useState(p?.media ?? []);
   const [editingFabric, setEditingFabric] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState<string | null>(null);
   const [colourDraft, setColourDraft] = useState<(ManagedColour & { isNew: boolean }) | null>(null);
   const [mappingScope, setMappingScope] = useState<"fabric" | "all">("fabric"), [mappingPage, setMappingPage] = useState(0);
   // Ready mappings collapse to one summary line; anything incomplete, or opened by the merchant, shows its editor.
@@ -112,11 +118,22 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
   const saving = useRef(false);
   useEffect(() => {
     setMode(p?.mode ?? "native"); setDraft(p?.draft ?? emptyFabricDraft()); setMedia(p?.media ?? []); setFabricId(p?.draft.fabrics[0]?.id ?? "");
-    setColourDraft(null); setEditingFabric(false); saving.current = false;
+    setColourDraft(null); setEditingFabric(false); setPendingProduct(null); saving.current = false;
     initial.current = JSON.stringify({ mode: p?.mode ?? "native", draft: p?.draft ?? emptyFabricDraft() });
   }, [p?.productId, p?.revision]);
   useEffect(() => { setMappingPage(0); setColourDraft(null); }, [fabricId]);
   const dirty = JSON.stringify({ mode, draft }) !== initial.current;
+  const switchProduct = (next: string) => {
+    if (!next || next === p?.productId) return;
+    if (selectProduct && dirty) {
+      // SPA navigation has no beforeunload event; confirm in the page before
+      // discarding a merchant's unsaved fabric, colour or mapping edits.
+      setPendingProduct(next);
+      return;
+    }
+    if (selectProduct) selectProduct(next);
+    else window.location.assign(`/app/fabrics?product=${encodeURIComponent(next)}`);
+  };
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => { if (!saving.current) { e.preventDefault(); e.returnValue = ""; } };
@@ -190,7 +207,6 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
   const steps = [
     { label: "Fabric & texture", done: draft.fabrics.some((f) => f.name.trim() && f.textureMediaId) },
     { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => c.swatchMediaId || c.hex)) },
-    { label: "Variants & references", done: ready > 0 },
     { label: "Saved", done: !dirty && !!p?.revision },
   ];
 
@@ -201,7 +217,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
         <div className="fm-product">
           {p?.image ? <img className="fm-product-image" src={p.image} alt="" width={56} height={56} /> : <span className="fm-product-image fm-thumb is-empty"><span>No photo</span></span>}
           <label className="fm-field fm-grow"><span className="fm-label">Product</span>
-            <select aria-label="Shopify product" value={p?.productId ?? ""} onChange={(e) => { if (e.currentTarget.value) window.location.assign(`/app/fabrics?product=${encodeURIComponent(e.currentTarget.value)}`); }}>
+            <select aria-label="Shopify product" value={p?.productId ?? ""} onChange={(e) => switchProduct(e.currentTarget.value)}>
               <option value="">Select a Shopify product</option>{p && !data.products.nodes.some((x) => x.id === p.productId) && <option value={p.productId}>{p.title}</option>}
               {data.products.nodes.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
             </select>
@@ -219,10 +235,17 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
         {p && <div className="fm-subhead">
           <span className="fm-muted">{p.title} · <s-link href={`/app/products/${p.productId.split("/").pop()}`}>Product preview settings</s-link></span>
           {manual && <ol className="fm-steps" aria-label="Setup progress">{steps.map((s) => <li key={s.label} className={s.done ? "is-done" : ""}><span aria-hidden="true">{s.done ? "✓" : ""}</span>{s.label}{s.done ? <span className="fm-sr"> (done)</span> : null}</li>)}</ol>}
-          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} of {draft.bindings.length} mappings ready for AI preview</span>}
+          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} preview-ready colour configurations</span>}
         </div>}
         {saveHint && <p className="fm-muted fm-save-hint" role="status">{saveHint}</p>}
-        {data.products.pageInfo.hasNextPage && <s-link href={`${link}${p ? "&" : "?"}after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
+        {pendingProduct && <div className="fm-navigation-confirm" role="alert">
+          <p>You have unsaved fabric or colour changes. Switch products without saving them?</p>
+          <div className="fm-actions">
+            <button type="button" className="fm-btn fm-btn--primary" onClick={() => { if (!pendingProduct) return; const next = pendingProduct; setPendingProduct(null); selectProduct?.(next); }}>Discard changes and switch</button>
+            <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
+          </div>
+        </div>}
+        {!p && data.products.pageInfo.hasNextPage && <s-link href={`${link}?after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
       {p && <>
@@ -329,6 +352,8 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
             </section>
           </div>
 
+          {data.advanced && <details open className="fm-advanced-setup">
+            <summary>Advanced AI preview setup</summary>
           <section id="fm-mapping" className="fm-card fabric-mapping" aria-labelledby="fm-mapping-title">
             <div className="fm-section-head"><div><h2 id="fm-mapping-title">Variants & AI preview readiness</h2>
               <p className="fm-muted">Link each colour to its exact Shopify variant and a full furniture photo. Only reviewed, exact mappings can create AI previews.</p></div>
@@ -385,6 +410,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
               <select aria-label={`${role} option role`} value={draft.roles[role] ?? ""} onChange={(e) => { const value = e.currentTarget.value; setDraft((d) => { const roles = { ...d.roles }; if (value) roles[role] = value; else delete roles[role]; return { ...d, roles, bindings: d.bindings.map((b) => ({ ...b, reviewed: false })) }; }); }}>
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
+          </details>}
           <p className="fm-muted fm-footnote">Uploads are added to this product's Shopify media. Removing a fabric, colour or mapping from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>

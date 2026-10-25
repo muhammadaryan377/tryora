@@ -30,7 +30,19 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
   const variantChoice = (e: ManualEntry) => ({ id: e.variantId,
     image: snapshot.media.find((m) => m.id === e.referenceMediaIds[0])!.image!.url,
     options: { ...e.nativeOptions, [PRESERVATION_OPTION]: preservationKey(e), [MAPPED_FABRIC_OPTION]: e.fabric.label } });
-  let swatches = [...new Set(mapping.entries.map(combinationKey))].map((key) => {
+  // Both exact mapped references and preview-only source variants share this
+  // display shape. A preview-only source may have no variant-specific photo and
+  // must not pretend its virtual fabric label is a Shopify native option.
+  type ProjectedSwatch = {
+    value: string;
+    label: string;
+    group: string;
+    colour: string | null;
+    image: string | null;
+    available: boolean;
+    variants: { id: string; image: string | null; options: Record<string, string> }[];
+  };
+  let swatches: ProjectedSwatch[] = [...new Set(mapping.entries.map(combinationKey))].map((key) => {
     const entries = mapping.entries.filter((e) => combinationKey(e) === key);
     const e = entries[0]!;
     // Samples must be consistent across sizes/configurations for the same appearance.
@@ -40,6 +52,14 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
       image: sampleUrl(swatchId),
       available: entries.some(allowed), variants: entries.filter(allowed).map(variantChoice) };
   });
+  // Preview-only catalogues are merchant-authored appearance choices, not Shopify
+  // variants. Reuse a real in-stock source variant solely as product identity.
+  // The original configuration is preserved; colours are AI illustration inputs.
+  const previewOnly = !!manager && !manager.published && !manager.draft.bindings.length;
+  const illustrativeSources = previewOnly ? snapshot.variants
+    .filter((v) => v.availableForSale && matchesOptions(v, (config.frozenContext ?? {}) as Record<string, string>))
+    .map((v) => ({ id: v.id, image: v.image?.url ?? null, options: optionsOf(v) }))
+    .filter((v) => !!v.image || !!config.referenceMediaId) : [];
   const fabricImages: Record<string, string> = Object.create(null);
   if (manager) {
     swatches = manager.draft.fabrics.filter((f) => f.enabled).flatMap((f) => {
@@ -48,8 +68,12 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
       return f.colours.filter((c) => c.enabled).map((c) => {
         const value = JSON.stringify([f.id, c.id]);
         const approved = swatches.find((s) => s.value === value);
+        const previewVariants = previewOnly ? illustrativeSources.map((v) => ({
+          ...v, options: { ...v.options, [MAPPED_FABRIC_OPTION]: f.name },
+        })) : [];
         return { value, label: c.name, group: f.name, colour: c.hex, image: sampleUrl(c.swatchMediaId),
-          available: !!setting.active && !!approved?.available, variants: setting.active ? approved?.variants ?? [] : [] };
+          available: previewOnly ? previewVariants.length > 0 : !!setting.active && !!approved?.available,
+          variants: previewOnly ? previewVariants : setting.active ? approved?.variants ?? [] : [] };
       });
     });
   }
@@ -60,7 +84,7 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
   return { swatches, productVariants, selectionOptionNames: [mapping.roles.fabric, mapping.roles.colour, mapping.roles.composite, MAPPED_FABRIC_OPTION].filter((s): s is string => !!s),
     // The virtual selector name is display metadata; it is never a native Shopify identity.
     optionName: "Colour", selectorLabel: "Colour", fabricOptionName: MAPPED_FABRIC_OPTION, singleVariants: [],
-    ...(manager ? { managerManaged: true as const, mappedEntries: mapping.entries.map((e) => ({ variantId: e.variantId, fabric: e.fabric.label, colour: e.colour.label,
+    ...(manager ? { managerManaged: true as const, previewOnly, mappedEntries: mapping.entries.map((e) => ({ variantId: e.variantId, fabric: e.fabric.label, colour: e.colour.label,
       preserved: e.preserved, referenceImage: snapshot.media.find((m) => m.id === e.referenceMediaIds[0])!.image!.url })) } : {}),
     fabricImages, mappingRevision: setting.revision, providerId: "manual_mapping" };
 }

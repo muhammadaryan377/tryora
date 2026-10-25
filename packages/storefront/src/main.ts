@@ -59,6 +59,8 @@ interface Config {
   singleVariants?: VariantChoice[];
   providerId?: string;
   mappingRevision?: string;
+  /** Merchant fabric/colour entries change the AI visualisation, not Shopify checkout. */
+  previewOnly?: boolean;
   style: { template: string; accent: string | null; useThemeFont: boolean };
   launcher: LauncherSettings;
   lead: { mode: "required" | "skippable" | "off"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
@@ -474,17 +476,19 @@ export class Tryora {
         const fabric = el.dataset.value!;
         if (!this.cfg.swatches.some((x) => x.group === fabric)) return;
         this.fabric = fabric;
-        const next = this.visibleSwatches().find((x) => this.selectedVariant(x.value));
+        const next = this.visibleSwatches().find((x) => x.available && this.selectedVariant(x.value)) ?? this.visibleSwatches()[0];
         // Changing fabric cannot retain a colour from the previous fabric.
-        this.state = { ...s, selectedOption: next?.value ?? null, notice: null };
+        this.state = { ...s, step: s.step === "result" ? "photoReady" : s.step, selectedOption: next?.value ?? null, notice: null };
         return this.render();
       }
       case "swatch": {
         const v = el.dataset.value!;
         if (s.generation) return;
         if (!this.visibleSwatches().some((x) => x.value === v)) return;
-        if (!isViewed(s, v) && !this.selectedVariant(v)) return;
+        // Let shoppers inspect any merchant-listed fabric/colour. An unverified
+        // combination is selectable for inspection, but generation stays blocked.
         if (s.step === "result" && isViewed(s, v)) return this.dispatch({ type: "SHOW_RESULT", option: v });
+        if (s.step === "result") this.dispatch({ type: "TRY_ANOTHER_COLOUR" });
         if (s.step === "opening" || s.step === "photoReady") {
           // Tapping a viewed colour reopens its image instantly, free.
           if (s.photo && isViewed(s, v)) return this.dispatch({ type: "SHOW_RESULT", option: v });
@@ -506,6 +510,7 @@ export class Tryora {
       case "change-photo":
         return (this.root!.querySelector("[data-file=upload]") as HTMLInputElement).click();
       case "generate":
+        if (s.selectedOption && !isViewed(s, s.selectedOption) && !this.canPreviewOption(s.selectedOption)) return this.render();
         return this.dispatch({ type: "GENERATE_PRESSED" });
       case "lead-submit":
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email.trim())) {
@@ -746,7 +751,7 @@ export class Tryora {
           ${this.swatches()}
           ${viewedHint}
           ${notice}
-          <button class="tryora__btn" data-act="generate" ${check.status === "ok" && s.selectedOption ? "" : "disabled"}>Generate image</button>
+          <button class="tryora__btn" data-act="generate" ${check.status === "ok" && s.selectedOption && (isViewed(s, s.selectedOption) || this.canPreviewOption(s.selectedOption)) ? "" : "disabled"}>Generate image</button>
           ${note ? `<p class="tryora__note">${esc(note)}</p>` : ""}`;
       }
       case "emailStep":
@@ -873,15 +878,23 @@ export class Tryora {
     }
     const selected = this.optionLabel(this.state.selectedOption);
     return '<div class="tryora__sw ' + (!c.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? "") ? 'tryora__sw--fabric' : 'tryora__sw--colour') + '"><p class="tryora__label"><strong>' + esc(c.product) + '</strong>' +
-      (selected ? ' · ' + esc(selected) : '') + '</p>' + this.fabricPicker(locked) +
+      (selected ? ' · ' + esc(selected) : '') + '</p>' +
+      (c.previewOnly ? '<p class="tryora__small" role="note">AI visualisation only. Your fabric and colour selection changes the preview image, not the Shopify product or checkout options.</p>' : '') +
+      this.fabricPicker(locked) +
       '<p class="tryora__label">Choose ' + esc(c.selectorLabel ?? c.optionName ?? 'option') + '</p>' +
       '<div class="tryora__swrow ' + (mobile ? 'tryora__swrow--scroll' : '') + '" role="radiogroup" aria-label="' + esc(c.selectorLabel ?? c.optionName ?? 'Options') + '">' +
       shown.map((x) => this.swatch(x, locked)).join("") +
       (more ? '<button class="tryora__more" data-act="more" aria-label="Show all options">+' + more + '<br>more</button>' : '') + '</div>' +
       (mobile && all.length > 5 ? '<button class="tryora__link" data-act="more">All ' + all.length + ' options</button>' : '') +
-      (all.some((x) => !this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">Some options cannot be previewed with your selected size and configuration. Keep your product-page choices or ask the store about a verified preview.</p>' : '') +
+      (this.state.selectedOption && !this.canPreviewOption(this.state.selectedOption) && !isViewed(this.state, this.state.selectedOption) ? '<p class="tryora__small" role="status">This colour is selectable, but its AI room preview is not yet verified for your exact configuration. Choose another available colour to generate an image.</p>' : all.some((x) => !this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">Some colours have no verified AI preview for the selected size and configuration.</p>' : '') +
       (this.cfg.fabricOptionName && !all.some((x) => this.selectedVariant(x.value)) ? '<p class="tryora__small" role="status">No supported colours for this fabric and the selected product options.</p>' : '') +
       (!this.cfg.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? '') ? '<p class="tryora__small">This store has not linked separate colour choices to these fabrics for AI preview yet. Select an available verified fabric above, or ask the store to complete its fabric and colour mapping.</p>' : '') + '</div>';
+  }
+
+  private canPreviewOption(value: string): boolean {
+    return this.cfg.swatches.length
+      ? !!this.cfg.swatches.find((s) => s.value === value)?.available && !!this.selectedVariant(value)
+      : !!this.selectedVariant(value);
   }
 
   private selectedVariant(value: string): VariantChoice | null {
@@ -899,8 +912,8 @@ export class Tryora {
   private swatch(x: Swatch, locked: boolean): string {
     const selected = this.state.selectedOption === x.value;
     const viewed = isViewed(this.state, x.value);
-    const available = x.available && !!this.selectedVariant(x.value);
-    const disabled = locked || (!available && !viewed);
+    const available = this.canPreviewOption(x.value);
+    const disabled = locked; // Unverified merchant colours may be inspected, never previewed.
     const label = x.label ?? x.value;
     // A Shopify colour chip is not a fabric texture. Without a real sample image, display
     // a readable fabric label instead of a large, misleading solid-colour tile.

@@ -83,6 +83,8 @@ export interface GenerateRequest {
   roomImage: Uint8Array;
   productReferences: Uint8Array[];
   swatch?: Uint8Array;
+  /** Preview-only merchant swatch. Not an actual Shopify variant or purchase option. */
+  previewOnlyAppearance?: { fabric: string; colour: string; hex: string | null };
   productDescription: string;
   /** Shopper-facing noun for the product type, e.g. "sofa", "rug", "wallpaper". */
   itemNoun: string;
