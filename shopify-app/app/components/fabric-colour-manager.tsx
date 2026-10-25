@@ -224,7 +224,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   const configuredColours = draft.fabrics.reduce((count, fabric) => count +
     fabric.colours.filter((colour) => colour.enabled && sampleReady(colour.name, colour.hex, colour.swatchMediaId)).length, 0);
   const ready = draft.bindings.length ? mappedReady : configuredColours;
-  const invalidSamples = draft.fabrics.some((f) =>
+  const invalidSamples = !draft.bindings.length && draft.fabrics.some((f) =>
     !sampleReady(f.name, f.hex, f.textureMediaId) ||
     f.colours.some((c) => !sampleReady(c.name, c.hex, c.swatchMediaId)));
   const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || invalidSamples || !!colourDraft);
