@@ -356,7 +356,9 @@ describe("authenticated two-mode admin", () => {
     const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
     const original = state.admin.graphql;
     let marker = "";
+    const shopifyOperations: string[] = [];
     state.admin.graphql = async (query: string, variables: any) => {
+      shopifyOperations.push(query);
       if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: {
         stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/sample.jpg", parameters: [] }],
         userErrors: [],
@@ -377,6 +379,8 @@ describe("authenticated two-mode admin", () => {
       { method: "POST", body: form },
     ) } as any);
     expect(result).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991" } });
+    expect(shopifyOperations.some((query) => query.includes("TryoraCreateFabricSample"))).toBe(true);
+    expect(shopifyOperations.some((query) => query.includes("TryoraAttachFabricImage") || query.includes("productUpdate("))).toBe(false);
     expect(state.rows).toEqual([]); // Upload does not activate Manual Setup or authorize previews.
     expect(state.config.enabled).toBe(false);
     expect(state.writes).toEqual([]);
