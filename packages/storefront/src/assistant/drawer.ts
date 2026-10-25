@@ -313,11 +313,7 @@ export class RoomAssistant {
     this.renderAll();
     this.scrollToEnd(true);
     await this.ask(user.id, photo?.blob);
-    if (photo) {
-      const latest = [...this.state.entries].reverse().find((entry): entry is AssistantEntry => entry.kind === "assistant");
-      const index = latest?.recommendations.findIndex(item => item.productRef === this.state.selected?.productRef && item.previewStatus === "choose_options") ?? -1;
-      if (latest && index >= 0) await this.toggleOptions(`${latest.id}:${index}`);
-    }
+    // Photo analysis updates room observations; it never opens fabric, colour or size selectors.
     if (this.pendingPreview && this.roomPhoto) {
       const item = this.pendingPreview;
       this.pendingPreview = null;
