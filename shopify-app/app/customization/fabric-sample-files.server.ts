@@ -20,7 +20,7 @@ query TryoraSavedFabricSamples($ids: [ID!]!) {
 }`;
 
 export function sampleMediaIds(draft: { fabrics: { textureMediaId: string | null; colours: { swatchMediaId: string | null }[] }[] }): string[] {
-  return [...new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]
+  return [...new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)])
     .filter((id): id is string => !!id && SHOPIFY_MEDIA_IMAGE_ID.test(id)))];
 }
 
