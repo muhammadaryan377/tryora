@@ -55,10 +55,10 @@ export const manualMappingAdapter: ProviderAdapter = {
       if (Object.entries(request.selectedOptions).some(([name, value]) => sourceOptions[name] !== value))
         return { status: "rejected", reason: "unsupported" };
       const originalValue = config.visualOptionName ? sourceOptions[config.visualOptionName] : "";
-      if (config.choices.some((choice) => choice.optionValue === originalValue &&
-          (!choice.available || (choice.variantIds as string[] ?? []).length > 0 &&
-            !(choice.variantIds as string[]).includes(source.id))))
-        return { status: "rejected", reason: "unavailable", issue: "choice_disabled" };
+      if (config.choices.some((choice) => {
+        const ids = (choice.variantIds ?? []) as string[];
+        return choice.optionValue === originalValue && (!choice.available || ids.length > 0 && !ids.includes(source.id));
+      })) return { status: "rejected", reason: "unavailable", issue: "choice_disabled" };
       const approvedPhoto = config.referenceMediaId ? media.find((m) => m.id === config.referenceMediaId) : null;
       const reference = approvedPhoto?.image?.url && !isSampleMedia(approvedPhoto) && safeShopifyMediaUrl(approvedPhoto.image.url)
         ? approvedPhoto.image.url
