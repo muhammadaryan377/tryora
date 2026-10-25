@@ -610,3 +610,9 @@ html.tryora-assistant-locked { overflow: hidden; }
 }
 .tryora[data-tryora-swatch-shape] .tryora__sname { max-width: calc(var(--t-merchant-sw-size) + 12px); }
 .tryora__fabric-colour { width: 22px; height: 22px; display: inline-block; border-radius: 5px; border: 1px solid var(--t-line); margin-right: 6px; vertical-align: middle; }
+
+/* Merchant rectangle samples wrap on desktop but continue to scroll on phones. */
+.tryora__swrow--custom{display:flex;flex-wrap:wrap;gap:12px;padding:4px}
+.tryora__swrow--custom.tryora__swrow--scroll{flex-wrap:nowrap}
+.tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot[style] > i,
+.tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot[style] > img{border-radius:inherit}

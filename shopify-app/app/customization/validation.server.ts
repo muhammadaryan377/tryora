@@ -92,7 +92,7 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
     const e = mapping.entries.find((e) => e.variantId === v.id);
     return e ? variantChoice(e) : { id: v.id, image: v.image?.url ?? null, options: optionsOf(v) };
   });
-  return { swatches, productVariants, selectionOptionNames: [mapping.roles.fabric, mapping.roles.colour, mapping.roles.composite, MAPPED_FABRIC_OPTION].filter((s): s is string => !!s),
+  return { ...(manager?.draft.swatchAppearance ? { swatchAppearance: manager.draft.swatchAppearance } : {}), swatches, productVariants, selectionOptionNames: [mapping.roles.fabric, mapping.roles.colour, mapping.roles.composite, MAPPED_FABRIC_OPTION].filter((s): s is string => !!s),
     // The virtual selector name is display metadata; it is never a native Shopify identity.
     optionName: "Colour", selectorLabel: "Colour", fabricOptionName: MAPPED_FABRIC_OPTION, singleVariants: [],
     ...(manager ? { managerManaged: true as const, previewOnly, mappedEntries: mapping.entries.map((e) => ({ variantId: e.variantId, fabric: e.fabric.label, colour: e.colour.label,

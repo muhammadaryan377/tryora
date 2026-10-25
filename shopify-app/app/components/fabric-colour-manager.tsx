@@ -37,10 +37,10 @@ type Tone = "success" | "attention" | "warning" | "neutral";
 interface Readiness { key: "ready" | "review" | "reference" | "variant" | "blocked"; label: string; hint: string; tone: Tone }
 
 /** A real sample image, a merchant-entered HEX colour, or a labelled empty placeholder. Never a borrowed photo. */
-function Thumb({ url, hex, label, empty, shape = "square", size = 48 }: { url?: string | null; hex?: string | null; label: string; empty: string; shape?: "round" | "square"; size?: number }) {
+function Thumb({ url, hex, label, empty, shape = "square", size = 48 }: { url?: string | null; hex?: string | null; label: string; empty: string; shape?: "round" | "square" | "rectangle"; size?: number }) {
   const blank = !url && !hex;
   return <span className={`fm-thumb fm-thumb--${shape}${blank ? " is-empty" : ""}`} role="img" aria-label={blank ? `${label}: ${empty}` : label}
-    style={{ width: size, height: size, background: !url && hex ? hex : undefined }}>
+    style={{ width: size, height: shape === "rectangle" ? Math.round(size * .7) : size, background: !url && hex ? hex : undefined }}>
     {url ? <img src={url} alt="" /> : blank ? <span>{empty}</span> : null}
   </span>;
 }
@@ -160,12 +160,18 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   }, [dirty]);
 
   const fabric = draft.fabrics.find((f) => f.id === fabricId);
-  const swatchShape = draft.presentation?.shape ?? DEFAULT_SWATCH_PRESENTATION.shape;
-  const swatchSize = draft.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
+  const swatchShape = draft.swatchAppearance?.shape === "rectangle" ? "rectangle" : draft.presentation?.shape ?? DEFAULT_SWATCH_PRESENTATION.shape;
+  const swatchSize = draft.swatchAppearance?.size ?? draft.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
   const sampleReady = (name: string, hex: string | null | undefined, image: string | null | undefined) =>
     !!name.trim() && (!!image || !!hex && HEX.test(hex));
-  const updateSwatchPresentation = (patch: Partial<{ shape: "round" | "square"; size: number }>) =>
-    setDraft((value) => ({ ...value, presentation: { shape: swatchShape, size: swatchSize, ...patch } }));
+  const updateSwatchPresentation = (patch: Partial<{ shape: "round" | "square" | "rectangle"; size: number }>) =>
+    setDraft((value) => {
+      const shape = patch.shape ?? (value.swatchAppearance?.shape === "rectangle" ? "rectangle" : value.presentation?.shape ?? "round");
+      const size = patch.size ?? value.swatchAppearance?.size ?? value.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
+      if (shape === "rectangle") return { ...value, presentation: undefined, swatchAppearance: { shape: "rectangle" as const, size } };
+      if (shape === "square") return { ...value, presentation: { shape: "square" as const, size }, swatchAppearance: undefined };
+      return { ...value, presentation: { shape: "round" as const, size }, swatchAppearance: { shape: "circle" as const, size } };
+    });
   const mediaUrl = (id: string | null) => media.find((m) => m.id === id)?.url;
   const sampleIds = new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]).filter((id): id is string => !!id));
   const manual = mode === "manual";
@@ -187,7 +193,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     setDraft((d) => ({ ...d, bindings: [...d.bindings, binding] }));
     const scopedCount = draft.bindings.filter((b) => mappingScope === "all" || b.fabricId === fabric.id).length + 1;
     setMappingPage(Math.floor((scopedCount - 1) / MAPPINGS_PER_PAGE));
-    requestAnimationFrame(() => document.getElementById("fm-mapping")?.scrollIntoView({ block: "start" }));
+    requestAnimationFrame(() => { const panel = document.getElementById("fm-mapping") as HTMLDetailsElement | null; if (panel) { panel.open = true; panel.scrollIntoView({ block: "start" }); } });
   };
   const saveColour = () => {
     if (!fabric || !colourDraft || !sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)) return;
@@ -241,9 +247,15 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     { label: "Saved", done: !dirty && !!p?.revision },
   ];
 
-  return <s-page heading="Fabrics & Colours" inlineSize="large">
+  return <s-page inlineSize="large">
     <style>{STYLES}</style>
     <div className="fabric-manager">
+      <div className="fm-page-heading"><div><h1>Fabrics &amp; Colours</h1><p className="fm-muted">Manage fabrics and colour choices for your product.</p></div>
+        {p && <div className="fm-save">
+          <span className={`fm-pill fm-pill--${dirty || colourDraft ? "attention" : "success"}`} role="status">{colourDraft ? "Editing a colour" : dirty ? "Unsaved changes" : p.saved ? "Saved" : "No unsaved changes"}</span>
+          <button className="fm-btn fm-btn--primary" type="button" disabled={busy || saveBlocked} onClick={() => { saving.current = true; save(mode, manual ? (draft.swatchAppearance?.shape === "rectangle" ? { ...draft, presentation: undefined } : { ...draft, presentation: draft.presentation ?? DEFAULT_SWATCH_PRESENTATION }) : draft); }}>{busy ? "Saving…" : "Save changes"}</button>
+        </div>}
+      </div>
       <header className="fm-card fm-header">
         <div className="fm-product">
           {p?.image ? <img className="fm-product-image" src={p.image} alt="" width={56} height={56} /> : <span className="fm-product-image fm-thumb is-empty"><span>No photo</span></span>}
@@ -258,10 +270,6 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
               <option value="native">Shopify Native - Automatic</option><option value="manual" disabled={!data.installationReady}>Manual Setup - Merchant Managed{data.installationReady ? "" : " (not enabled)"}</option>
             </select>
           </label>}
-          {p && <div className="fm-save">
-            <span className={`fm-pill fm-pill--${dirty || colourDraft ? "attention" : "success"}`} role="status">{colourDraft ? "Editing a colour" : dirty ? "Unsaved changes" : p.saved ? "Saved" : "No unsaved changes"}</span>
-            <button className="fm-btn fm-btn--primary" type="button" disabled={busy || saveBlocked} onClick={() => { saving.current = true; save(mode, manual ? { ...draft, presentation: draft.presentation ?? DEFAULT_SWATCH_PRESENTATION } : draft); }}>{busy ? "Saving…" : "Save changes"}</button>
-          </div>}
         </div>
         {p && <div className="fm-subhead">
           <span className="fm-muted">{p.title} · <s-link href={`/app/products/${p.productId.split("/").pop()}`}>Product preview settings</s-link></span>
@@ -308,15 +316,15 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
           <legend className="fm-sr">Manual fabric and colour setup</legend>
           <div className="fabric-workspace fm-workspace">
             <aside className="fm-card fm-fabrics" aria-labelledby="fm-fabrics-title">
-              <div className="fm-section-head"><h2 id="fm-fabrics-title">Fabrics <span className="fm-count">{draft.fabrics.length}</span></h2></div>
-              <button className="fm-btn fm-btn--primary fm-add" type="button" disabled={!data.installationReady || !!p.importBlocked} onClick={addFabric}>+ Add fabric</button>
+              <div className="fm-section-head"><h2 id="fm-fabrics-title">Fabrics <span className="fm-count">{draft.fabrics.length}</span></h2>
+              <button className="fm-btn" type="button" disabled={!data.installationReady || !!p.importBlocked} onClick={addFabric}>+ Add fabric</button></div>
               <div className="fabric-list fm-fabric-list" role="list">{draft.fabrics.map((f) => {
                 const draftItem = !f.name.trim();
                 return <button role="listitem" className="fabric-list-item fm-fabric-item" type="button" key={f.id} aria-pressed={f.id === fabricId} onClick={() => { if (f.id !== fabricId) { setFabricId(f.id); setEditingFabric(draftItem); } }}>
-                  <Thumb url={mediaUrl(f.textureMediaId)} hex={f.hex && HEX.test(f.hex) ? f.hex : null} label={`${f.name || "Untitled fabric"} texture`} empty="No texture" size={44} />
+                  <Thumb url={mediaUrl(f.textureMediaId)} hex={f.hex && HEX.test(f.hex) ? f.hex : null} label={`${f.name || "Untitled fabric"} texture`} empty="No texture" size={64} />
                   <span className="fm-fabric-text"><strong>{draftItem ? "Untitled fabric" : f.name}</strong>
                     <small>{f.colours.length} {f.colours.length === 1 ? "colour" : "colours"}{f.enabled ? "" : " · Disabled"}</small></span>
-                  {draftItem && <span className="fm-pill fm-pill--attention">Draft</span>}
+                  {draftItem ? <span className="fm-pill fm-pill--attention">Draft</span> : <span aria-hidden="true" className="fm-chevron">›</span>}
                 </button>;
               })}</div>
               {!draft.fabrics.length && <p className="fm-muted">No fabrics yet. Add the first fabric this product is sold in.</p>}
@@ -357,24 +365,25 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                   </div>
                 </div>}
 
-                <div className="fm-section-head fm-colours-head"><h3>Colours <span className="fm-count">{fabric.colours.length}</span></h3>
+                <div className="fm-section-head fm-colours-head"><div><h3>Colours <span className="fm-count">{fabric.colours.length}</span></h3><p className="fm-muted">Add a name and a HEX colour or sample image.</p></div>
                   <div className="fm-swatch-prefs" role="group" aria-label="Swatch appearance">
                     <span className="fm-label">Swatch shape</span>
                     <button type="button" className="fm-btn fm-shape" aria-label="Circle swatches" aria-pressed={swatchShape === "round"} onClick={() => updateSwatchPresentation({ shape: "round" })}><span className="fm-shape-circle" /></button>
                     <button type="button" className="fm-btn fm-shape" aria-label="Square swatches" aria-pressed={swatchShape === "square"} onClick={() => updateSwatchPresentation({ shape: "square" })}><span className="fm-shape-square" /></button>
+                    <button type="button" className="fm-btn fm-shape fm-shape-with-label" aria-label="Rectangle swatches" aria-pressed={swatchShape === "rectangle"} onClick={() => updateSwatchPresentation({ shape: "rectangle" })}><span className="fm-shape-rectangle" />Rectangle</button>
                     <label className="fm-swatch-size">Swatch size
                       <input aria-label="Swatch size" type="number" min={25} max={100} step={1} value={swatchSize}
                         onChange={(e) => { const n = Number(e.currentTarget.value); if (Number.isInteger(n) && n >= 25 && n <= 100) updateSwatchPresentation({ size: n }); }} />
                       <span>px</span>
                     </label>
                   </div>
-                  <button className="fm-btn" type="button" disabled={!!colourDraft} onClick={() => setColourDraft({ id: uid(), name: "", enabled: true, swatchMediaId: null, hex: null, isNew: true })}>+ Add colour</button></div>
+                  <button className="fm-btn fm-btn--primary" type="button" disabled={!!colourDraft} onClick={() => setColourDraft({ id: uid(), name: "", enabled: true, swatchMediaId: null, hex: null, isNew: true })}>+ Add colour</button></div>
                 {fabric.colours.length ? <ul className="fm-colour-grid">{fabric.colours.map((c) => {
                   const status = colourStatus(fabric, c);
                   return <li key={c.id}><button type="button" className={`fm-colour${colourDraft?.id === c.id ? " is-editing" : ""}${c.enabled ? "" : " is-off"}`} aria-label={`Edit colour ${c.name}`} onClick={() => setColourDraft({ ...c, isNew: false })}>
                     <Thumb url={mediaUrl(c.swatchMediaId)} hex={HEX.test(c.hex ?? "") ? c.hex : null} label={`${fabric.name} ${c.name} sample`} empty="No sample" shape={swatchShape} size={swatchSize} />
                     <span className="fm-colour-text"><strong>{c.name}</strong><small className="fm-tabular">{c.swatchMediaId ? "Sample photo" : c.hex ? c.hex.toUpperCase() : "No sample yet"}</small></span>
-                    <span className={`fm-pill fm-pill--${status.tone}`}>{status.label}</span>
+                    <span className={`fm-pill fm-pill--${status.tone}`}>{status.label}</span><span className="fm-edit-label">Edit <span aria-hidden="true">↗</span></span>
                   </button></li>;
                 })}</ul> : !colourDraft && <p className="fm-muted">No colours for {fabric.name || "this fabric"} yet. Each colour needs a name and HEX colour or sample photo.</p>}
 
@@ -583,4 +592,38 @@ const STYLES = `
   .fm-map-grid,.fm-kv-grid{grid-template-columns:1fr}.fm-save{margin-left:0;width:100%;justify-content:space-between}.fm-save-hint{text-align:left}
   .fm-product .fm-field,.fm-product .fm-grow{min-width:100%}.fm-ready-count{margin-left:0}
 }
+
+/* Approved two-column layout: no customer preview card. */
+.fabric-manager{max-width:1500px;gap:20px;font-size:14px;padding:8px 0 24px}
+.fm-page-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
+.fm-page-heading h1{font-size:24px;line-height:1.25;margin:0 0 4px;font-weight:650}
+.fm-card{padding:22px;border:1px solid var(--fm-line);box-shadow:0 1px 2px #00000003}
+.fm-header{gap:16px}.fm-product{gap:20px;align-items:center}.fm-product-image{width:88px;height:88px}
+.fm-product .fm-field:last-child{flex:0 1 35%;min-width:260px}
+.fm-subhead{padding-top:14px;gap:16px}.fm-steps{gap:12px}.fm-steps li{background:transparent;padding:4px 0;gap:8px}
+.fm-steps li>span[aria-hidden]{width:28px;height:28px}.fm-ready-count{font-size:12px}
+.fm-workspace{grid-template-columns:minmax(260px,350px) minmax(0,1fr);gap:20px;align-items:stretch}
+.fm-fabrics{align-content:start;gap:20px;position:static}.fm-fabric-list{gap:12px}
+.fm-fabric-item{padding:12px;border-color:var(--fm-line);gap:16px;min-height:90px}
+.fm-fabric-text{gap:6px}.fm-chevron{font-size:24px;color:var(--fm-muted)}
+.fm-detail{gap:20px;align-content:start}.fm-fabric-head{padding-bottom:18px;border-bottom:1px solid var(--fm-line)}
+.fm-fabric-head h2{font-size:20px;margin-bottom:4px}.fm-colours-head h3{font-size:17px;margin-bottom:4px}
+.fm-colour-grid{grid-template-columns:1fr;gap:8px}
+.fm-colour{display:flex;gap:18px;padding:12px 16px;min-height:66px}.fm-colour .fm-thumb{flex-shrink:0}
+.fm-colour-text{display:flex;gap:20px;align-items:center;flex:1;min-width:0}.fm-colour-text strong{flex:1}
+.fm-colour-text small{flex:1}.fm-colour .fm-pill{font-size:11px}.fm-edit-label{color:var(--fm-accent);font-size:12px;white-space:nowrap}
+.fm-thumb--rectangle{border-radius:5px}.fm-appearance{border:1px solid var(--fm-line);border-radius:12px;padding:16px;display:grid;gap:6px}
+.fm-appearance-controls{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-top:12px}.fm-shapes{display:flex;gap:4px}
+.fm-shapes [aria-pressed=true]{background:var(--fm-accent-soft);border-color:var(--fm-accent)}
+.fm-shape-icon{background:var(--fm-accent);width:16px;height:16px}.fm-shape-icon--circle{border-radius:50%}.fm-shape-icon--rectangle{height:12px;border-radius:2px}
+.fm-size{display:flex;align-items:center;gap:20px;border-left:1px solid var(--fm-line);padding-left:24px}.fm-size select{min-width:140px}
+.fm-advanced>summary{cursor:pointer;font-weight:650;list-style-position:inside}.fm-advanced>summary span{font-weight:400;margin-left:12px}
+.fm-advanced[open]>summary{padding-bottom:20px;margin-bottom:20px;border-bottom:1px solid var(--fm-line)}
+.fm-pill--attention{background:#fff0cc;color:#875300}.fm-save>.fm-pill{padding:8px 12px}.fm-btn{min-height:38px}
+@media(max-width:1050px){.fm-colour{flex-wrap:wrap}.fm-colour-text{flex-basis:calc(100% - 125px)}.fm-colour .fm-pill{margin-left:auto}}
+@media(max-width:760px){.fm-workspace{grid-template-columns:1fr}.fm-card{padding:16px}.fm-page-heading h1{font-size:21px}.fm-product .fm-field:last-child{min-width:100%}.fm-product-image{width:64px;height:64px}.fm-fabric-item{min-width:200px;min-height:78px}.fm-colour-text{display:grid;gap:4px}.fm-size{padding-left:0;border:0}.fm-appearance-controls{gap:12px}.fm-advanced>summary span{display:block;margin:6px 0 0}.fm-save{width:100%}}
+/* Rectangle inherits saved swatch appearance without duplicating controls. */
+.fm-shape-with-label{width:auto;gap:6px;padding:6px 10px}
+.fm-shape-rectangle{display:block;width:22px;height:15px;background:var(--fm-accent);border-radius:2px}
+
 `;
