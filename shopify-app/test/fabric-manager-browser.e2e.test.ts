@@ -178,6 +178,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await page.locator('button[aria-label="Edit colour Grey"]').click();
       await page.locator('.fm-colour-editor input[type=file]').setInputFiles({ name: "grey-velvet.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(2);
+      await expect.poll(() => page.locator(".fm-colour-editor .fm-media .fm-thumb img").getAttribute("src")).toMatch(/upload-2\.jpg/);
       await page.locator('.fm-colour-editor button:has-text("Save colour")').click();
       expect([await thumb("Cream"), await thumb("Grey"), await thumb("Ascot")]).toEqual(["https://cdn.shopify.com/201.jpg", "https://cdn.shopify.com/upload-2.jpg", "https://cdn.shopify.com/upload-1.jpg"]);
       expect(await page.locator(".fm-pill", { hasText: "Unsaved changes" }).count()).toBe(1);

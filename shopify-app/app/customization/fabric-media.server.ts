@@ -94,8 +94,8 @@ export async function uploadFabricMedia(admin: AdminGraphql, productId: string, 
   return { media: null, pending: true, marker };
 }
 
-/** Waits between status checks after attaching (about 12 seconds in total). Tests may shorten it. */
-export const UPLOAD_STATUS_DELAYS_MS = [500, 1000, 1500, 2000, 3000, 4000];
+/** Waits before each status check after attaching (first check immediately; about 12 seconds in total). Tests may shorten it. */
+export const UPLOAD_STATUS_DELAYS_MS = [0, 1000, 1500, 2000, 3000, 4000];
 export const UPLOAD_MARKER = /^Tryora (fabric sample|furniture reference) [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The processed image carrying this upload's marker, or null while Shopify is still processing it. */
