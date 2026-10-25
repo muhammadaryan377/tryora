@@ -21,7 +21,11 @@ vi.mock("../app/db.server", () => ({
     productPreviewConfig: {
       findMany: vi.fn(async (args: any) => state.configs.filter((config) => config.shopId === args.where.shopId &&
         (!args.where.productId?.in || args.where.productId.in.includes(config.productId)))),
+      // The exact-variant preview check reads the same saved configuration.
+      findUnique: vi.fn(async (args: any) => state.configs.find((config) => config.shopId === args.where.shopId_productId.shopId && config.productId === args.where.shopId_productId.productId) ?? null),
+      findFirst: vi.fn(async (args: any) => state.configs.find((config) => config.shopId === args.where.shopId && config.productId === args.where.productId && config.enabled && config.readiness === "ready") ?? null),
     },
+    shop: { findUnique: vi.fn(async () => ({ autoEnableProducts: false })) },
     customizationConfig: { findMany: vi.fn(async () => []) },
   },
 }));
@@ -44,7 +48,7 @@ vi.mock("../app/storefront.server", () => ({
 import { loadCatalogueWelcome } from "../app/assistant/suggestions.server";
 import { cancelAssistantTurn, readAssistantTurn, startAssistantTurn, streamAssistantTurn } from "../app/assistant/turn-routes.server";
 import { setAssistantClientForTests } from "../app/room-assistant.server";
-import { productOptionsForAssistant } from "../app/assistant/options.server";
+import { checkVariantPreview, productOptionsForAssistant } from "../app/assistant/options.server";
 import { setAssistantLogSink } from "../app/assistant/log.server";
 import { fixtureAdmin, fixtureProduct, furnitureCatalogue, finalAnswer, toolCall } from "./fixtures/assistant-store";
 
@@ -117,7 +121,7 @@ const model = {
       }
       if (calls.includes("search_products") && !calls.includes("recommend_products")) {
         const found = JSON.parse(outputs.find((item, index) => calls[index] === "search_products")?.output ?? outputs.at(-1).output);
-        const items = (found.results ?? []).slice(0, /three/i.test(text) ? 3 : 2).map((result: any) => ({ productRef: result.productRef, variantRef: result.matchingVariants[0]?.variantRef ?? null, reason: "Its colour and shape suit the room." }));
+        const items = (found.results ?? []).slice(0, /three/i.test(text) ? 3 : 2).map((result: any) => ({ productRef: result.productRef, variantRef: result.matchingVariants[0]?.variantRef ?? null, reason: `The ${result.title} brings a colour and shape that suit the room.` }));
         if (items.length) return toolCall("recommend_products", { items });
       }
       const words = ["Here are ", /three/i.test(text) ? "three verified " : "two verified ", "options from ", "the store. ", "Option 1 suits ", "a bright, calm room."];
@@ -230,6 +234,7 @@ async function route(req: IncomingMessage): Promise<Response> {
       return json({ ok: true });
     }
     if (path === "/apps/tryora/assistant/options") return json(await productOptionsForAssistant(admin, SHOP, url.searchParams.get("product") ?? ""));
+    if (path === "/apps/tryora/assistant/preview-check") return json(await checkVariantPreview(admin, SHOP, url.searchParams.get("product") ?? "", url.searchParams.get("variant") ?? "", url.searchParams.get("sourceVariant") || undefined));
   } catch (error: any) {
     if (process.env.TRYORA_E2E_DEBUG) console.error("harness", path, error);
     return json({ error: error?.code ?? "UNEXPECTED" }, 400);
@@ -571,7 +576,8 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(await card.locator(".tryora-assistant__price").textContent()).toContain("899.00");
       expect(await card.locator(".tryora-assistant__thumb img").getAttribute("src")).toContain("cdn.shopify.com");
       expect(await card.locator(".tryora-assistant__badge").count()).toBe(0);
-      expect(await card.locator(".tryora-assistant__card-reason").textContent()).toBe("Its colour and shape suit the room.");
+      // The card's own description, not a shared one.
+      expect(await card.locator(".tryora-assistant__card-reason").textContent()).toBe("The Aria Upholstered Bed brings a colour and shape that suit the room.");
       expect(await card.locator(".tryora-assistant__tags").textContent()).not.toMatch(/Size|King/);
       expect(await card.locator(".tryora-assistant__card-actions").textContent()).toContain("Preview in my room");
       expect(await page.locator("[data-ta-room] [data-ta=edit-room]").count()).toBe(1);

@@ -5,6 +5,7 @@ import { optionsOf, parseManualMapping, preservationKey, PRESERVATION_OPTION, MA
 import { combinationKey } from "./adapters/manual-mapping.server";
 import { matchesOptions } from "../core/customization";
 import type { ProviderContext } from "./adapters/types.server";
+import { isSampleMedia } from "./media-roles";
 
 export async function manualStorefrontData(context: ProviderContext, prefetched?: Parameters<typeof nativeSnapshot>[3]) {
   const { config, setting } = context;
@@ -14,6 +15,11 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
   const snapshot = await nativeSnapshot(context.admin, config.productId, true, prefetched);
   const errors = validateNativeBindings(mapping as Parameters<typeof validateNativeBindings>[0], snapshot.variants, snapshot.media);
   if (errors.length) throw new Error("Mapping needs synchronization.");
+  // Only images uploaded as samples are shown as textures or swatches; a bound product photo becomes a labelled placeholder.
+  const sampleUrl = (id: string | null | undefined) => {
+    const m = id ? snapshot.media.find((m) => m.id === id) : undefined;
+    return m?.image?.url && isSampleMedia(m) && safeShopifyMediaUrl(m.image.url) ? m.image.url : null;
+  };
   function allowed(e: ManualEntry) {
     const v = snapshot.variants.find((v) => v.id === e.variantId)!;
     const original = config.visualOptionName ? optionsOf(v)[config.visualOptionName] : "";
@@ -31,22 +37,18 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
     const samples = new Set(entries.map((e) => e.swatchMediaId ?? ""));
     const swatchId = samples.size === 1 ? e.swatchMediaId : undefined;
     return { value: key, label: e.colour.label, group: e.fabric.label, colour: null as string | null,
-      image: swatchId ? snapshot.media.find((m) => m.id === swatchId)?.image?.url ?? null : null,
+      image: sampleUrl(swatchId),
       available: entries.some(allowed), variants: entries.filter(allowed).map(variantChoice) };
   });
   const fabricImages: Record<string, string> = Object.create(null);
   if (manager) {
-    const mediaUrl = (id: string | null) => {
-      const url = snapshot.media.find((m) => m.id === id)?.image?.url;
-      return url && safeShopifyMediaUrl(url) ? url : null;
-    };
     swatches = manager.draft.fabrics.filter((f) => f.enabled).flatMap((f) => {
-      const texture = mediaUrl(f.textureMediaId);
+      const texture = sampleUrl(f.textureMediaId);
       if (texture) fabricImages[f.name] = texture;
       return f.colours.filter((c) => c.enabled).map((c) => {
         const value = JSON.stringify([f.id, c.id]);
         const approved = swatches.find((s) => s.value === value);
-        return { value, label: c.name, group: f.name, colour: c.hex, image: mediaUrl(c.swatchMediaId),
+        return { value, label: c.name, group: f.name, colour: c.hex, image: sampleUrl(c.swatchMediaId),
           available: !!setting.active && !!approved?.available, variants: setting.active ? approved?.variants ?? [] : [] };
       });
     });

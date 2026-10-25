@@ -31,6 +31,7 @@ import {
   parseToolArguments,
   runAssistantTurn,
   sanitiseMessage,
+  wantsMoreOptions,
   type AssistantEvent,
 } from "../app/room-assistant.server";
 import {
@@ -246,6 +247,10 @@ describe("store-wide grounding", () => {
     expect(requests[0].input.at(-1).content[1].image_url).toMatch(/^data:image\/jpeg;base64,/);
     expect(requests[1].input.some((item: any) => item.type === "function_call_output")).toBe(true);
     expect(requests.every((request) => request.store === false)).toBe(true);
+    // Natural, concise replies by default; longer only when details are asked for.
+    expect(requests[0].instructions).toContain("Default to 1-2 short, natural sentences.");
+    expect(requests[0].instructions).toContain("Ask at most one follow-up question");
+    expect(requests[0].instructions).toContain("never repeat what the cards show (reasons");
     expect(prisma.productPreviewConfig.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ shopId: SHOP }) }));
   });
 
@@ -324,7 +329,7 @@ describe("visualisation in the conversation", () => {
     const first = scriptedModel([
       observeRoom({ colours: ["white", "oak"], walls: "white", floor: "oak", style: "modern" }),
       search({ query: "bed", colour: "cream", size: "king", maxPrice: 1100, availableOnly: true }),
-      recommend([aria, alt, third].map((p, i) => ({ productRef: ref(p.id), variantRef: ref(variants[i]!.id), reason: "Cream complements the oak floor." }))),
+      recommend([aria, alt, third].map((p, i) => ({ productRef: ref(p.id), variantRef: ref(variants[i]!.id), reason: ["Cream complements the oak floor.", "Its soft lines suit the calm, light room.", "A warm tone that echoes the wooden furniture."][i]! }))),
       finalAnswer("Three options for your room. Cream complements the oak floor."),
     ]);
     const roomPhoto = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#ddd5c8" } }).jpeg().toBuffer();
@@ -383,6 +388,20 @@ describe("visualisation in the conversation", () => {
     state.providerRows = [{ shopId: SHOP, productId: aria.id, providerId: "cloudlift", revision: "r1", active: true, mapping: null }];
     const cloudlift = await run(ref(aria.id), ref(variantOf(aria, { Colour: "Cream", Size: "King" }).id));
     expect(cloudlift.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not verified for an in-chat preview/) });
+  });
+
+  it("explains a missing exact reference precisely instead of a generic refusal, and logs the merchant action", async () => {
+    // Aurora-style dependent Fabric -> Colour product: the variant is eligible, but has no variant image and no approved
+    // reference for its exact fabric and colour, so the same validation as /preview refuses it.
+    const aurora = fixtureProduct({ id: 41, title: "Aurora Bed", productType: "Bed", options: { Fabric: ["Plush Velvet", "Boucle"], Colour: ["Cream", "Grey"] }, price: 899,
+      variantImage: () => null, media: [{ id: "gid://shopify/MediaImage/1", url: "https://cdn.shopify.com/aurora.jpg" }] });
+    state.configs = [{ ...ariaConfig(), productId: aurora.id, visualOptionName: "Colour", frozenContext: {}, referenceMediaId: "gid://shopify/MediaImage/1" }];
+    const velvet = variantOf(aurora, { Fabric: "Plush Velvet", Colour: "Cream" });
+    const { client } = scriptedModel([recommend([{ productRef: ref(aurora.id), variantRef: ref(velvet.id), reason: "Soft velvet suits the room." }]), finalAnswer("Option 1 suits it.")]);
+    const reply = await ask(fixtureAdmin([aurora]), client, "Recommend a bed", { shown: [{ productRef: ref(aurora.id), variantRef: ref(velvet.id) }] });
+    expect(reply.recommendations[0]).toMatchObject({ variantId: velvet.id, previewAvailable: false, previewStatus: "unavailable", optionValue: null,
+      previewReason: "The store hasn't approved a photo of this exact option for AI room preview yet." });
+    expect(logs).toContainEqual(expect.objectContaining({ event: "preview_unavailable", reason: "missing_reference", product: ref(aurora.id), variant: ref(velvet.id) }));
   });
 
   it("remembers stated preferences for later questions", async () => {
@@ -447,6 +466,93 @@ describe("streaming", () => {
   });
 });
 
+describe("visual-first recommendations and show more", () => {
+  // A small multi-category store: the room request names no category, so discovery must reach beyond beds.
+  const catalogue = () => [
+    fixtureProduct({ id: 201, title: "Linen Lounge Sofa", productType: "Sofa", options: { Colour: ["Oat"] }, price: 899 }),
+    fixtureProduct({ id: 202, title: "Oak Round Coffee Table", productType: "Table", options: { Finish: ["Natural Oak"] }, price: 249 }),
+    fixtureProduct({ id: 203, title: "Boucle Accent Armchair", productType: "Armchair", options: { Colour: ["Ivory"] }, price: 399 }),
+    fixtureProduct({ id: 204, title: "Jute Area Rug", productType: "Rug", options: { Size: ["160x230cm"] }, price: 149 }),
+    fixtureProduct({ id: 205, title: "Walnut Media Unit", productType: "Storage Furniture", options: { Finish: ["Walnut"] }, price: 549 }),
+    fixtureProduct({ id: 206, title: "Velvet Ottoman Bench", productType: "Bench", options: { Colour: ["Sage"] }, price: 199 }),
+  ];
+  const card = (p: { id: string }, reason: string) => ({ productRef: ref(p.id), variantRef: null, reason });
+  const reasons = [
+    "Its oat linen picks up the warm beige walls and keeps your bright living room soft and relaxed.",
+    "The natural oak top matches your wooden floor and anchors the seating area without crowding it.",
+    "Ivory boucle adds texture beside the window and lifts the calm neutral palette you already have.",
+    "A jute rug grounds the light floor and brings the woven, natural feel of your space together.",
+    "Warm walnut echoes the darker frame on your shelving and balances the pale walls nicely.",
+    "Sage velvet adds a gentle accent colour that suits the plants and soft daylight in the room.",
+  ];
+  const room = { colours: ["warm beige"], style: "relaxed natural", lighting: "bright daylight", notes: "", walls: "beige", floor: "light oak", furniture: ["shelving"], placement: ["by the window"] };
+
+  it("discovers furniture for an unspecified room request and shows up to four cards, each with its own reason", async () => {
+    const products = catalogue();
+    const { client, requests } = scriptedModel([
+      toolCall("list_collections", {}),
+      search({ query: "living room furniture", style: "natural", limit: 6 }),
+      recommend(products.slice(0, 4).map((p, i) => card(p, reasons[i]!))),
+      finalAnswer("Here are a few pieces that would suit your room."),
+    ]);
+    const reply = await ask(fixtureAdmin(products), client, "What furniture would look good in this room?", { room });
+    expect(reply.recommendations.map((item) => item.title)).toEqual(["Linen Lounge Sofa", "Oak Round Coffee Table", "Boucle Accent Armchair", "Jute Area Rug"]);
+    // Each description travels with its own card, unchanged and in order.
+    expect(reply.recommendations.map((item) => item.reason)).toEqual(reasons.slice(0, 4));
+    expect(new Set(reply.recommendations.map((item) => item.reason)).size).toBe(4);
+    // The saved room notes reached the model, and the instructions ask for real category discovery, not beds only.
+    expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain("warm beige");
+    expect(requests[0].instructions).toContain("Room-based discovery");
+    expect(requests[0].instructions).toContain("never assume beds");
+    expect(requests[0].tools.find((tool: any) => tool.name === "recommend_products").parameters.properties.items.maxItems).toBe(4);
+  });
+
+  it("asks once for distinct reasons instead of showing the same description on two cards", async () => {
+    const products = catalogue();
+    const same = "A versatile piece that suits most modern rooms and works well with neutral colours and furniture.";
+    const { client, requests } = scriptedModel([
+      search({ query: "living room furniture", limit: 6 }),
+      recommend([card(products[0]!, same), card(products[1]!, same)], "call-first"),
+      recommend([card(products[0]!, reasons[0]!), card(products[1]!, reasons[1]!)], "call-second"),
+      finalAnswer("Two ideas for your room."),
+    ]);
+    const reply = await ask(fixtureAdmin(products), client, "Recommend something for this room", { room, shown: [] });
+    expect(toolOutputs(requests, "call-first")[0]).toMatchObject({ error: "card_reasons_need_revision" });
+    expect(reply.recommendations.map((item) => item.reason)).toEqual([reasons[0], reasons[1]]);
+  });
+
+  it("shows genuinely new products on repeated show-more requests, keeps the room context, and says when none are left", async () => {
+    const products = catalogue();
+    const first = products.slice(0, 4).map((p) => ({ productRef: ref(p.id), variantRef: null }));
+    // Second batch: the model tries to repeat a product; search and recommend both exclude what was already shown.
+    const { client, requests } = scriptedModel([
+      search({ query: "living room furniture", limit: 6 }),
+      recommend([card(products[0]!, reasons[0]!), card(products[4]!, reasons[4]!), card(products[5]!, reasons[5]!)]),
+      finalAnswer("A couple more ideas."),
+    ]);
+    const reply = await ask(fixtureAdmin(products), client, "Show me more", { room, shown: first, explored: first });
+    const searched = toolOutputs(requests, "call-search_products")[0];
+    expect(searched.results.map((result: any) => result.title)).toEqual(expect.not.arrayContaining(products.slice(0, 4).map((p) => p.title)));
+    expect(searched.excludedAlreadyShown).toBe(4);
+    expect(reply.recommendations.map((item) => item.title)).toEqual(["Walnut Media Unit", "Velvet Ottoman Bench"]);
+    expect(toolOutputs(requests, "call-recommend_products")[0]).toMatchObject({ excludedAlreadyShown: 1 });
+    expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain("asked for more options");
+    expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain("warm beige");
+
+    // Third request: everything has been shown, so search says so instead of repeating a card.
+    const all = products.map((p) => ({ productRef: ref(p.id), variantRef: null }));
+    const next = scriptedModel([search({ query: "living room furniture", limit: 6 }), finalAnswer("That's every verified match for now.")]);
+    const last = await ask(fixtureAdmin(products), next.client, "Any other options?", { room, shown: all.slice(4), explored: all });
+    expect(toolOutputs(next.requests, "call-search_products")[0]).toMatchObject({ results: [], note: expect.stringContaining("already shown") });
+    expect(last.recommendations).toEqual([]);
+  });
+
+  it("recognises show-more requests without treating ordinary questions as one", () => {
+    for (const text of ["Show more", "show me more please", "Any other options?", "something different", "more options like these", "aur dikhao"]) expect(wantsMoreOptions(text)).toBe(true);
+    for (const text of ["Show me the oak table in my room", "Is this one more comfortable?", "What colours does it come in?"]) expect(wantsMoreOptions(text)).toBe(false);
+  });
+});
+
 describe("multi-turn conversations", () => {
   it("resolves 'the second one' from verified chat context and answers from real variants", async () => {
     const admin = fixtureAdmin([aria, aspen, oslo]);
@@ -491,10 +597,10 @@ describe("multi-turn conversations", () => {
 
   it("uses a bounded number of tool rounds, then forces an answer", async () => {
     const lookup = search({ query: "bed" });
-    const { client, requests } = scriptedModel([lookup, lookup, lookup, lookup, finalAnswer("Here is what I found.")]);
+    const { client, requests } = scriptedModel([...Array(MAX_TOOL_ROUNDS).fill(lookup), finalAnswer("Here is what I found.")]);
     const reply = await ask(fixtureAdmin([aria, aspen]), client, "Find me a bed");
     expect(requests).toHaveLength(MAX_TOOL_ROUNDS + 1);
-    expect(requests.map((request) => request.tool_choice)).toEqual(["required", "auto", "auto", "auto", "none"]);
+    expect(requests.map((request) => request.tool_choice)).toEqual(["required", ...Array(MAX_TOOL_ROUNDS - 1).fill("auto"), "none"]);
     expect(reply.message).toBe("Here is what I found.");
   });
 

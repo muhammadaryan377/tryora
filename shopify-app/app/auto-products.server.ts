@@ -1,6 +1,7 @@
 import prisma from "./db.server";
 import { discoverNativeOptions } from "./core/native-option-discovery";
 import type { AdminGraphql } from "./preview-product.server";
+import { isSampleMedia } from "./customization/media-roles";
 
 /** Conservative allowlist: do not expose the AI tool on non-furniture or bedding accessories. */
 export function autoFurnitureCategory(productType: string, title: string): string | null {
@@ -40,7 +41,7 @@ export async function ensureAutoProductConfig(admin: AdminGraphql, shopId: strin
     query TryoraAutoProduct($id: ID!) {
       product(id: $id) {
         id title productType status
-        media(first: 20) { nodes { ... on MediaImage { id image { url } } } }
+        media(first: 20) { nodes { ... on MediaImage { id alt image { url } } } }
         options { name }
       }
     }`, { variables: { id: gid } });
@@ -51,7 +52,8 @@ export async function ensureAutoProductConfig(admin: AdminGraphql, shopId: strin
     console.warn(JSON.stringify({ component: "auto-products", event: "admin_query_failed", status: res.status, errors: body.errors?.length ?? 0 }));
     return null;
   }
-  const media = (product.media?.nodes ?? []).filter((m: any) => m?.id && m?.image?.url);
+  // Uploaded fabric/colour samples are product media too, but never the furniture reference.
+  const media = (product.media?.nodes ?? []).filter((m: any) => m?.id && m?.image?.url && !isSampleMedia(m));
   if (!isAutoEligibleProduct({ ...product, media })) return null;
   const category = autoFurnitureCategory(product.productType, product.title)!;
   const referenceMediaId = media[0]!.id as string;

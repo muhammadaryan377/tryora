@@ -65,7 +65,8 @@ export async function uploadFabricMedia(admin: AdminGraphql, productId: string, 
     const data = await result(admin, FABRIC_UPLOAD_STATUS, { id: productId });
     if (data.product?.id !== productId) throw new FabricConfigError("Product ownership could not be verified.");
     const image = data.product.media.nodes.find((m: any) => m.alt === marker && m.image?.url && safeShopifyMediaUrl(m.image.url));
-    if (image) return { media: { id: String(image.id), url: String(image.image.url) }, pending: false };
+    // The marker travels with the new image so the manager keeps samples and full-product photos in separate pickers.
+    if (image) return { media: { id: String(image.id), url: String(image.image.url), alt: marker }, pending: false };
     if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   return { media: null, pending: true };

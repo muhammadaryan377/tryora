@@ -198,6 +198,7 @@ export class RoomAssistant {
     this.pendingPreview = null;
     this.state.entries = [];
     this.state.shown = [];
+    this.state.explored = [];
     this.state.selected = null;
     this.state.constraints = null;
     this.state.preferences = null;
@@ -218,6 +219,7 @@ export class RoomAssistant {
     this.pendingPreview = null;
     this.state.entries = [];
     this.state.shown = [];
+    this.state.explored = [];
     this.state.selected = null;
     this.state.constraints = null;
     this.state.preferences = null;
@@ -322,6 +324,7 @@ export class RoomAssistant {
     form.set("hasPhoto", this.roomPhoto ? "1" : "0");
     if (this.state.room) form.set("room", JSON.stringify(this.state.room));
     if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 6)));
+    if (this.state.explored?.length) form.set("explored", JSON.stringify(this.state.explored.slice(-24)));
     if (this.state.selected) form.set("selected", JSON.stringify(this.state.selected));
     if (this.state.preferences) form.set("preferences", JSON.stringify(this.state.preferences));
     if (this.state.constraints) form.set("constraints", JSON.stringify(this.state.constraints));
@@ -384,6 +387,8 @@ export class RoomAssistant {
         reply.recommendations = (event.items ?? []) as Recommendation[];
         reply.focus = false;
         this.state.shown = reply.recommendations.map(({ productRef, variantRef }) => ({ productRef, variantRef }));
+        // Earlier batches stay in the chat history; the explored list keeps "show more" from repeating them.
+        this.state.explored = [...(this.state.explored ?? []).filter((ref) => !this.state.shown.some((s) => s.productRef === ref.productRef)), ...this.state.shown].slice(-24);
         this.syncCards(reply.recommendations, reply.id);
         this.save();
         this.renderAll();
@@ -1464,11 +1469,45 @@ export class RoomAssistant {
       this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef, source: "options" };
       this.syncCards([updated], card.entry.id);
       this.save();
+      if (updated.previewAvailable) void this.confirmPreview(key, updated);
     } else {
       card.entry.recommendations[card.index] = { ...card.item, previewAvailable: false, optionValue: null,
         previewReason: "Complete the fabric and colour selection before previewing this configuration." };
     }
     this.renderAll();
+  }
+
+  /**
+   * The options model only says the popup would list this option. Before the card offers a preview, the server runs the
+   * same exact-variant validation as /preview (approved reference, fixed options, reviewed mapping) and gives the precise
+   * reason when it fails, so the button never starts a preview that can only be refused.
+   */
+  private async confirmPreview(key: string, item: Recommendation) {
+    const current = () => this.cardAt(key);
+    const stillShown = () => current()?.item.id === item.id;
+    const apply = (patch: Partial<Recommendation>) => {
+      const card = current();
+      if (!card || !stillShown()) return;
+      card.entry.recommendations[card.index] = { ...card.item, ...patch };
+      this.syncCards([card.entry.recommendations[card.index]!], card.entry.id);
+      this.save(); this.renderEntry(card.entry.id);
+    };
+    apply({ previewAvailable: false, previewStatus: "unavailable", previewReason: "Checking AI room preview for this option…" });
+    const params = new URLSearchParams({ product: item.productId, variant: item.variantId ?? "", visitor: storedVisitorId() });
+    if (item.previewContext?.sourceVariantId && item.previewContext.sourceVariantId !== item.variantId) params.set("sourceVariant", item.previewContext.sourceVariantId);
+    try {
+      const response = await fetch(`${PROXY}/assistant/preview-check?${params}`, { credentials: "same-origin" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.variantId !== item.variantId) throw new Error(body.error ?? "REQUEST_FAILED");
+      apply({
+        previewAvailable: !!body.previewAvailable, previewStatus: body.previewStatus, previewReason: body.previewReason ?? null,
+        optionValue: body.previewAvailable ? body.optionValue : null, referenceImage: body.referenceImage ?? item.referenceImage ?? null,
+        // The page source captured when the options opened still guards against a product-page change.
+        previewContext: body.previewContext ? { ...body.previewContext, pageSourceVariantId: item.previewContext?.pageSourceVariantId } : item.previewContext,
+      });
+    } catch {
+      apply({ previewAvailable: false, previewStatus: "unavailable", optionValue: null, previewReason: "AI room preview couldn't be checked just now. Please try again shortly." });
+    }
   }
 
   private optionsPanelHtml(key: string, panel: CardOptionsState) {
@@ -1490,7 +1529,7 @@ export class RoomAssistant {
           <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}">${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
-        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}">${buttons}</div></fieldset>`;
+        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}">${buttons}</div></fieldset>`;
     }).join("");
     const missing = data.attributes.filter((attribute) => panel.selections[attribute.name] === undefined).map((attribute) => attribute.name.toLowerCase());
     const status = missing.length ? (data.attributes.some((a) => a.kind === "size" && panel.selections[a.name] === undefined) ? "A verified product configuration is needed before this appearance can be previewed. No configuration has been chosen automatically." : `Choose ${missing.join(", ")}.`) : resolveVariant(data, panel.selections) ? "" : "That combination isn't available. Choose another option.";
@@ -1535,8 +1574,11 @@ export class RoomAssistant {
   private save() { saveState(this.state); }
 }
 
+/** The card's own room-matching description, shown in full at the usual 15-30 words; longer text keeps its first sentence. */
 function shortReason(reason: string): string {
-  const first = reason.trim().split(/(?<=[.!?])\s+/)[0] ?? "";
+  const text = reason.trim().replace(/\s+/g, " ");
+  if (text.split(" ").length <= 34 && text.length <= 260) return text;
+  const first = text.split(/(?<=[.!?])\s+/)[0] ?? "";
   return first.length > 170 ? first.slice(0, 167).trimEnd() + "..." : first;
 }
 function appearanceSummary(options: Record<string, string>): string {

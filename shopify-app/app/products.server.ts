@@ -6,6 +6,7 @@ import { autoFurnitureCategory, isAutoEligibleProduct } from "./auto-products.se
 import { previewOptionStatus } from "./preview-option-status";
 import { discoverNativeOptions } from "./core/native-option-discovery";
 import { effectiveSetting, providerSettingsEnabled, providerSummary } from "./customization/provider-config.server";
+import { isSampleMedia } from "./customization/media-roles";
 
 export interface ShopProduct {
   id: string;
@@ -82,7 +83,8 @@ function mapProduct(p: any): ShopProduct {
         })),
       })),
     media: (p.media?.nodes ?? [])
-      .filter((m: any) => m.image?.url)
+      // The reference picker lists furniture photos only; uploaded fabric/colour samples keep their own role.
+      .filter((m: any) => m.image?.url && !isSampleMedia(m))
       .map((m: any) => ({ id: m.id, url: m.image.url, alt: m.alt ?? undefined })),
   };
 }

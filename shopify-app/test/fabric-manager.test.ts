@@ -302,7 +302,9 @@ describe("actual merchant image uploads", () => {
       return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/999", alt, image: { url: "https://cdn.shopify.com/upload.jpg" } }] } } } });
     }) };
     const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => new Response("", { status: 201 })); vi.stubGlobal("fetch", fetcher);
-    expect(await uploadFabricMedia(admin, productId, new Blob([image]))).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg" } });
+    expect(await uploadFabricMedia(admin, productId, new Blob([image]))).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg", alt } });
+    // The sample marker comes back so the manager keeps a fresh upload out of the full-product reference picker.
+    expect(alt).toMatch(/^Tryora fabric sample /);
     expect(fetcher.mock.calls[0]![0]).toBe("https://shopify-staged-uploads.storage.googleapis.com/");
     expect(state.writes).toEqual([]); // an upload alone never approves a reference or creates a mapping
   });

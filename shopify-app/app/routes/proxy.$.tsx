@@ -88,6 +88,16 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       return json({ error: code }, code === "RATE_LIMITED" ? 429 : code === "NOT_FOUND" || code === "BAD_REQUEST" ? 404 : 503);
     }
   }
+  if (path === "assistant/preview-check") {
+    try {
+      guardAssistantRead(session.shop, url.searchParams.get("visitor") ?? "");
+      return json(await checkVariantPreview(admin, session.shop, url.searchParams.get("product") ?? "", url.searchParams.get("variant") ?? "",
+        url.searchParams.get("sourceVariant") || undefined));
+    } catch (e) {
+      const code = errorCode(e);
+      return json({ error: code }, code === "RATE_LIMITED" ? 429 : code === "NOT_FOUND" || code === "BAD_REQUEST" ? 404 : 503);
+    }
+  }
   const turn = path.match(/^assistant\/turn\/([\w-]+)$/);
   if (turn) {
     try {
