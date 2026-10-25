@@ -699,9 +699,7 @@ export class Tryora {
     }
     // Show the photograph of the actual selected colour instead of the generic
     // featured product, which may be in a different colour.
-    const selectedPhoto = c.previewOnly
-      ? c.productImage ?? this.selectedVariant(s.selectedOption ?? "")?.image
-      : this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage;
+    const selectedPhoto = this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage;
     return selectedPhoto
       ? `<img class="tryora__img tryora__img--product" src="${esc(selectedPhoto)}" alt="${esc(c.product)}">`
       : "";
