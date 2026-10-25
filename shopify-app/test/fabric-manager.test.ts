@@ -23,7 +23,8 @@ import { nativeSelections } from "../app/core/customization";
 import { manualStorefrontData } from "../app/customization/validation.server";
 import { resolveConfiguredPreview } from "../app/customization/registry.server";
 import { action, loader } from "../app/routes/app.fabrics";
-import { action as uploadAction } from "../app/routes/app.fabrics.upload";
+import { action as uploadAction, loader as uploadStatus } from "../app/routes/app.fabrics.upload";
+import { UPLOAD_STATUS_DELAYS_MS } from "../app/customization/fabric-media.server";
 import { requestFabricUpload } from "../app/customization/fabric-upload-request";
 import { formatSyncedAtUtc } from "../app/components/fabric-colour-manager";
 import { loadProviderSetting } from "../app/customization/provider-config.server";
@@ -316,13 +317,100 @@ describe("upload route answers JSON, never the HTML page", () => {
     expect([native.status, native.headers.get("content-type")]).toEqual([400, expect.stringContaining("application/json")]);
     expect((await native.json()).error).toContain("Manual Setup");
     const big = new FormData(); big.set("mode", "manual"); big.set("image", new Blob([new Uint8Array(11 * 1024 * 1024)]), "huge.jpg");
-    const oversized = await post(big);
+    // Pre-encoded bytes, as a real HTTP body arrives; stopping a live FormData generator mid-stream only adds test noise.
+    const encoded = new Response(big);
+    const oversized = await uploadAction({ request: new Request(`https://tryora.example/app/fabrics/upload?product=${encodeURIComponent(productId)}`,
+      { method: "POST", headers: { "content-type": encoded.headers.get("content-type")! }, body: new Uint8Array(await encoded.arrayBuffer()) }) } as any);
     expect([oversized.status, (await oversized.json()).error]).toEqual([413, "Choose a JPG, PNG or WebP image under 8 MB."]);
     vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "another.myshopify.com");
     const blocked = await post(uploadForm());
     expect([blocked.status, blocked.headers.get("content-type")]).toEqual([403, expect.stringContaining("application/json")]);
     expect(state.writes).toEqual([]);
   });
+  it("shows Shopify's own reason for each failed upload step and logs the step", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+    const original = state.admin.graphql;
+    const attempt = async (graphql: (query: string, variables: any) => Promise<Response>) => {
+      state.admin.graphql = async (query: string, variables: any) => (/TryoraStageFabricImage|TryoraAttachFabricImage|TryoraFabricUploadStatus/.test(query) || query.includes("TryoraPreviewProduct")) ? graphql(query, variables) : original(query, variables);
+      const form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      const response = await post(form);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      return (await response.json()).error as string;
+    };
+    const staged = (q: string) => q.includes("TryoraStageFabricImage") ? Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } }) : null;
+    // 1. The Shopify library throws GraphqlQueryError (body attached) for a refused mutation.
+    const denied = Object.assign(new Error("GraphQL Client: An error occurred while fetching from the API"), { name: "GraphqlQueryError", body: { errors: [{ message: "Access denied for stagedUploadsCreate field. Required access: `write_products`." }] } });
+    expect(await attempt(async (q, v) => { if (q.includes("TryoraStageFabricImage")) throw denied; return original(q, v); }))
+      .toBe("Shopify could not prepare this upload: Access denied for stagedUploadsCreate field. Required access: `write_products`. No fabric configuration was changed.");
+    // 2. userErrors from attaching the image to the product.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+    expect(await attempt(async (q, v) => staged(q) ?? (q.includes("TryoraAttachFabricImage") ? Response.json({ data: { productUpdate: { product: null, userErrors: [{ field: ["media"], message: "Media processing failed" }] } } }) : original(q, v))))
+      .toBe("Shopify could not attach the image to this product: Media processing failed No fabric configuration was changed.");
+    // 3. The transfer to Shopify's upload storage itself fails.
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("fetch failed"); }));
+    expect(await attempt(async (q, v) => staged(q) ?? original(q, v))).toContain("could not be sent to Shopify's upload storage");
+    // 4. The product itself cannot be read.
+    const unreadable = Object.assign(new Error("GraphQL Client: An error occurred while fetching from the API"), { name: "GraphqlQueryError", body: { errors: [{ message: "Throttled" }] } });
+    expect(await attempt(async (q, v) => { if (q.includes("TryoraPreviewProduct")) throw unreadable; return original(q, v); })).toBe("This product could not be read from Shopify: Throttled Refresh the page and try again.");
+    const steps = warn.mock.calls.map((call) => JSON.parse(String(call[0]))).filter((line) => line.component === "fabric-upload").map((line) => line.step);
+    expect(steps).toEqual(["stage", "attach", "transfer", "product"]);
+    expect(state.writes).toEqual([]);
+    warn.mockRestore();
+  });
+
+  it("treats an attached image as uploaded even when Shopify is slow or a status check fails", async () => {
+    // Reported: the "failed" image appeared under uploaded samples later. It had been attached; only the quick check failed.
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const delays = UPLOAD_STATUS_DELAYS_MS.splice(0, UPLOAD_STATUS_DELAYS_MS.length, 0, 0, 0);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+      const original = state.admin.graphql; let marker = "", checks = 0, ready = false;
+      state.admin.graphql = async (query: string, variables: any) => {
+        if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } });
+        if (query.includes("TryoraAttachFabricImage")) { marker = variables.variables.media[0].alt; return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } }); }
+        if (query.includes("TryoraFabricUploadStatus")) {
+          checks += 1;
+          if (checks === 1) throw Object.assign(new Error("GraphQL Client: An error occurred"), { name: "GraphqlQueryError", body: { errors: [{ message: "Throttled" }] } });
+          return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/993", alt: marker, image: ready ? { url: "https://cdn.shopify.com/993.jpg" } : null }] } } } });
+        }
+        return original(query, variables);
+      };
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+      // Still processing after the server's wait: the reply is "pending" with this upload's marker, not an error.
+      let form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      const pending = await (await post(form)).json();
+      expect(pending).toEqual({ media: null, pending: true, marker });
+      const status = (m: string) => uploadStatus({ request: new Request(`https://tryora.example/app/fabrics/upload?product=${encodeURIComponent(productId)}&marker=${encodeURIComponent(m)}`) } as any);
+      expect(await (await status(marker)).json()).toEqual({ pending: true, marker });
+      ready = true;
+      expect(await (await status(marker)).json()).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/993", url: "https://cdn.shopify.com/993.jpg", alt: marker } });
+      expect((await status("not-a-marker")).status).toBe(400);
+      // A failed status check followed by a processed image is a successful upload.
+      checks = 0; form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      expect(await (await post(form)).json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/993" } });
+      expect(warn.mock.calls.some((call) => String(call[0]).includes('"step":"status"'))).toBe(true);
+      expect(state.writes).toEqual([]);
+    } finally { UPLOAD_STATUS_DELAYS_MS.splice(0, UPLOAD_STATUS_DELAYS_MS.length, ...delays); warn.mockRestore(); }
+  });
+
+  it("keeps checking a pending upload in the browser and selects it when Shopify finishes", async () => {
+    const file = new File(["x"], "velvet.jpg", { type: "image/jpeg" });
+    const marker = "Tryora fabric sample 0f0e0d0c-0b0a-4909-8807-060504030201";
+    let polls = 0;
+    const send = vi.fn(async (url: string) => {
+      if (!url.includes("marker=")) return Response.json({ media: null, pending: true, marker });
+      polls += 1;
+      return polls < 3 ? Response.json({ pending: true, marker }) : Response.json({ pending: false, media: { id: "gid://shopify/MediaImage/7", url: "https://cdn.shopify.com/7.jpg", alt: marker } });
+    });
+    const media = await requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, send as any, async () => {});
+    expect(media).toMatchObject({ id: "gid://shopify/MediaImage/7" });
+    expect(polls).toBe(3);
+    expect((send.mock.calls[1] as any[])[0]).toBe(`/app/fabrics/upload?product=${encodeURIComponent(productId)}&marker=${encodeURIComponent(marker)}`);
+  });
+
   it("turns an HTML reply into a clear message instead of a JSON parse error", async () => {
     const file = new File(["x"], "velvet.jpg", { type: "image/jpeg" });
     const html = vi.fn(async () => new Response("<!DOCTYPE html><html></html>", { status: 200, headers: { "content-type": "text/html" } }));
