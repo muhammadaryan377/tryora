@@ -489,7 +489,7 @@ export class RoomAssistant {
     // authoritative appearance selection; never generate an older chat variant.
     const pageProduct = !!this.context.productId && numeric(this.context.productId) === numeric(item.productId);
     const rawPageVariant = pageProduct ? this.context.currentVariantId?.() : null;
-    if (rawPageVariant && numeric(rawPageVariant) !== numeric(item.variantId)) {
+    if (rawPageVariant && (numeric(rawPageVariant) !== numeric(item.variantId) || !item.previewAvailable)) {
       const variantId = rawPageVariant.startsWith("gid://") ? rawPageVariant : `gid://shopify/ProductVariant/${rawPageVariant}`;
       try {
         const params = new URLSearchParams({
@@ -1220,6 +1220,8 @@ export class RoomAssistant {
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const generating = this.generating(item);
+    const canCheckCurrentPage = !!this.context.currentVariantId?.() && numeric(this.context.productId) === numeric(item.productId);
+    const canStartPreview = item.previewAvailable || canCheckCurrentPage;
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
@@ -1231,7 +1233,7 @@ export class RoomAssistant {
       </div>
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(item.url)}">View details</a>
-          <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${item.previewAvailable && !generating ? "" : "disabled"}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>${generating ? "Creating preview…" : "Preview in my room"}</button>
+          <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${canStartPreview && !generating ? "" : "disabled"}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>${generating ? "Creating preview…" : "Preview in my room"}</button>
         </div>
         ${reason ? `<p class="tryora-assistant__image-note tryora-assistant__preview-note" id="ta-why-${id}" role="status">${escapeHtml(reason)}</p>` : ""}
     </article>`;
