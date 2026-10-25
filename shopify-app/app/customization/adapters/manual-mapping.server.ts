@@ -5,6 +5,7 @@ import { defaultNoun } from "../../products.server";
 import type { ProviderAdapter } from "./types.server";
 import { matchesProviderScope } from "./types.server";
 import { isFabricDocument } from "../fabric-manager";
+import { isSampleMedia } from "../media-roles";
 
 export function combinationKey(entry: ManualMapping["entries"][number]) { return JSON.stringify([entry.fabric.id, entry.colour.id]); }
 export const manualMappingAdapter: ProviderAdapter = {
@@ -45,6 +46,8 @@ export const manualMappingAdapter: ProviderAdapter = {
     const value = config.visualOptionName ? optionsOf(selected)[config.visualOptionName] : "";
     if (config.choices.some((c) => (c.optionValue === value || c.optionValue === request.combinationId || c.optionValue === combinationKey(entry)) &&
       (!c.available || ((c.variantIds ?? []) as string[]).length > 0 && !((c.variantIds ?? []) as string[]).includes(selected.id)))) return { status: "rejected", reason: "unavailable", issue: "choice_disabled" };
+    // A fabric or colour sample never authorizes generation as the full furniture reference.
+    if (entry.referenceMediaIds.some((id) => isSampleMedia(media.find((m) => m.id === id)))) return { status: "rejected", reason: "missing_reference", issue: "missing_reference" };
     const urls = entry.referenceMediaIds.map((id) => media.find((m) => m.id === id)!.image!.url);
     const preview = { urls, variantId: selected.id, selectedOptions: entry.nativeOptions, optionValue: `${entry.fabric.label} / ${entry.colour.label}`,
       referenceVersion: `${setting.revision}:${entry.id}:${selected.id}:${entry.referenceMediaIds.join(",")}`,

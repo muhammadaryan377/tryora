@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { hexToRgb, rgbToHex } from "../customization/colour-values";
 import { emptyFabricDraft, type FabricDraft, type ManagedFabric, type ManagedBinding } from "../customization/fabric-manager";
+import { referenceChoices, sampleChoices } from "../customization/media-roles";
 
 type Media = { id: string; url: string; alt?: string | null };
 export interface FabricManagerData {
@@ -9,7 +10,7 @@ export interface FabricManagerData {
   products: { nodes: { id: string; title: string }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
   selected: null | {
     productId: string; title: string; image: string | null; mode: "native" | "manual"; providerId: string; revision: string;
-    draft: FabricDraft; importBlocked?: boolean; diagnostics: Record<string, string>; warning: string; explicitlyOff: boolean;
+    draft: FabricDraft; importBlocked?: boolean; diagnostics: Record<string, string>; warning: string; sampleNotice?: string; explicitlyOff: boolean;
     options: { name: string; optionValues: { name: string; swatch?: { color?: string; image?: { image?: { url: string } } } }[] }[];
     variants: { id: string; availableForSale: boolean; image?: { url: string } | null; selectedOptions: { name: string; value: string }[] }[];
     media: Media[]; native: { issue: string | null; optionName: string | null; fabricOptionName: string | null; selections: { value: string; label?: string; group: string | null; image: string | null; colour: string | null; available?: boolean }[] };
@@ -26,11 +27,11 @@ export function formatSyncedAtUtc(iso: string): string {
 const uid = () => crypto.randomUUID();
 const control = { border: "1px solid #c8c8c8", borderRadius: 8, padding: "10px 12px", background: "white", width: "100%", boxSizing: "border-box" as const, font: "inherit" };
 const field = { display: "grid", gap: 6 };
-function Sample({ url, hex, label, round = true }: { url?: string | null; hex?: string | null; label: string; round?: boolean }) {
+function Sample({ url, hex, label, round = true, empty: emptyText = "No sample" }: { url?: string | null; hex?: string | null; label: string; round?: boolean; empty?: string }) {
   // A merchant HEX is a legitimate colour; with neither image nor HEX the sample is visibly empty, never a fake fill.
   const empty = !url && !hex;
   return <span className={`fabric-sample${empty ? " is-empty" : ""}`} role="img" aria-label={label} style={{ borderRadius: round ? "50%" : 12, background: url ? "#fff" : hex || "#fff" }}>
-    {url ? <img src={url} alt={label} /> : <span>{empty ? "No sample" : ""}</span>}
+    {url ? <img src={url} alt={label} /> : <span>{empty ? emptyText : ""}</span>}
   </span>;
 }
 function MediaField({ label, value, media, change, upload, disabled, kind, sampleIds }: {
@@ -38,40 +39,39 @@ function MediaField({ label, value, media, change, upload, disabled, kind, sampl
   upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>; disabled: boolean;
   kind: "sample" | "reference"; sampleIds: ReadonlySet<string>;
 }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState(""), [imagePage, setImagePage] = useState(0);
+  const [busy, setBusy] = useState(false), [error, setError] = useState(""), [done, setDone] = useState(false), [imagePage, setImagePage] = useState(0);
   const selected = media.find((m) => m.id === value);
-  // The sample picker must never be a gallery of unrelated furniture photographs.
-  const choices = media.filter((m) => kind === "sample"
-    ? sampleIds.has(m.id) || m.alt?.startsWith("Tryora fabric sample ")
-    : (m.id === value || !sampleIds.has(m.id) && !m.alt?.startsWith("Tryora fabric sample ")));
+  // Samples come only from images uploaded as samples; furniture photos never appear here, and samples never appear as references.
+  const choices = kind === "sample" ? sampleChoices(media) : referenceChoices(media, sampleIds);
+  const role = kind === "reference" ? "full furniture reference" : label.startsWith("Fabric texture") ? "fabric texture" : "colour sample";
   const pageCount = Math.ceil(choices.length / 24);
   const currentPage = Math.min(imagePage, Math.max(0, pageCount - 1));
   return <div className={`fabric-media-field fabric-media-${kind}`}>
     <div className="fabric-selected-image">
-      <Sample url={selected?.url} label={label} round={false} />
+      <Sample url={selected?.url} label={label} round={false} empty={`No ${role}`} />
       <div>
-        <strong>{selected ? "Selected image" : kind === "sample" ? "No fabric sample uploaded" : "No product reference selected"}</strong>
+        <strong>{selected ? `Selected ${role}` : `No ${role} yet`}</strong>
         <p className="fabric-muted">{kind === "sample"
-          ? "Upload an actual fabric texture or colour sample. Product photos are hidden from this picker."
+          ? `Upload a close-up photo of the actual ${role === "fabric texture" ? "fabric" : "colour sample"}. Product photos never appear here.`
           : "Use a complete product photograph matching the exact Shopify variant. A swatch alone cannot approve a room preview."}</p>
         {value && !selected && <p role="alert">Image missing from this product. Refresh and choose it again.</p>}
       </div>
     </div>
     <label className="fabric-upload-zone">
-      <span>{busy ? "Uploading to Shopify..." : kind === "sample" ? "Upload fabric / colour sample" : "Upload full-product reference"}</span>
+      <span>{busy ? "Uploading to Shopify..." : `${selected ? "Replace" : "Upload"} ${role} image`}</span>
       <small>JPG, PNG or WebP · up to 8 MB</small>
       <input aria-label={`Upload ${label}`} type="file" accept="image/jpeg,image/png,image/webp" disabled={disabled || busy} onChange={async (e) => {
         const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (!file) return;
         if (file.size > 8 * 1024 * 1024 || file.size === 0) { setError("Choose a nonempty image under 8 MB."); return; }
-        setBusy(true); setError("");
-        try { const image = await upload(file, kind); if (image) { change(image.id); setImagePage(0); } }
+        setBusy(true); setError(""); setDone(false);
+        try { const image = await upload(file, kind); if (image) { change(image.id); setImagePage(0); setDone(true); } }
         catch (err) { setError(err instanceof Error ? err.message : "Image upload failed."); }
         finally { setBusy(false); }
       }} />
     </label>
     {selected && <button className="fabric-clear-image" type="button" disabled={disabled || busy} onClick={() => change(null)}>Remove selection</button>}
     {choices.length > 0 && <details className="fabric-existing-images">
-      <summary>{kind === "sample" ? "Choose an existing fabric / colour sample" : "Choose an existing product photo"} ({choices.length})</summary>
+      <summary>{kind === "sample" ? "Choose an uploaded sample" : "Choose an existing product photo"} ({choices.length})</summary>
       <div className="fabric-media-choices">{choices.slice(currentPage * 24, (currentPage + 1) * 24).map((m) =>
         <button key={m.id} type="button" disabled={disabled || busy} aria-label={`Use image ${m.id.split("/").pop()} for ${label}`}
           aria-pressed={m.id === value} onClick={() => change(m.id)}>
@@ -82,6 +82,7 @@ function MediaField({ label, value, media, change, upload, disabled, kind, sampl
         <button type="button" disabled={currentPage + 1 >= pageCount} onClick={() => setImagePage(Math.min(pageCount - 1, currentPage + 1))}>Next images</button>
       </div>}
     </details>}
+    {done && !error && <p role="status" className="fabric-muted">Uploaded and selected. Save changes to keep it.</p>}
     {error && <p role="alert" className="fabric-upload-error">{error}</p>}
   </div>;
 }
@@ -134,6 +135,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
         {p.explicitlyOff && <s-banner heading="Product previews are OFF" tone="warning"><p>Saving fabrics or switching mode does not enable this product. Review Product preview settings when ready.</p></s-banner>}
         {!data.installationReady && <s-banner heading="Manual setup is not enabled" tone="info"><p>{data.manualSetupReason || "Your app administrator needs to authorize merchant-managed customization for this installation. Shopify-native previews continue to work."}</p></s-banner>}
         {p.warning && <s-banner heading="Saved mapping needs attention" tone="warning"><p>{p.warning}</p></s-banner>}
+        {p.sampleNotice && <s-banner heading="Some samples need real sample images" tone="warning"><p>{p.sampleNotice}</p></s-banner>}
         {p.providerId === "cloudlift" && <p>Existing reviewed Cloudlift native-linked mapping is preserved under Manual Setup. Saving does not create an automatic third-party integration.</p>}
         <s-section heading="Configuration mode">
           <label>Mode<select aria-label="Configuration mode" style={control} value={mode} onChange={(e) => setMode(e.currentTarget.value as "native" | "manual")}>
@@ -156,7 +158,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
           <div className="fabric-workspace">
             <aside className="fabric-panel"><h2>Fabrics <span className="fabric-count">{draft.fabrics.length} fabrics</span></h2>
               <div className="fabric-list">{draft.fabrics.map((f) => <button className="fabric-list-item" type="button" key={f.id} aria-pressed={f.id === fabricId} onClick={() => setFabricId(f.id)}>
-                <Sample url={mediaUrl(f.textureMediaId)} label={`${f.name} texture`} round={false} /><span><strong>{f.name || "New fabric"}</strong><small>{f.colours.length} colours{f.enabled ? "" : " · Disabled"}</small></span><span aria-hidden="true">&rsaquo;</span>
+                <Sample url={mediaUrl(f.textureMediaId)} label={`${f.name} texture`} round={false} empty="No fabric sample" /><span><strong>{f.name || "New fabric"}</strong><small>{f.colours.length} colours{f.enabled ? "" : " · Disabled"}</small></span><span aria-hidden="true">&rsaquo;</span>
               </button>)}</div>
               {!draft.fabrics.length && <p>Add a fabric to get started.</p>}
               {fabric && <details className="fabric-editor" open={fabricEditor}><summary onClick={(e) => { e.preventDefault(); setFabricEditor(!fabricEditor); }}>Edit selected fabric</summary>              <div className="fabric-grid"><label>Fabric name<input aria-label={`Fabric name ${fabric.id}`} style={control} maxLength={140} value={fabric.name} onChange={(e) => updateFabric(fabric.id, { name: e.currentTarget.value })} /></label>
@@ -166,10 +168,10 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
 <button type="button" onClick={() => { if (confirm("Remove this fabric, colours and mappings from Tryora? Shopify images and variants are kept.")) { setDraft((d) => ({ ...d, fabrics: d.fabrics.filter((x) => x.id !== fabric.id), bindings: d.bindings.filter((b) => b.fabricId !== fabric.id) })); setFabricId(draft.fabrics.find((x) => x.id !== fabric.id)?.id ?? ""); } }}>Remove fabric</button></details>}
             </aside>
             <section className="fabric-panel"><div className="fabric-heading"><h2>Colours for {fabric?.name || "selected fabric"} <span className="fabric-count">{fabric?.colours.length ?? 0} colours</span></h2><button className="fabric-primary" type="button" disabled={!fabric} onClick={addColour}>+ Add colour</button></div>
-              <div className="fabric-table-wrap"><table className="fabric-table"><thead><tr><th scope="col">Colour swatch</th><th scope="col">Colour name</th><th scope="col">HEX</th><th scope="col">RGB</th><th scope="col">Colour sample image</th><th scope="col">Actions</th></tr></thead><tbody>{fabric?.colours.map((c) => <tr className="fabric-colour-row" key={c.id}>
+              <div className="fabric-table-wrap"><table className="fabric-table"><thead><tr><th scope="col">Colour swatch</th><th scope="col">Colour name</th><th scope="col">HEX</th><th scope="col">RGB</th><th scope="col">Colour sample</th><th scope="col">Actions</th></tr></thead><tbody>{fabric?.colours.map((c) => <tr className="fabric-colour-row" key={c.id}>
                 <td><Sample url={mediaUrl(c.swatchMediaId)} hex={/^#[0-9a-f]{6}$/i.test(c.hex ?? "") ? c.hex : null} label={`${c.name} colour`} /></td>
                 <td><input aria-label={`Colour name ${c.id}`} style={control} maxLength={140} value={c.name} onChange={(e) => updateFabric(fabric.id, { colours: fabric.colours.map((x) => x.id === c.id ? { ...x, name: e.currentTarget.value } : x) })} /></td><td><input aria-label={`HEX ${c.id}`} style={control} placeholder="#RRGGBB" maxLength={7} value={c.hex ?? ""} onChange={(e) => updateFabric(fabric.id, { colours: fabric.colours.map((x) => x.id === c.id ? { ...x, hex: e.currentTarget.value || null } : x) })} /></td><td><RgbField hex={c.hex} label={`RGB ${c.id}`} invalid={(invalid) => setInvalidRgb((all) => { const next = new Set(all); if (invalid) next.add(c.id); else next.delete(c.id); return next; })} change={(hex) => updateFabric(fabric.id, { colours: fabric.colours.map((x) => x.id === c.id ? { ...x, hex } : x) })} /></td>
-                <td><Sample url={mediaUrl(c.swatchMediaId)} label={`${fabric.name} ${c.name} sample`} round={false} /><button className="fabric-swatch-edit" type="button" onClick={() => setEditColour(editColour === c.id ? "" : c.id)}>{editColour === c.id ? "Close swatch upload" : "Upload / change swatch"}</button><details open={editColour === c.id}><summary onClick={(e) => { e.preventDefault(); setEditColour(editColour === c.id ? "" : c.id); }}>Edit sample image</summary><p>Sample image only; approve a full-product reference in Variant Mapping.</p>              <MediaField label={`Colour swatch ${fabric.name} ${c.name}`} kind="sample" sampleIds={sampleIds} value={c.swatchMediaId} media={media} change={(id) => updateFabric(fabric.id, { colours: fabric.colours.map((x) => x.id === c.id ? { ...x, swatchMediaId: id } : x) })} upload={uploadImage} disabled={disabledUpload} />
+                <td><Sample url={mediaUrl(c.swatchMediaId)} label={`${fabric.name} ${c.name} sample`} round={false} empty="No colour sample" /><button className="fabric-swatch-edit" type="button" onClick={() => setEditColour(editColour === c.id ? "" : c.id)}>{editColour === c.id ? "Close" : c.swatchMediaId ? "Replace colour sample" : "Upload colour sample"}</button><details open={editColour === c.id}><summary onClick={(e) => { e.preventDefault(); setEditColour(editColour === c.id ? "" : c.id); }}>Edit sample image</summary><p>Colour sample only; approve the full furniture reference in Variant Mapping.</p>              <MediaField label={`Colour sample ${fabric.name} ${c.name}`} kind="sample" sampleIds={sampleIds} value={c.swatchMediaId} media={media} change={(id) => updateFabric(fabric.id, { colours: fabric.colours.map((x) => x.id === c.id ? { ...x, swatchMediaId: id } : x) })} upload={uploadImage} disabled={disabledUpload} />
 </details></td><td>              <label className="fabric-check"><input type="checkbox" checked={c.enabled} onChange={(e) => updateFabric(fabric.id, { colours: fabric.colours.map((x) => x.id === c.id ? { ...x, enabled: e.currentTarget.checked } : x) })} />Colour enabled</label>
 <button type="button" onClick={() => { if (confirm("Remove this colour and its Tryora mappings? Shopify images and variants are kept.")) { updateFabric(fabric.id, { colours: fabric.colours.filter((x) => x.id !== c.id) }); setDraft((d) => ({ ...d, bindings: d.bindings.filter((b) => b.colourId !== c.id) })); } }}>Remove colour</button></td></tr>)}</tbody></table></div>
               {!fabric?.colours.length && <p>{fabric ? "Add colours for this fabric." : "Select or add a fabric to manage colours."}</p>}
@@ -181,7 +183,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
               <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}
             </select></label>)}</div></details>
             {fabricBindings.length > 6 && <div className="fabric-actions"><p>Showing {currentBindingPage * 6 + 1}-{Math.min((currentBindingPage + 1) * 6, fabricBindings.length)} of {fabricBindings.length} product mappings.</p><button type="button" disabled={currentBindingPage === 0} onClick={() => setBindingPage(currentBindingPage - 1)}>Previous bindings</button><button type="button" disabled={(currentBindingPage + 1) * 6 >= fabricBindings.length} onClick={() => setBindingPage(currentBindingPage + 1)}>Next bindings</button></div>}
-            <div className="fabric-table-wrap"><table className="fabric-table"><thead><tr><th scope="col">Fabric</th><th scope="col">Colour</th><th scope="col">Shopify Variant</th><th scope="col">Reference Image</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>{fabricBindings.slice(currentBindingPage * 6, (currentBindingPage + 1) * 6).map((b) => { const f = draft.fabrics.find((x) => x.id === b.fabricId)!, c = f.colours.find((x) => x.id === b.colourId)!;
+            <div className="fabric-table-wrap"><table className="fabric-table"><thead><tr><th scope="col">Fabric</th><th scope="col">Colour</th><th scope="col">Shopify Variant</th><th scope="col">Full furniture reference</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead><tbody>{fabricBindings.slice(currentBindingPage * 6, (currentBindingPage + 1) * 6).map((b) => { const f = draft.fabrics.find((x) => x.id === b.fabricId)!, c = f.colours.find((x) => x.id === b.colourId)!;
               const live = p.variants.find((v) => v.id === b.variantId);
               const exact = live && live.selectedOptions.length === Object.keys(b.nativeOptions).length && live.selectedOptions.every((o) => b.nativeOptions[o.name] === o.value);
               const mapped = draft.bindings.filter((other) => other.variantId && other.variantId === b.variantId).length === 1 && !p.warning && f.enabled && c.enabled && b.reviewed && live?.availableForSale && exact && b.referenceMediaIds.length > 0 && b.referenceMediaIds.every((id) => media.some((m) => m.id === id) && !draft.fabrics.some((f) => f.textureMediaId === id || f.colours.some((c) => c.swatchMediaId === id))) && !Object.keys(b.externalValues).length;
@@ -192,7 +194,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
                   {p.variants.map((v) => <option key={v.id} value={v.id}>{v.selectedOptions.map((o) => `${o.name}: ${o.value}`).join(" / ")} - {v.id.split("/").pop()}{v.availableForSale ? "" : " (unavailable)"}</option>)}
                 </select></label>
                 <p className="fabric-muted">Every complete native option is preserved. Swatch names do not create purchasable variants.</p>
-                </td><td><Sample url={mediaUrl(b.referenceMediaIds[0] ?? null)} label="Full-product reference" round={false} /><details><summary>Edit reference image</summary><MediaField label={`Full-product reference ${f.name} ${c.name} ${b.id}`} kind="reference" sampleIds={sampleIds} value={b.referenceMediaIds[0] ?? null} media={media} change={(id) => updateBinding(b.id, { referenceMediaIds: id ? [id] : [] })} upload={uploadImage} disabled={disabledUpload} />
+                </td><td><Sample url={mediaUrl(b.referenceMediaIds[0] ?? null)} label="Full furniture reference" round={false} empty="No reference" /><details><summary>Edit reference image</summary><MediaField label={`Full furniture reference ${f.name} ${c.name} ${b.id}`} kind="reference" sampleIds={sampleIds} value={b.referenceMediaIds[0] ?? null} media={media} change={(id) => updateBinding(b.id, { referenceMediaIds: id ? [id] : [] })} upload={uploadImage} disabled={disabledUpload} />
                 </details></td><td><s-badge tone={mapped ? "success" : "warning"}>{mapped ? "Mapped" : "Needs mapping"}</s-badge></td><td><details><summary>Review mapping</summary><label className="fabric-check"><input type="checkbox" checked={b.reviewed} onChange={(e) => updateBinding(b.id, { reviewed: e.currentTarget.checked })} />I reviewed the full product appearance and exact size, headboard, storage and other configuration.</label>
                 {draft.roles.composite && <KeyValues label="Reviewed preserved configuration" values={b.preserved} change={(values) => updateBinding(b.id, { preserved: values })} />}
                 {(!b.variantId || Object.keys(b.externalValues).length > 0) && <KeyValues label="External option values (saved only; not preview authorization)" values={b.externalValues} change={(values) => updateBinding(b.id, { externalValues: values })} />}

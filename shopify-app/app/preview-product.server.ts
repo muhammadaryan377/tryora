@@ -4,6 +4,7 @@ import { defaultNoun } from "./products.server";
 import { matchesOptions, nativeSelections, type NativeSelection } from "./core/customization";
 import { choicesFor, eligibleVariants } from "./native-selection.server";
 import { PreviewIneligible, type PreviewIssue } from "./customization/preview-issues";
+import { isSampleMedia } from "./customization/media-roles";
 
 export type AdminGraphql = { graphql: (q: string, o?: { variables?: Record<string, unknown> }) => Promise<Response> };
 export const PREVIEW_PRODUCT_QUERY = `#graphql
@@ -92,7 +93,10 @@ export async function resolvePreviewProduct(admin: AdminGraphql, config: Product
     if (!after || ids.every((id) => media.some((m) => m.id === id))) break;
   }
   if (ids.some((id) => !media.some((m: any) => m?.id === id && m.image?.url))) throw new PreviewIneligible("NOT_FOUND", "reference_media_missing");
-  const urls = [...new Set<string>([variantUrl, ...ids.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
+  // A fabric or colour sample is never a furniture reference, even when it was approved as one.
+  const references = ids.filter((id) => !isSampleMedia(media.find((m) => m.id === id)));
+  if (!variantUrl && !references.length) throw new PreviewIneligible("NOT_FOUND", "missing_reference");
+  const urls = [...new Set<string>([variantUrl, ...references.map((id) => media.find((m) => m.id === id).image.url)].filter(Boolean))].slice(0, 4);
   return {
     urls, optionValue, variantId: selected.id as string,
     selectedOptions: Object.fromEntries(selected.selectedOptions.map((o: { name: string; value: string }) => [o.name, o.value])) as Record<string, string>,

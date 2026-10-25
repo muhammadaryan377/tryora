@@ -32,7 +32,7 @@ async function savePage(page: any) {
 }
 async function screenshot(page: any, name: string) { if (!SHOTS) return; mkdirSync(SHOTS, { recursive: true }); await page.screenshot({ path: join(SHOTS, `${name}.png`), fullPage: true }); }
 function fixture() {
-  const f = providerFixture(); state.media = [...f.media, ...[202, 203].map((id) => ({ id: `gid://shopify/MediaImage/${id}`, image: { url: `https://cdn.shopify.com/${id}.jpg` } }))];
+  const f = providerFixture(); state.media = [...f.media, ...[202, 203].map((id) => ({ id: `gid://shopify/MediaImage/${id}`, alt: `Tryora fabric sample fixture-${id}`, image: { url: `https://cdn.shopify.com/${id}.jpg` } }))];
   const draft = draftFromMapping(f.mapping, shopId, productId);
   draft.fabrics[0]!.textureMediaId = "gid://shopify/MediaImage/202";
   draft.fabrics.push({ id: "boucle", name: "Teddy Boucle", enabled: true, description: "Actual merchant texture", textureMediaId: "gid://shopify/MediaImage/203",

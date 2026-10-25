@@ -6,6 +6,7 @@ import { nativeSnapshot } from "./reference-resolver.server";
 import { canonicalOptions, optionsOf, parseManualMapping, safeShopifyMediaUrl, validateNativeBindings, type ManualMapping } from "./option-model";
 import { emptyFabricDraft, isFabricDocument, parseFabricDocument, parseFabricDraft, type FabricDocument, type FabricDraft, type ManagedFabric } from "./fabric-manager";
 import { providerSettingsEnabled } from "./provider-config.server";
+import { isSampleMedia } from "./media-roles";
 
 export const FABRIC_PRODUCTS_QUERY = `#graphql
 query TryoraFabricProducts($after: String) {
@@ -43,12 +44,16 @@ export function compileFabricDocument(raw: unknown, shopId: string, productId: s
   const draft = parseFabricDraft(raw);
   const media = new Map(snapshot.media.map((m) => [m.id, m]));
   const samples = new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]).filter((id): id is string => !!id));
-  for (const mid of samples) if (!media.get(mid)?.image?.url || !safeShopifyMediaUrl(media.get(mid)!.image!.url)) throw new FabricConfigError("A fabric/swatches image is stale or does not belong to this product. Select it again.");
+  for (const mid of samples) {
+    if (!media.get(mid)?.image?.url || !safeShopifyMediaUrl(media.get(mid)!.image!.url)) throw new FabricConfigError("A fabric/swatches image is stale or does not belong to this product. Select it again.");
+    if (!isSampleMedia(media.get(mid))) throw new FabricConfigError("A selected fabric texture or colour sample is a product photo, not a fabric or colour sample. Upload the real sample image instead.");
+  }
   const entries: ManualMapping["entries"] = [], diagnostics: Record<string, string> = {};
   for (const b of draft.bindings) {
     for (const mid of b.referenceMediaIds) {
       if (!media.get(mid)?.image?.url || !safeShopifyMediaUrl(media.get(mid)!.image!.url)) throw new FabricConfigError("A product reference is stale or belongs to another product. Select it again.");
       if (samples.has(mid)) throw new FabricConfigError("Texture and swatch samples cannot also approve a full-product reference.");
+      if (isSampleMedia(media.get(mid))) throw new FabricConfigError("An uploaded fabric or colour sample cannot be a full furniture reference. Choose a complete product photo.");
     }
     const f = draft.fabrics.find((f) => f.id === b.fabricId)!, c = f.colours.find((c) => c.id === b.colourId)!;
     if (!f.enabled || !c.enabled) { diagnostics[b.id] = "Disabled"; continue; }

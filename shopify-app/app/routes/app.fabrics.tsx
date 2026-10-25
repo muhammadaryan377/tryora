@@ -9,6 +9,7 @@ import { effectiveSetting, providerSettingsEnabled, providerAccess, STORE_DEFAUL
 import { nativeSnapshot } from "../customization/reference-resolver.server";
 import { nativeSelections } from "../core/customization";
 import { discoverNativeOptions } from "../core/native-option-discovery";
+import { isSampleMedia } from "../customization/media-roles";
 
 function productScope(request: Request) {
   const raw = new URL(request.url).searchParams.get("product");
@@ -47,13 +48,24 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   let draft = emptyFabricDraft(), diagnostics: Record<string, string> = {}, warning = "";
   try { draft = draftFromMapping(own?.mapping ?? effective.mapping, session.shop, productId); }
   catch { importBlocked = true; warning = "Existing integration cannot be imported safely. Its settings are preserved. Review existing integration settings before editing this profile."; }
+  // Older mappings could bind a product photo as a texture or colour sample. Never show or re-save it as a sample.
+  const notSamples: string[] = [];
+  const keepSample = (id: string | null, label: string) => {
+    if (!id || isSampleMedia(snapshot.media.find((m) => m.id === id))) return id;
+    notSamples.push(label); return null;
+  };
+  for (const f of draft.fabrics) {
+    f.textureMediaId = keepSample(f.textureMediaId, `${f.name} texture`);
+    for (const c of f.colours) c.swatchMediaId = keepSample(c.swatchMediaId, `${f.name} / ${c.name}`);
+  }
+  const sampleNotice = notSamples.length ? `These samples pointed to product photos, not fabric or colour samples, and were removed: ${notSamples.slice(0, 8).join(", ")}${notSamples.length > 8 ? ` and ${notSamples.length - 8} more` : ""}. Upload the real sample images, then save.` : "";
   if (!importBlocked) try { diagnostics = compileFabricDocument(draft, session.shop, productId, snapshot).diagnostics; }
   catch { warning = "Saved mapping or product media needs review. Existing settings were preserved. Re-select stale variants/references, or inspect existing integration settings."; }
   const model = nativeSelections(snapshot.product.options ?? [], config ? config.visualOptionName : discoverNativeOptions(snapshot.product.options ?? []).recommendedName, snapshot.variants);
   return { products, installationReady, manualSetupReason, selected: {
     productId, title: String(snapshot.product.title), image: snapshot.media[0]?.image?.url ?? null,
     mode: effective.providerId === "shopify_native" ? "native" as const : "manual" as const,
-    providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, importBlocked,
+    providerId: effective.providerId, revision: own?.revision ?? "", draft, diagnostics, warning, sampleNotice, importBlocked,
     explicitlyOff: !!config && !config.autoConfigured && !config.enabled,
     options: snapshot.product.options as { name: string; optionValues: { name: string; swatch?: { color?: string; image?: { image?: { url: string } } } }[] }[],
     variants: snapshot.variants, media: snapshot.media.flatMap((m) => m.image?.url ? [{ id: m.id, url: m.image.url, alt: m.alt ?? null }] : []),

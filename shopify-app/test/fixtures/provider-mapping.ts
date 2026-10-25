@@ -18,7 +18,8 @@ export function providerFixture() {
     ] };
   const variants = mapping.entries.map((e) => ({ id: e.variantId, availableForSale: true,
     selectedOptions: Object.entries(e.nativeOptions).map(([name, value]) => ({ name, value })), image: { url: "https://cdn.shopify.com/native.jpg" } }));
-  const media = [101, 102, 103, 104, 201].map((n) => ({ id: `gid://shopify/MediaImage/${n}`, image: { url: `https://cdn.shopify.com/${n}.jpg` } }));
+  // 101-104 are full furniture photos; 201 is a colour sample uploaded through Tryora (its alt marker proves the role).
+  const media = [101, 102, 103, 104, 201].map((n) => ({ id: `gid://shopify/MediaImage/${n}`, ...(n >= 200 ? { alt: `Tryora fabric sample fixture-${n}` } : {}), image: { url: `https://cdn.shopify.com/${n}.jpg` } }));
   const options = Object.keys(mapping.entries[0]!.nativeOptions).map((name) => ({ name,
     optionValues: [...new Set(mapping.entries.map((e) => e.nativeOptions[name]!))].map((name) => ({ name })) }));
   const graphql = vi.fn(async (query: string) => Response.json({ data: { product: query.includes("TryoraPreviewMedia")
