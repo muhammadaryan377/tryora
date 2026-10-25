@@ -84,13 +84,29 @@ export async function uploadFabricMedia(admin: AdminGraphql, productId: string, 
   if (!uploaded.ok) { logUploadFailure("transfer", null, { status: uploaded.status, host: new URL(destination).hostname }); throw new FabricConfigError(`Shopify's upload storage refused the image (HTTP ${uploaded.status}). Try again; no fabric configuration was changed.`); }
   const attached = (await result(admin, ATTACH_FABRIC_IMAGE, { product: { id: productId }, media: [{ mediaContentType: "IMAGE", originalSource: resourceUrl, alt: marker }] }, "attach", "attach the image to this product")).productUpdate;
   if (attached?.userErrors?.length || attached?.product?.id !== productId) throw refused("attach", "attach the image to this product", attached?.userErrors ?? []);
-  for (let attempt = 0; attempt < 4; attempt++) {
-    const data = await result(admin, FABRIC_UPLOAD_STATUS, { id: productId }, "status", "confirm the uploaded image");
-    if (data.product?.id !== productId) throw new FabricConfigError("Product ownership could not be verified.");
-    const image = data.product.media.nodes.find((m: any) => m.alt === marker && m.image?.url && safeShopifyMediaUrl(m.image.url));
-    // The marker travels with the new image so the manager keeps samples and full-product photos in separate pickers.
-    if (image) return { media: { id: String(image.id), url: String(image.image.url), alt: marker }, pending: false };
-    if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 1000));
+  // The image is now attached; Shopify processes it in the background. Wait a little, never failing the upload on a
+  // slow or briefly failing status check: the browser keeps checking the marker until the image is ready.
+  for (const delay of UPLOAD_STATUS_DELAYS_MS) {
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    const media = await findUploadedMedia(admin, productId, marker).catch((error) => { if (error instanceof FabricConfigError) throw error; logUploadFailure("status", error); return null; });
+    if (media) return { media, pending: false };
   }
-  return { media: null, pending: true };
+  return { media: null, pending: true, marker };
+}
+
+/** Waits between status checks after attaching (about 12 seconds in total). Tests may shorten it. */
+export const UPLOAD_STATUS_DELAYS_MS = [500, 1000, 1500, 2000, 3000, 4000];
+export const UPLOAD_MARKER = /^Tryora (fabric sample|furniture reference) [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** The processed image carrying this upload's marker, or null while Shopify is still processing it. */
+export async function findUploadedMedia(admin: AdminGraphql, productId: string, marker: string) {
+  // Any Shopify error here only means "not confirmed yet" (thrown as a plain error); callers check again.
+  const response = await admin.graphql(FABRIC_UPLOAD_STATUS, { variables: { id: productId } });
+  const json: any = await response.json();
+  if (!response.ok || json?.errors?.length || !json?.data) throw Object.assign(new Error("Upload status unavailable"), { body: json });
+  const data = json.data;
+  if (data.product?.id !== productId) throw new FabricConfigError("Product ownership could not be verified.");
+  const image = data.product.media.nodes.find((m: any) => m?.alt === marker && m.image?.url && safeShopifyMediaUrl(m.image.url));
+  // The marker travels with the new image so the manager keeps samples and full-product photos in separate pickers.
+  return image ? { id: String(image.id), url: String(image.image.url), alt: marker } : null;
 }
