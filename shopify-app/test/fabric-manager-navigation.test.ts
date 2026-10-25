@@ -20,7 +20,7 @@ const selected: FabricManagerData["selected"] = {
 
 const roots: Root[] = [];
 const hosts: HTMLDivElement[] = [];
-async function mount(data: FabricManagerData, selectProduct: (id: string) => void) {
+async function mount(data: FabricManagerData, selectProduct: (id: string) => void, save: (mode: "native" | "manual", draft: any) => void = () => {}) {
   const host = document.createElement("div");
   document.body.append(host);
   hosts.push(host);
@@ -28,7 +28,7 @@ async function mount(data: FabricManagerData, selectProduct: (id: string) => voi
   roots.push(root);
   await act(async () => {
     root.render(React.createElement(FabricColourManager, {
-      data, selectProduct, save: () => {}, upload: async () => null,
+      data, selectProduct, save, upload: async () => null,
     }));
   });
   return host;
@@ -48,6 +48,40 @@ afterEach(async () => {
 });
 
 describe("embedded Fabrics & Colours product navigation", () => {
+  it("opens the screenshot's Manual Setup editor for a selected product without saving anything", async () => {
+    const save = vi.fn(), navigate = vi.fn();
+    const host = await mount({ ...base, startInManualMode: true, selected }, navigate, save);
+    const mode = host.querySelector<HTMLSelectElement>('select[aria-label="Configuration mode"]');
+    expect(mode?.value).toBe("manual");
+    expect(host.textContent).toContain("Aspen Bed");
+    expect(host.textContent).toContain("Untitled fabric");
+    expect(host.textContent).toContain("0 colours");
+    expect(host.textContent).toContain("Name every fabric and colour before saving.");
+    expect(host.textContent).toContain("Unsaved changes");
+    expect(save).not.toHaveBeenCalled();
+    expect(host.querySelector<HTMLButtonElement>(".fm-save button")?.disabled).toBe(true);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("keeps saved merchant fabrics rather than replacing them with an untitled draft", async () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "saved_velvet", name: "Plush Velvet", description: "", enabled: true, textureMediaId: null,
+      colours: [{ id: "cream", name: "Cream", enabled: true, hex: "#e7decf", swatchMediaId: null }] });
+    const host = await mount({ ...base, startInManualMode: true, selected: { ...selected!, mode: "manual", draft } }, vi.fn());
+    expect(host.textContent).toContain("Plush Velvet");
+    expect(host.textContent).toContain("Cream");
+    expect(host.textContent).not.toContain("Untitled fabric");
+    expect(host.textContent).toContain("No unsaved changes");
+  });
+
+  it("does not bypass the server's manual-setup rollout gate", async () => {
+    const host = await mount({ ...base, installationReady: false, startInManualMode: true, selected }, vi.fn());
+    const mode = host.querySelector<HTMLSelectElement>('select[aria-label="Configuration mode"]');
+    expect(mode?.value).toBe("native");
+    expect(host.textContent).not.toContain("Untitled fabric");
+    expect(host.textContent).toContain("Manual setup is not enabled");
+  });
+
   it("delegates product selection to the authenticated client router", async () => {
     const navigate = vi.fn();
     const host = await mount(base, navigate);
