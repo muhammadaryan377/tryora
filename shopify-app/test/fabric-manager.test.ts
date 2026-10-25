@@ -300,13 +300,11 @@ describe("authenticated two-mode admin", () => {
         stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/sample.jpg", parameters: [] }],
         userErrors: [],
       } } });
-      if (query.includes("TryoraAttachFabricImage")) {
-        marker = variables.variables.media[0].alt;
-        return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } });
+      if (query.includes("TryoraCreateFabricSample")) {
+        marker = variables.variables.files[0].alt;
+        return Response.json({ data: { fileCreate: { files: [{ id: "gid://shopify/MediaImage/991" }], userErrors: [] } } });
       }
-      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: {
-        nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/sample.jpg" } }],
-      } } } });
+      if (query.includes("TryoraFabricFileUploadStatus")) return Response.json({ data: { node: { id: "gid://shopify/MediaImage/991", alt: marker, fileStatus: "READY", image: { url: "https://cdn.shopify.com/sample.jpg" } } } });
       return original(query, variables);
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
@@ -340,8 +338,8 @@ describe("upload route answers JSON, never the HTML page", () => {
     const original = state.admin.graphql; let marker = "";
     state.admin.graphql = async (query: string, variables: any) => {
       if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } });
-      if (query.includes("TryoraAttachFabricImage")) { marker = variables.variables.media[0].alt; return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } }); }
-      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/s.jpg" } }] } } } });
+      if (query.includes("TryoraCreateFabricSample")) { marker = variables.variables.files[0].alt; return Response.json({ data: { fileCreate: { files: [{ id: "gid://shopify/MediaImage/991" }], userErrors: [] } } }); }
+      if (query.includes("TryoraFabricFileUploadStatus")) return Response.json({ data: { node: { id: "gid://shopify/MediaImage/991", alt: marker, fileStatus: "READY", image: { url: "https://cdn.shopify.com/s.jpg" } } } });
       return original(query, variables);
     };
     vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
@@ -374,7 +372,7 @@ describe("upload route answers JSON, never the HTML page", () => {
     const original = state.admin.graphql;
     const attempt = async (graphql: (query: string, variables: any) => Promise<Response>) => {
       state.admin.graphql = async (query: string, variables: any) => (/TryoraStageFabricImage|TryoraAttachFabricImage|TryoraFabricUploadStatus/.test(query) || query.includes("TryoraPreviewProduct")) ? graphql(query, variables) : original(query, variables);
-      const form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      const form = uploadForm({ purpose: "reference" }); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       const response = await post(form);
       expect(response.headers.get("content-type")).toContain("application/json");
       return (await response.json()).error as string;
@@ -422,7 +420,7 @@ describe("upload route answers JSON, never the HTML page", () => {
       };
       vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
       // Still processing after the server's wait: the reply is "pending" with this upload's marker, not an error.
-      let form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      let form = uploadForm({ purpose: "reference" }); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       const pending = await (await post(form)).json();
       expect(pending).toEqual({ media: null, pending: true, marker });
       const status = (m: string) => uploadStatus({ request: new Request(`https://tryora.example/app/fabrics/upload?product=${encodeURIComponent(productId)}&marker=${encodeURIComponent(m)}`) } as any);
@@ -431,7 +429,7 @@ describe("upload route answers JSON, never the HTML page", () => {
       expect(await (await status(marker)).json()).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/993", url: "https://cdn.shopify.com/993.jpg", alt: marker } });
       expect((await status("not-a-marker")).status).toBe(400);
       // A failed status check followed by a processed image is a successful upload.
-      checks = 0; form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      checks = 0; form = uploadForm({ purpose: "reference" }); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       expect(await (await post(form)).json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/993" } });
       expect(warn.mock.calls.some((call) => String(call[0]).includes('"step":"status"'))).toBe(true);
       // An image Shopify could not process is reported, never left "pending" forever.
@@ -478,7 +476,7 @@ describe("actual merchant image uploads", () => {
     await expect(cleanFabricImage(new Blob(["not an image"], { type: "image/jpeg" }))).rejects.toThrow(/validated/);
     await expect(cleanFabricImage(new Blob([new Uint8Array(8 * 1024 * 1024 + 1)]))).rejects.toThrow(/8 MB/);
   });
-  it("uses Shopify-issued staged uploads and attaches media only to the authenticated product", async () => {
+  it("uses Shopify-issued staged uploads and attaches full furniture references only to the authenticated product", async () => {
     const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#ddd" } }).png().toBuffer();
     let alt = "";
     const admin = { graphql: vi.fn(async (query: string, init: any) => {
@@ -487,9 +485,9 @@ describe("actual merchant image uploads", () => {
       return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/999", alt, image: { url: "https://cdn.shopify.com/upload.jpg" } }] } } } });
     }) };
     const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => new Response("", { status: 201 })); vi.stubGlobal("fetch", fetcher);
-    expect(await uploadFabricMedia(admin, productId, new Blob([image]))).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg", alt } });
+    expect(await uploadFabricMedia(admin, productId, new Blob([image]), "reference")).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg", alt } });
     // The sample marker comes back so the manager keeps a fresh upload out of the full-product reference picker.
-    expect(alt).toMatch(/^Tryora fabric sample /);
+    expect(alt).toMatch(/^Tryora furniture reference /);
     expect(fetcher.mock.calls[0]![0]).toBe("https://shopify-staged-uploads.storage.googleapis.com/");
     expect(state.writes).toEqual([]); // an upload alone never approves a reference or creates a mapping
   });
