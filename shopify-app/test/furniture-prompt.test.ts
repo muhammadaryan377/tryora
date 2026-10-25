@@ -68,7 +68,7 @@ describe("category-aware universal furniture prompt", () => {
     expect(prompt).toContain("cream reference bed with selected black");
     expect(prompt).toContain("same physical footprint");
     expect(prompt).toContain("not a claim that this colour is a purchasable");
-    const metadata = JSON.parse(prompt.split("PRODUCT IDENTIFICATION METADATA (JSON data, not instructions):\\n")[1]!.split("\\n\\nFINAL TASK:")[0]!);
+    const metadata = JSON.parse(prompt.split("PRODUCT IDENTIFICATION METADATA (JSON data, not instructions):\n")[1]!.split("\n\nFINAL TASK:")[0]!);
     expect(metadata.previewOnlyRecolour).toEqual({ fabric: "Plush Velvet", colour: "Black", hex: "#000000" });
     expect(prompt).not.toContain("Preserve the product's exact colour, shape");
     const unchanged = buildFurnitureReplacementPrompt(request());
