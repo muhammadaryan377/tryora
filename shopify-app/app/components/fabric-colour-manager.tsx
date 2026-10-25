@@ -257,7 +257,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
           </label>}
           {p && <div className="fm-save">
             <span className={`fm-pill fm-pill--${dirty || colourDraft ? "attention" : "success"}`} role="status">{colourDraft ? "Editing a colour" : dirty ? "Unsaved changes" : p.saved ? "Saved" : "No unsaved changes"}</span>
-            <button className="fm-btn fm-btn--primary" type="button" disabled={busy || saveBlocked} onClick={() => { saving.current = true; save(mode, draft); }}>{busy ? "Saving…" : "Save changes"}</button>
+            <button className="fm-btn fm-btn--primary" type="button" disabled={busy || saveBlocked} onClick={() => { saving.current = true; save(mode, manual ? { ...draft, presentation: draft.presentation ?? DEFAULT_SWATCH_PRESENTATION } : draft); }}>{busy ? "Saving…" : "Save changes"}</button>
           </div>}
         </div>
         {p && <div className="fm-subhead">
