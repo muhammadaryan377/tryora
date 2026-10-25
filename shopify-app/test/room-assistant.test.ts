@@ -432,7 +432,7 @@ describe("visualisation in the conversation", () => {
     vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
     state.providerRows = [{ shopId: SHOP, productId: aria.id, providerId: "cloudlift", revision: "r1", active: true, mapping: null }];
     const cloudlift = await run(ref(aria.id), ref(variantOf(aria, { Colour: "Cream", Size: "King" }).id));
-    expect(cloudlift.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not verified for an in-chat preview/) });
+    expect(cloudlift.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not verified for this exact product image/) });
   });
 
   it("explains a missing exact reference precisely instead of a generic refusal, and logs the merchant action", async () => {
