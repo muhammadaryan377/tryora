@@ -331,6 +331,51 @@ describe("chat image upload", () => {
     ]);
   });
 
+  it("does not send stale room observations after the shopper uploads a different room", async () => {
+    const assistant = makeAssistant();
+    proxy.script(
+      [{ type: "room", room: { colours: ["grey"], style: "first room", lighting: "dark", notes: "" } }],
+      [{ type: "final", reply: { message: "First room analysed.", recommendations: [] } }, { type: "done" }],
+    );
+    proxy.script([{ type: "final", reply: { message: "Second room received.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await attachFile("first.jpg");
+    await type("Help with the first room");
+    click("[data-ta='send']");
+    await settle(90);
+    expect(assistant.state.room).toMatchObject({ style: "first room" });
+
+    await attachFile("second.jpg");
+    await type("Now help with this different room");
+    click("[data-ta='send']");
+    await settle(90);
+    expect(proxy.forms).toHaveLength(2);
+    expect(proxy.forms[1]!.get("room")).toBeNull();
+    expect(proxy.forms[1]!.get("photo")).toBeInstanceOf(Blob);
+    expect(assistant.state.room).toBeNull();
+  });
+
+  it("does not retry an older failed photo request using a newer room photo", async () => {
+    const assistant = makeAssistant();
+    proxy.script([{ type: "error", code: "PROVIDER_UNAVAILABLE" }]);
+    proxy.script([{ type: "final", reply: { message: "New room noted.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await attachFile("first.jpg");
+    await type("Check the first room");
+    click("[data-ta='send']");
+    await settle(90);
+    const failed = assistant.state.entries.find((entry: any) => entry.kind === "assistant" && entry.status === "error");
+    expect(failed).toBeDefined();
+
+    await attachFile("second.jpg");
+    await type("Check my second room");
+    click("[data-ta='send']");
+    await settle(90);
+    await assistant.retry(failed.id);
+    expect(proxy.forms).toHaveLength(2);
+    expect(document.body.textContent).toContain("The original room photo is no longer available");
+  });
+
   it("renders streamed text progressively before the final answer", async () => {
     const assistant = makeAssistant();
     proxy.script([{ type: "delta", text: "Looking at " }], [{ type: "delta", text: "beds now" }], [{ type: "final", reply: { message: "Looking at beds now.", recommendations: [] } }, { type: "done" }]);
