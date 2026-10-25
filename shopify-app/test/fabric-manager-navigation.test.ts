@@ -90,7 +90,7 @@ describe("embedded Fabrics & Colours product navigation", () => {
     expect(host.textContent).toContain("Aspen Bed");
     expect(host.textContent).toContain("Untitled fabric");
     expect(host.textContent).toContain("0 colours");
-    expect(host.textContent).toContain("Name every fabric and colour before saving.");
+    expect(host.textContent).toContain("Each fabric and colour needs a name plus a HEX colour or sample image before saving.");
     expect(host.textContent).toContain("Unsaved changes");
     expect(save).not.toHaveBeenCalled();
     expect(host.querySelector<HTMLButtonElement>(".fm-save button")?.disabled).toBe(true);
