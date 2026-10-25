@@ -239,7 +239,7 @@ describe("welcome screen", () => {
     click("[data-ta='upload']");
     expect(pick).toHaveBeenCalledTimes(1);
     await attachFile();
-    expect(($("textarea") as HTMLTextAreaElement).value).toBe("Which furniture from this store would suit this room?");
+    expect(($("textarea") as HTMLTextAreaElement).value).toBe("");
     expect($("[data-ta-attachment] img")!.getAttribute("src")).toBe("blob:room.jpg");
   });
 
@@ -253,7 +253,7 @@ describe("welcome screen", () => {
     click("[data-ta='upload']");
     expect(pick).toHaveBeenCalled();
     await attachFile();
-    expect(($("textarea") as HTMLTextAreaElement).value).toBe("Show this product in my room.");
+    expect(($("textarea") as HTMLTextAreaElement).value).toBe("");
     proxy.script([{ type: "final", reply: { message: "Here is the card.", recommendations: [] } }, { type: "done" }]);
     click("[data-ta='send']");
     await settle(60);

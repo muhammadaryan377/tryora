@@ -613,13 +613,9 @@ export class RoomAssistant {
       }
     }
     if (!attached || epoch !== this.photoEpoch) return;
-    const textarea = this.textarea();
-    if (textarea && !textarea.value.trim()) {
-      if (this.pendingIntent === "recommend") textarea.value = "Which furniture from this store would suit this room?";
-      if (this.pendingIntent === "visualise") textarea.value = this.context.productId ? "Show this product in my room." : "Show me how a product would look in this room.";
-      this.autosize();
-    }
-    textarea?.focus();
+    // Keep the composer empty after photo upload; do not overwrite shopper text.
+    // The chosen welcome-card intent is handled only when Send is pressed.
+    this.textarea()?.focus();
     if (this.pendingPreview) {
       const item = this.pendingPreview;
       this.pendingPreview = null;

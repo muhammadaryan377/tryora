@@ -207,6 +207,13 @@ export function historyFor(state: ChatState, upTo?: string): { role: "user" | "a
     else if (entry.kind === "assistant" && entry.status === "done" && entry.text.trim()) {
       messages.push({ role: "assistant", content: entry.text.slice(0, 2000) });
     }
+    else if (entry.kind === "preview" && entry.status === "ready") {
+      // The model must know when a preview was really displayed, not merely suggested.
+      const note = `AI room preview already generated and shown for ${entry.item.title} (productRef ${entry.item.productRef}${entry.item.variantRef ? `, variantRef ${entry.item.variantRef}` : ""}).`;
+      const previous = messages.at(-1);
+      if (previous?.role === "assistant") previous.content = `${previous.content}\n${note}`.slice(-2000);
+      else messages.push({ role: "assistant", content: note });
+    }
   }
   // The server requires alternating context ending with the shopper; drop unanswered earlier questions.
   const cleaned: typeof messages = [];
