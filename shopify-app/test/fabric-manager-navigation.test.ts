@@ -48,6 +48,40 @@ afterEach(async () => {
 });
 
 describe("embedded Fabrics & Colours product navigation", () => {
+  it("shows round/square shape and 25-100px swatch size with a 50px default", async () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: "#dad4c7",
+      colours: [{ id: "cream", name: "Cream", enabled: true, hex: "#f5eee4", swatchMediaId: null }] });
+    const save = vi.fn();
+    const host = await mount({ ...base, startInManualMode: true, selected: { ...selected!, mode: "manual", draft } }, vi.fn(), save);
+    const round = host.querySelector<HTMLButtonElement>('button[aria-label="Circle swatches"]')!;
+    const square = host.querySelector<HTMLButtonElement>('button[aria-label="Square swatches"]')!;
+    const size = host.querySelector<HTMLInputElement>('input[aria-label="Swatch size"]')!;
+    expect(round.getAttribute("aria-pressed")).toBe("true");
+    expect(size.value).toBe("50");
+    expect(size.min).toBe("25"); expect(size.max).toBe("100");
+    await act(async () => { square.click(); });
+    expect(square.getAttribute("aria-pressed")).toBe("true");
+    await act(async () => { size.value = "100"; size.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => { host.querySelector<HTMLButtonElement>(".fm-save button")!.click(); });
+    expect(save).toHaveBeenCalledTimes(1);
+    const sent = save.mock.calls[0]?.[1];
+    expect(sent.presentation?.shape).toBe("square");
+    expect(sent.presentation?.size).toBeGreaterThanOrEqual(25);
+    expect(sent.presentation?.size).toBeLessThanOrEqual(100);
+    expect(sent.fabrics[0]?.hex).toBe("#dad4c7");
+  });
+
+  it("blocks saving a name-only fabric or a colour without HEX/image", async () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: null,
+      colours: [{ id: "cream", name: "Cream", enabled: true, hex: null, swatchMediaId: null }] });
+    const host = await mount({ ...base, startInManualMode: true, selected: { ...selected!, mode: "manual", draft } }, vi.fn());
+    expect(host.querySelector<HTMLButtonElement>(".fm-save button")!.disabled).toBe(true);
+    expect(host.textContent).toContain("Each fabric and colour needs a name plus a HEX colour or sample image");
+  });
+
+
   it("opens the screenshot's Manual Setup editor for a selected product without saving anything", async () => {
     const save = vi.fn(), navigate = vi.fn();
     const host = await mount({ ...base, startInManualMode: true, selected }, navigate, save);
