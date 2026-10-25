@@ -34,6 +34,32 @@ See `docs/release-safety-review.md` for release gates and the migration/rollback
 - New Shopify permissions need the owner's approval.
 - `shopify-app/app/routes/app.dev-seed.tsx` is a temporary test-store-only page: remove before launch.
 
+## Fabrics & Colours — isolated sample images (staging candidate)
+
+Fabric textures and colour swatches are **preview-only** assets and must not enter the
+Shopify product media/gallery. Newly uploaded `purpose=sample` images use staged
+uploads followed by Shopify's `fileCreate` (Shopify Files); only
+`purpose=reference` (full furniture photographs) uses `productUpdate(media:)`.
+
+**Scope prerequisite:** Shopify Files requires `write_files` (or `write_images`)
+for file creation, and `read_files` for file listing (if used). Request the
+merchant/owner's approval before adding new Shopify scopes or deploying an
+updated app version. **Do not silently edit production `shopify.app.toml` or
+fall back to product-media uploads when file creation is denied.**
+Test only with the separate `shopify.app.development.toml`, approved scopes
+and a development store first.
+
+Existing sample media previously uploaded through Tryora is still attached to
+Shopify products and may still appear in store galleries. The new upload path
+does not delete these legacy images or migrate saved IDs automatically. The
+merchant must review/migrate active samples and explicitly approve removal of
+the obsolete product-media copies before cleaning up their galleries. Changing
+an alt tag or hiding a thumbnail using generic theme CSS is not a reliable fix.
+
+The Fabrics & Colours navigation remembers the selected product in a
+shop-scoped browser session and defaults to opening an editor on first visit.
+A deliberate "Browse more products" link keeps product pagination available.
+
 ## OpenAI furniture replacement (local opt-in)
 
 The server-only adapter uses the official `openai` Node SDK and Images Edit API, with
