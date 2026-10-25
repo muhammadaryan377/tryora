@@ -141,6 +141,34 @@ describe("shared storefront and server preview authority", () => {
     context.admin = { graphql: async (q: string) => Response.json({ data: { product: q.includes("TryoraPreviewMedia") ? { id: productId, media: { nodes: f.media, pageInfo: { hasNextPage: false } } } : { id: productId, variants: { nodes: f.variants, pageInfo: { hasNextPage: false } } } } }) };
     await expect(resolveConfiguredPreview(context, JSON.stringify([grey.fabric.id, grey.colour.id]), grey.variantId, "revision-1")).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
+  it("publishes name-only, HEX and image-backed colour choices to the selector without any merchant mapping", async () => {
+    const f = snapshot();
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({
+      id: "velvet", name: "Plush Velvet", description: "", enabled: true,
+      textureMediaId: "gid://shopify/MediaImage/201",
+      colours: [
+        { id: "cream", name: "Cream", enabled: true, swatchMediaId: null, hex: null },
+        { id: "steel", name: "Steel", enabled: true, swatchMediaId: null, hex: "#777777" },
+        { id: "navy", name: "Navy", enabled: true, swatchMediaId: "gid://shopify/MediaImage/201", hex: null },
+      ],
+    });
+    const { document } = compileFabricDocument(draft, shopId, productId, f);
+    expect(document.published).toBeNull();
+    expect(document.draft.bindings).toEqual([]);
+    const data = await manualStorefrontData({
+      ...f.context, setting: { ...f.context.setting, active: false, mapping: document },
+    });
+    expect(data.swatches).toHaveLength(3);
+    expect(data.swatches.map((swatch) => [swatch.label, swatch.image, swatch.colour])).toEqual([
+      ["Cream", null, null],
+      ["Steel", null, "#777777"],
+      ["Navy", "https://cdn.shopify.com/201.jpg", null],
+    ]);
+    expect(data.fabricImages).toEqual({ "Plush Velvet": "https://cdn.shopify.com/201.jpg" });
+    expect(data.swatches.every((swatch) => !swatch.available && swatch.variants.length === 0)).toBe(true);
+  });
+
   it("shows a sample-only draft without authorizing generation", async () => {
     const f = snapshot(); f.draft.bindings = [];
     const { document } = compileFabricDocument(f.draft, shopId, productId, f);
