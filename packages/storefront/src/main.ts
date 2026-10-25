@@ -59,6 +59,8 @@ interface Config {
   singleVariants?: VariantChoice[];
   providerId?: string;
   mappingRevision?: string;
+  /** Merchant fabric/colour entries change the AI visualisation, not Shopify checkout. */
+  previewOnly?: boolean;
   style: { template: string; accent: string | null; useThemeFont: boolean };
   launcher: LauncherSettings;
   lead: { mode: "required" | "skippable" | "off"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
@@ -697,7 +699,9 @@ export class Tryora {
     }
     // Show the photograph of the actual selected colour instead of the generic
     // featured product, which may be in a different colour.
-    const selectedPhoto = this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage;
+    const selectedPhoto = c.previewOnly
+      ? c.productImage ?? this.selectedVariant(s.selectedOption ?? "")?.image
+      : this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage;
     return selectedPhoto
       ? `<img class="tryora__img tryora__img--product" src="${esc(selectedPhoto)}" alt="${esc(c.product)}">`
       : "";
@@ -876,7 +880,9 @@ export class Tryora {
     }
     const selected = this.optionLabel(this.state.selectedOption);
     return '<div class="tryora__sw ' + (!c.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? "") ? 'tryora__sw--fabric' : 'tryora__sw--colour') + '"><p class="tryora__label"><strong>' + esc(c.product) + '</strong>' +
-      (selected ? ' · ' + esc(selected) : '') + '</p>' + this.fabricPicker(locked) +
+      (selected ? ' · ' + esc(selected) : '') + '</p>' +
+      (c.previewOnly ? '<p class="tryora__small" role="note">AI visualisation only. Your fabric and colour selection changes the preview image, not the Shopify product or checkout options.</p>' : '') +
+      this.fabricPicker(locked) +
       '<p class="tryora__label">Choose ' + esc(c.selectorLabel ?? c.optionName ?? 'option') + '</p>' +
       '<div class="tryora__swrow ' + (mobile ? 'tryora__swrow--scroll' : '') + '" role="radiogroup" aria-label="' + esc(c.selectorLabel ?? c.optionName ?? 'Options') + '">' +
       shown.map((x) => this.swatch(x, locked)).join("") +
