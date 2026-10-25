@@ -4,7 +4,7 @@ import prisma from "../db.server";
 import type { AdminGraphql } from "../preview-product.server";
 import { nativeSnapshot } from "./reference-resolver.server";
 import { canonicalOptions, optionsOf, parseManualMapping, safeShopifyMediaUrl, validateNativeBindings, type ManualMapping } from "./option-model";
-import { emptyFabricDraft, isFabricDocument, parseFabricDocument, parseFabricDraft, type FabricDocument, type FabricDraft, type ManagedFabric } from "./fabric-manager";
+import { emptyFabricDraft, isFabricDocument, parseFabricDocument, parseFabricDraft, validateFabricAppearance, type FabricDocument, type FabricDraft, type ManagedFabric } from "./fabric-manager";
 import { providerSettingsEnabled } from "./provider-config.server";
 import { isSampleMedia } from "./media-roles";
 import { sampleMediaIds, savedFabricSampleFiles } from "./fabric-sample-files.server";
@@ -82,6 +82,9 @@ export async function saveFabricConfiguration(admin: AdminGraphql, shopId: strin
   const snapshot = await nativeSnapshot(admin, productId);
   if (input.mode === "manual") {
     const draft = parseFabricDraft(input.draft);
+    // Existing mapped products remain compatible. New merchant preview-only
+    // entries must have names and a HEX colour or isolated Shopify Files sample.
+    if (!draft.bindings.length) validateFabricAppearance(draft);
     try {
       snapshot.media.push(...await savedFabricSampleFiles(admin, sampleMediaIds(draft), new Set(snapshot.media.map((m) => m.id))));
     } catch {
