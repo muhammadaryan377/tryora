@@ -422,8 +422,9 @@ describe("recommendation cards and previews", () => {
     const cards = $$(".tryora-assistant__card");
     expect(cards).toHaveLength(3);
     expect(cards[0]!.querySelector("[data-ta='preview']")).not.toBeNull();
-    expect(cards.map(node => node.querySelector(".tryora-assistant__primary")!.textContent)).toEqual(["Upload room photo", "View product", "View product"]);
-    expect(cards.every(node => !node.querySelector(".tryora-assistant__primary[disabled]"))).toBe(true);
+    expect(cards.map(node => node.querySelector(".tryora-assistant__primary")!.textContent)).toEqual(["Preview in my room", "Preview in my room", "Preview in my room"]);
+    expect(cards.map(node => (node.querySelector(".tryora-assistant__primary") as HTMLButtonElement).disabled)).toEqual([false, true, true]);
+    expect(cards.every(node => [...node.querySelectorAll(".tryora-assistant__card-actions > *")].map(b => b.textContent).join("|") === "View details|Preview in my room")).toBe(true);
     expect(cards[2]!.textContent).toContain("sold out");
     expect(cards[1]!.textContent).toMatch(/AI room preview is not configured/);
     expect(cards[1]!.textContent).toMatch(/799\.00.*–.*899\.00/);
@@ -452,6 +453,7 @@ describe("recommendation cards and previews", () => {
     await attachFile();
     await settle(60);
     click(".tryora-assistant__visualise [data-ta='preview']");
+    click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "11", source: "card" });
     const start = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!;
@@ -488,8 +490,9 @@ describe("recommendation cards and previews", () => {
     await attachFile();
     await settle(1500);
     expect(previewStarts()).toHaveLength(0);
-    expect($(".tryora-assistant__card [data-ta='preview']")!.textContent).toBe("Generate preview");
-    click(".tryora-assistant__card [data-ta='preview']"); await settle(1500);
+    expect($(".tryora-assistant__card [data-ta='preview']")!.textContent).toBe("Preview in my room");
+    expect($("[data-ta='confirm-preview']")).not.toBeNull();
+    click("[data-ta='confirm-preview']"); await settle(1500);
     expect(previewStarts()).toHaveLength(1);
     expect(previewStarts()[0]!.body!.get("leadDone")).toBe("1");
   });
@@ -498,6 +501,7 @@ describe("recommendation cards and previews", () => {
     await cardWithPhoto({ lead: { mode: "required", timing: "before", showOptIn: true, optInWording: "Email me offers." } });
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
+    click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(1);
     expect(previewStarts()[0]!.body!.get("channel")).toBe("assistant");
@@ -506,6 +510,7 @@ describe("recommendation cards and previews", () => {
     expect($$(".tryora-assistant__lead")).toHaveLength(0);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
     click(".tryora-assistant__card [data-ta='preview']");
+    click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(2);
     expect($$(".tryora-assistant__lead")).toHaveLength(0);
@@ -516,6 +521,7 @@ describe("recommendation cards and previews", () => {
     await attachFile();
     proxy.previewError = "LEAD_REQUIRED";
     click(".tryora-assistant__card [data-ta='preview']");
+    click("[data-ta='confirm-preview']");
     await settle(80);
     expect(previewStarts()).toHaveLength(1);
     expect($$(".tryora-assistant__lead")).toHaveLength(0);
@@ -527,6 +533,7 @@ describe("recommendation cards and previews", () => {
     await cardWithPhoto({ lead: { mode: "skippable", timing: "after", showOptIn: true, optInWording: "" } });
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
+    click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(1);
     expect($$(".tryora-assistant__lead")).toHaveLength(0);
@@ -538,6 +545,7 @@ describe("recommendation cards and previews", () => {
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
     (document.querySelector(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement | null)?.click();
+    click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(1);
   });
@@ -672,27 +680,19 @@ describe("conversation history", () => {
 });
 
 describe("product images in cards", () => {
-  it("opens options outside the unchanged card and verifies a complete choice before previewing", async () => {
-    const assistant = makeAssistant({ productId: undefined, currentVariantId: () => null });
-    proxy.options = { productRef: "1", productId: "gid://shopify/Product/1", title: "Aria Bed", url: "/products/aria", image: null, imageAlt: null, currencyCode: "GBP", singleVariant: false, preview: { offered: true, reason: null },
-      attributes: [{ name: "Colour", kind: "colour", values: [{ value: "Cream", colour: null, image: null }] }, { name: "Size", kind: "size", values: ["King", "Double"].map(value => ({ value, colour: null, image: null })) }],
-      variants: ["King", "Double"].map((size, i) => ({ ref: String(11+i), id: "gid://shopify/ProductVariant/"+(11+i), values: { Colour: "Cream", Size: size }, options: { Colour: "Cream", Size: size }, price: "999.00", available: true, image: null, previewOption: "Cream" })) };
-    proxy.script([{ type: "recommendations", items: [card({ variantRef: null, variantId: null, previewAvailable: false, previewStatus: "choose_options", optionValue: null, hasOptions: true })] }], [{ type: "done" }]);
-    assistant.open(); await type("Show beds"); click("[data-ta='send']"); await settle(60);
+  it("never asks for fabric, colour or size on a product whose exact preview reference is unknown", async () => {
+    makeAssistant({ productId: undefined, currentVariantId: () => null }).open();
+    proxy.script([{ type: "recommendations", items: [card({ variantRef: null, variantId: null,
+      previewAvailable: false, previewStatus: "choose_options", optionValue: null, hasOptions: true })] }], [{ type: "done" }]);
+    await type("Show beds");
+    click("[data-ta='send']");
+    await settle(60);
+    const item = $(".tryora-assistant__card")!;
+    expect([...item.querySelectorAll(".tryora-assistant__card-actions > *")].map(e => e.textContent)).toEqual(["View details", "Preview in my room"]);
+    expect((item.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
     expect($(".tryora-assistant__options")).toBeNull();
-    const before = $(".tryora-assistant__card")!.outerHTML;
-    click(".tryora-assistant__card [data-ta='preview']"); await settle(60);
-    const after = $(".tryora-assistant__card")!.outerHTML.replace(" is-selected", "").replace('aria-current="true"', 'aria-current="false"').replace("Selected for your room", "Recommended for your room");
-    expect(after).toBe(before);
-    expect($(".tryora-assistant__options")!.closest("article")).toBeNull();
-    click("[data-ta='opt'][data-attr='Colour'][data-value='Cream']");
-    expect(proxy.calls.some(c => c.url.includes("preview-check"))).toBe(false);
-    click("[data-ta='opt'][data-attr='Size'][data-value='King']"); await settle(60);
-    expect(proxy.calls.some(c => c.url.includes("preview-check"))).toBe(true);
+    expect(proxy.calls.some(c => c.url.includes("/assistant/options?"))).toBe(false);
     expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
-    expect(($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).disabled).toBe(false);
-    click(".tryora-assistant__card [data-ta='preview']"); await settle();
-    expect($("[data-ta-file='upload']")).not.toBeNull();
   });
 
   it("shows the supplied store currency on genuine product cards", async () => {
@@ -700,7 +700,7 @@ describe("product images in cards", () => {
     expect($(".tryora-assistant__card")!.textContent).toContain("649");
     expect($(".tryora-assistant__card")!.textContent).toContain("\u20ac");
     expect($(".tryora-assistant__card")!.textContent).not.toContain("\u00a3");
-    expect($(".tryora-assistant__card [data-ta='preview']")!.textContent).toBe("Upload room photo");
+    expect($(".tryora-assistant__card [data-ta='preview']")!.textContent).toBe("Preview in my room");
   });
   it("keeps one short appearance reason and exact product link without displaying internal sizes or badges", async () => {
     const reason = "Cream fabric complements your neutral room. " + "Further description. ".repeat(20);
@@ -814,8 +814,8 @@ describe("product images in cards", () => {
     expect(general!.textContent).toContain("Photo shows the product; your selected option may look different.");
     // Not verifiable for a preview: the action is shown disabled, with the reason.
     const disabled = general!.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions button[aria-describedby]")!;
-    expect(disabled.disabled).toBe(false);
-    expect(disabled.textContent).toBe("View product");
+    expect(disabled.disabled).toBe(true);
+    expect(disabled.textContent).toBe("Preview in my room");
     expect(general!.querySelector(`#${CSS.escape(disabled.getAttribute("aria-describedby")!)}`)!.textContent).toBe("This exact option isn't approved for AI room preview.");
     expect(reference!.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Preview reference");
     expect(reference!.querySelector("[data-ta='preview']")).not.toBeNull();
@@ -833,6 +833,7 @@ describe("product images in cards", () => {
     expect(visual.querySelector("img")!.getAttribute("src")).toBe("https://cdn.shopify.com/approved-reference.jpg");
     expect(visual.querySelector(".tryora-assistant__thumb-note")!.textContent).toBe("Preview reference");
     click(".tryora-assistant__visualise [data-ta='preview']");
+    click("[data-ta='confirm-preview']");
     await settle(1500);
     const start = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!;
     // The server re-resolves the approved reference itself; the browser only names the exact product and variant.
@@ -859,44 +860,30 @@ describe("simple chat cards and safe direct previews", () => {
     expect(element.querySelector(".tryora-assistant__card-choices")).toBeNull();
     expect(element.querySelectorAll("[data-ta='opt'], [data-ta='options'], .tryora-assistant__swatch, .tryora-assistant__tag")).toHaveLength(0);
     expect(element.textContent).not.toMatch(/Select a fabric and colour|Show fabric|Colour:|Fabric:/);
-    expect([...element.querySelectorAll(".tryora-assistant__card-actions > *")].map((node) => node.textContent)).toEqual(["View details", "Upload room photo"]);
+    expect([...element.querySelectorAll(".tryora-assistant__card-actions > *")].map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
     expect(proxy.calls.some((call) => call.url.startsWith("/apps/tryora/assistant/options?"))).toBe(false);
   });
 
-  it("uses a changed product-page variant only after the server validates its exact preview reference", async () => {
-    proxy.check = { variantId: "gid://shopify/ProductVariant/12", previewAvailable: true, previewStatus: "available",
-      previewReason: null, optionValue: "Black", referenceImage: "https://cdn.shopify.com/black.jpg",
-      previewContext: { mappingRevision: "latest", sourceVariantId: "gid://shopify/ProductVariant/12" } };
-    const assistant = await showCards([card({ hasOptions: true, variantCount: 2 })], { currentVariantId: () => "12" });
+  it("previews the exact clicked card rather than silently using a different product-page variant", async () => {
+    const assistant = await showCards([card({ referenceImage: "https://cdn.shopify.com/approved.jpg", hasOptions: true, variantCount: 2 })],
+      { currentVariantId: () => "12" });
     assistant.roomPhoto = photo();
     click(".tryora-assistant__card [data-ta='preview']");
+    expect($("[data-ta='confirm-preview']")).not.toBeNull();
+    expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+    click("[data-ta='confirm-preview']");
     await settle(1500);
-    const check = proxy.calls.find((c) => c.url.includes("/assistant/preview-check?"))!;
-    expect(check.url).toContain("ProductVariant%2F12");
-    const start = proxy.calls.find((c) => c.url === "/apps/tryora/preview")!;
-    expect(start.body!.get("variant")).toBe("gid://shopify/ProductVariant/12");
-    expect(start.body!.get("option")).toBe("Black");
-    expect(start.body!.get("mappingRevision")).toBe("latest");
-    expect(start.body!.get("sourceVariant")).toBe("gid://shopify/ProductVariant/12");
-    expect(start.body!.get("channel")).toBe("assistant");
-    expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "12", source: "card" });
-  });
-
-  it("refuses a changed unapproved product variant without a generation or credit charge", async () => {
-    proxy.check = { variantId: "gid://shopify/ProductVariant/12", previewAvailable: false,
-      previewStatus: "unavailable", optionValue: null, previewReason: "No exact reference." };
-    const assistant = await showCards([card()], { currentVariantId: () => "12" });
-    assistant.roomPhoto = photo();
-    click(".tryora-assistant__card [data-ta='preview']");
-    await settle(80);
-    expect(proxy.calls.some((c) => c.url === "/apps/tryora/preview")).toBe(false);
-    expect(document.body.textContent).toContain("not ready for an AI room preview");
+    const start = proxy.calls.find(c => c.url === "/apps/tryora/preview")!;
+    expect(start.body!.get("variant")).toBe("gid://shopify/ProductVariant/11");
+    expect(start.body!.get("option")).toBe("Cream");
+    expect(proxy.calls.some(c => c.url.includes("/assistant/preview-check?"))).toBe(false);
+    expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "11", source: "card" });
   });
 
   it("keeps preview disabled for unapproved products not selected on the current product page", async () => {
     await showCards([card({ productRef: "7", productId: "gid://shopify/Product/7", variantId: null, variantRef: null,
       previewAvailable: false, optionValue: null, previewStatus: "not_configured", hasOptions: true })]);
-    expect($(".tryora-assistant__card [data-ta='unavailable-product']")!.textContent).toBe("View product");
+    expect(($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
     expect(proxy.calls.some((c) => c.url === "/apps/tryora/preview")).toBe(false);
   });
 
@@ -947,7 +934,7 @@ describe("conversation state: selection, constraints and shown products", () => 
     const cards = $$(".tryora-assistant__card");
     expect(cards.map((element) => element.querySelector(".tryora-assistant__eyebrow")!.textContent)).toEqual(["Recommended for your room \u00b7 Option 1", "Recommended for your room \u00b7 Option 2"]);
     // Two actions only: no separate "Select this look" or appearance link competing with them.
-    expect(cards.map(card => [...card.querySelectorAll("button, a")].map(node => node.textContent).join("|"))).toEqual(["View details|View product", "View details|Upload room photo"]);
+    expect(cards.map(card => [...card.querySelectorAll("button, a")].map(node => node.textContent).join("|"))).toEqual(["View details|Preview in my room", "View details|Preview in my room"]);
     cards[1]!.querySelector<HTMLButtonElement>("[data-ta='preview']")!.click();
     await settle(10);
     const selected = $$(".tryora-assistant__card")[1]!;
@@ -965,7 +952,7 @@ describe("conversation state: selection, constraints and shown products", () => 
     expect(shown[0]!.querySelector(".tryora-assistant__eyebrow")!.textContent).toBe("Selected for your room \u00b7 Option 1");
     expect(shown[0]!.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/cloud.jpg");
     expect(shown[0]!.querySelector("a")!.getAttribute("href")).toBe("/products/cloud-nine?variant=21");
-    expect(shown[0]!.querySelector("[data-ta='unavailable-product']")!.textContent).toBe("View product");
+    expect((shown[0]!.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("persists the budget the server returns and sends it back on later turns, until a new chat", async () => {
@@ -1153,7 +1140,8 @@ describe("managed preview transport", () => {
     const assistant = makeAssistant(); assistant.open();
     proxy.script([{ type: "visualise", item }], [{ type: "final", reply: { message: "Confirm this exact reference.", recommendations: [] } }, { type: "done" }]);
     await type("Show this in my room"); await attachFile(); await settle(60);
-    click(".tryora-assistant__visualise [data-ta='preview']"); await settle(1500);
+    click(".tryora-assistant__visualise [data-ta='preview']");
+    click("[data-ta='confirm-preview']"); await settle(1500);
     const posted = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!.body!;
     expect(posted.get("mappingRevision")).toBe("reviewed-revision");
     expect(posted.get("sourceVariant")).toBe("gid://shopify/ProductVariant/11");
@@ -1249,7 +1237,7 @@ describe("guided preview results", () => {
     URL.createObjectURL = vi.fn().mockReturnValueOnce("blob:cream-result").mockReturnValueOnce("blob:grey-result") as any;
     await assistant.startPreview(card());
     const first = assistant.state.entries.find((entry: any) => entry.kind === "preview");
-    expect($("[data-ta='change-colour']")!.textContent).toBe("Change colour");
+    expect($("[data-ta='change-colour']")).toBeNull();
     expect($("[data-ta='try-product']")!.textContent).toBe("Try another product");
     click("[data-ta='compare'][data-source='original']");
     expect($(".tryora-assistant__preview img")!.getAttribute("src")).toBe("blob:original-room.jpg");
@@ -1287,6 +1275,8 @@ it("keeps a verified conversational colour choice instead of replacing it with t
   proxy.script([{ type: "selected", item: grey, source: "conversation" }, { type: "done" }]);
   await type("Show it in grey"); click("[data-ta='send']"); await settle(60);
   expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
-  click(".tryora-assistant__card [data-ta='preview']"); await settle(1500);
+  click(".tryora-assistant__card [data-ta='preview']");
+  expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+  click("[data-ta='confirm-preview']"); await settle(1500);
   expect(proxy.calls.find(c => c.url === "/apps/tryora/preview")!.body!.get("variant")).toBe("gid://shopify/ProductVariant/12");
 });
