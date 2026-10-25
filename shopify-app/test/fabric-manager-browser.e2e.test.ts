@@ -103,7 +103,8 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect(await page.locator('[aria-label="Configuration mode"]').inputValue()).toBe("native");
       expect(await page.locator('[aria-label="Configuration mode"] option[value=manual]').getAttribute("disabled")).not.toBeNull();
       expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
-      expect(await page.locator('button:has-text("+ Add fabric")').isDisabled()).toBe(true);
+      // Manual controls are not rendered at all while this installation is not authorized.
+      expect(await page.locator('button:has-text("+ Add fabric")').count()).toBe(0);
       expect(await page.locator('.fabric-workspace').count()).toBe(0);
       expect(await page.locator('s-banner[heading="Manual setup is not enabled"]').count()).toBe(1);
       expect(await page.locator('.fabric-manager').textContent()).toContain("Shopify-native previews continue to work");
@@ -112,11 +113,15 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await screenshot(page, `manager-disabled-${condition}`);
     } finally { await context.close(); }
   });
-  it.each([1280, 390])("native/manual modes, colour edits and real image upload/save at %ipx", async (width) => {
+  it.each([1280, 390])("guided fabric, colour, sample and mapping workflow with save and reload at %ipx", async (width) => {
     const context = await browser.newContext({ viewport: { width, height: 1000 } });
     await context.route("https://cdn.shopify.com/**", (r: any) => r.fulfill({ contentType: r.request().url().endsWith("polaris.js") ? "application/javascript" : "image/jpeg", body: r.request().url().endsWith("polaris.js") ? polaris : jpeg }));
     const page = await context.newPage(), errors: string[] = []; page.on("pageerror", (e: Error) => errors.push(e.message));
+    const cards = () => page.locator(".fm-colour-grid .fm-colour strong").allTextContents();
+    const thumb = (name: string) => page.locator(`button[aria-label="Edit colour ${name}"] .fm-thumb img`).getAttribute("src");
+    const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
     try {
+      // Shopify Native mode stays read-only and shows only real Shopify swatches.
       await page.goto(`${origin}/app/fabrics?product=${encodeURIComponent(nativeId)}`);
       await page.locator('[aria-label="Configuration mode"]').waitFor();
       expect(await page.locator('[aria-label="Configuration mode"] option').count()).toBe(2);
@@ -125,76 +130,111 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await page.evaluate(() => customElements.whenDefined("s-page"));
       await screenshot(page, `manager-native-${width}`);
       expect(state.rows).toHaveLength(1); // read-only native view
-      await page.selectOption('[aria-label="Shopify product"]', productId);
 
-      await page.locator('summary:has-text("Edit sample image")').first().waitFor();
-      // Each sample picker lists only fabric/colour samples, never the full-product photos (101-104).
-      const picker = page.locator(".fabric-media-sample").first().locator(".fabric-existing-images .fabric-media-choices img");
-      const sources = await picker.evaluateAll((images: HTMLImageElement[]) => images.map((image) => image.getAttribute("src")));
-      expect(sources.sort()).toEqual([201, 202, 203].map((n) => `https://cdn.shopify.com/${n}.jpg`));
+      // Manual Setup: fabrics on one side, the selected fabric's colours beside them.
+      await page.selectOption('[aria-label="Shopify product"]', productId);
+      await page.locator(".fm-fabric-item").first().waitFor();
+      expect(await page.locator('.fm-fabric-item[aria-pressed=true]').textContent()).toContain("Velvet");
+      expect(await cards()).toEqual(["Cream", "Grey"]);
+      expect(await page.locator(".fm-pill", { hasText: "No unsaved changes" }).count()).toBe(1);
+      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 of 4 mappings ready for AI preview");
       await screenshot(page, `manager-manual-colours-${width}`);
-      expect(await page.locator('.fabric-manager').textContent()).toContain("Velvet");
-      expect(await page.locator('.fabric-list-item[aria-pressed=true]').textContent()).toContain("Velvet");
-      await page.locator('.fabric-list-item', { hasText: 'Teddy Boucle' }).click();
-      expect(await page.locator('input[aria-label^="Colour name"]').count()).toBe(1);
-      expect(await page.locator('input[aria-label^="Colour name"]').inputValue()).toBe("Ascot");
-      await page.locator('.fabric-list-item', { hasText: 'Velvet' }).click();
-      expect(await page.locator('input[aria-label^="Colour name"]').count()).toBe(2);
+      expect(await fits()).toBe(true);
+
+      // The texture picker offers uploaded samples only, never the full furniture photos (101-104).
+      await page.locator('button:has-text("Edit fabric")').click();
+      await page.locator('.fabric-editor .fm-choices summary').click();
+      const sources = await page.locator(".fabric-editor .fm-choice-grid img").evaluateAll((images: HTMLImageElement[]) => images.map((image) => image.getAttribute("src")));
+      expect(sources.sort()).toEqual([201, 202, 203].map((n) => `https://cdn.shopify.com/${n}.jpg`));
+      await screenshot(page, `manager-fabric-editor-${width}`);
+      await page.locator('.fabric-editor button:has-text("Done")').click();
+
+      // Switching fabrics shows only that fabric's colours.
+      await page.locator('.fm-fabric-item', { hasText: 'Teddy Boucle' }).click();
+      expect(await cards()).toEqual(["Ascot"]);
+      await page.locator('.fm-fabric-item', { hasText: 'Velvet' }).click();
+      expect(await cards()).toEqual(["Cream", "Grey"]);
+
+      // Add a colour in its focused editor: HEX picker with derived RGB, and its own uploaded sample.
       await page.locator('button:has-text("+ Add colour")').click();
-      const colour = page.locator('input[aria-label^="Colour name"]').last(); await colour.fill("Ascot");
-      const row = colour.locator('xpath=ancestor::tr[1]');
-      await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
-      expect(await row.locator('input[aria-label^="RGB "]').inputValue()).toBe("170, 187, 204");
-      await row.locator('input[aria-label^="RGB "]').fill("999, 2, 3");
+      const editor = page.locator(".fm-colour-editor");
+      await editor.locator('input[aria-label^="Colour name"]').fill("Ascot");
+      await editor.locator('input[aria-label^="HEX "]').fill("#zz");
+      expect(await editor.locator('[role=alert]').textContent()).toContain("#RRGGBB");
+      expect(await editor.locator('button:has-text("Save colour")').isDisabled()).toBe(true);
       expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
-      expect(await row.locator('[role=alert]').textContent()).toContain("0 to 255");
-      await row.locator('input[aria-label^="RGB "]').fill("12, 34, 56");
-      expect(await page.locator('button:has-text("Save changes")').isEnabled()).toBe(true);
-      expect(await row.locator('input[aria-label^="HEX "]').inputValue()).toBe("#0c2238");
-      await row.locator('input[aria-label^="HEX "]').fill("#aabbcc");
-      await row.locator('input[type=file]').setInputFiles({ name: "actual-swatch.jpg", mimeType: "image/jpeg", buffer: jpeg });
+      await editor.locator('input[aria-label^="HEX "]').fill("#aabbcc");
+      expect(await editor.locator(".fm-rgb").textContent()).toBe("RGB 170, 187, 204");
+      await editor.locator('input[type=file]').setInputFiles({ name: "ascot-velvet.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(1);
-      expect(await row.locator(".fabric-media-sample .fabric-selected-image img").getAttribute("src")).toMatch(/upload-1\.jpg/);
+      expect(await editor.locator(".fm-media .fm-thumb img").getAttribute("src")).toMatch(/upload-1\.jpg/);
+      await screenshot(page, `manager-colour-editor-${width}`);
+      await editor.locator('button:has-text("Save colour")').click();
+      expect(await cards()).toEqual(["Cream", "Grey", "Ascot"]);
+
+      // A different real sample for an existing colour.
+      await page.locator('button[aria-label="Edit colour Grey"]').click();
+      await page.locator('.fm-colour-editor input[type=file]').setInputFiles({ name: "grey-velvet.jpg", mimeType: "image/jpeg", buffer: jpeg });
+      await expect.poll(() => state.uploads).toBe(2);
+      await page.locator('.fm-colour-editor button:has-text("Save colour")').click();
+      expect([await thumb("Cream"), await thumb("Grey"), await thumb("Ascot")]).toEqual(["https://cdn.shopify.com/201.jpg", "https://cdn.shopify.com/upload-2.jpg", "https://cdn.shopify.com/upload-1.jpg"]);
+      expect(await page.locator(".fm-pill", { hasText: "Unsaved changes" }).count()).toBe(1);
       await savePage(page);
 
-      await page.locator('summary:has-text("Edit sample image")').last().click();
-      expect(await page.locator('input[aria-label^="Colour name"]').last().inputValue()).toBe("Ascot");
-      const saved = state.rows[0].mapping.draft.fabrics[0].colours.at(-1);
-      expect(saved).toMatchObject({ name: "Ascot", hex: "#aabbcc", swatchMediaId: "gid://shopify/MediaImage/901" });
+      // Saved and reloaded: every binding keeps its own identity, and exact mappings stay published.
+      const colours = state.rows[0].mapping.draft.fabrics[0].colours;
+      expect(colours.find((c: any) => c.name === "Ascot")).toMatchObject({ hex: "#aabbcc", swatchMediaId: "gid://shopify/MediaImage/901" });
+      expect(colours.find((c: any) => c.name === "Grey")).toMatchObject({ swatchMediaId: "gid://shopify/MediaImage/902" });
       expect(state.rows[0].mapping.published.entries).toHaveLength(4);
-
-      expect(await page.locator('select[aria-label^="Variant "]').count()).toBe(4);
+      expect([await thumb("Cream"), await thumb("Grey"), await thumb("Ascot")]).toEqual(["https://cdn.shopify.com/201.jpg", "https://cdn.shopify.com/upload-2.jpg", "https://cdn.shopify.com/upload-1.jpg"]);
+      expect(await page.locator('.fm-map-row').count()).toBe(4);
+      expect(await page.locator('.fm-map-row .fm-map-status').allTextContents()).toEqual(Array(4).fill("Ready for AI preview"));
+      await page.locator("#fm-mapping").scrollIntoViewIfNeeded();
       await screenshot(page, `manager-mapping-${width}`);
-      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      expect(await fits()).toBe(true);
 
+      // A new fabric is a visible draft until it is named; its texture upload sits in its own editor.
       await page.locator('button:has-text("+ Add fabric")').click();
-      await page.locator('input[aria-label^="Fabric name"]').last().fill("Loft Linen");
+      expect(await page.locator('.fm-fabric-item[aria-pressed=true]').textContent()).toContain("Untitled fabric");
+      expect(await page.locator('.fm-fabric-item[aria-pressed=true] .fm-pill').textContent()).toBe("Draft");
+      expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
+      expect(await page.locator(".fm-save-hint").textContent()).toContain("Name every fabric");
+      await page.locator('.fabric-editor input[aria-label^="Fabric name"]').fill("Loft Linen");
       await page.locator('.fabric-editor textarea').fill("Merchant-provided fabric description");
+      await page.locator('.fabric-editor input[type=file]').setInputFiles({ name: "loft-linen.jpg", mimeType: "image/jpeg", buffer: jpeg });
+      await expect.poll(() => state.uploads).toBe(3);
+      expect(await page.locator(".fm-fabric-item[aria-pressed=true] .fm-thumb img").getAttribute("src")).toMatch(/upload-3\.jpg/);
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(3);
-      expect(state.rows[0].mapping.draft.fabrics.at(-1)).toMatchObject({ name: "Loft Linen", description: "Merchant-provided fabric description", enabled: true });
-      await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
-      if (await page.locator(".fabric-editor").getAttribute("open") === null) await page.locator(".fabric-editor summary").click();
-      const newFabric = page.locator('.fabric-editor');
-      await newFabric.locator('input[type=checkbox]').uncheck();
+      expect(state.rows[0].mapping.draft.fabrics.at(-1)).toMatchObject({ name: "Loft Linen", description: "Merchant-provided fabric description", enabled: true, textureMediaId: "gid://shopify/MediaImage/903" });
+
+      // Disable, then remove, with an inline confirmation instead of a browser dialog.
+      await page.locator('.fm-fabric-item', { hasText: 'Loft Linen' }).click();
+      await page.locator('button:has-text("Edit fabric")').click();
+      await page.locator('.fabric-editor input[type=checkbox]').uncheck();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.at(-1).enabled).toBe(false);
-      page.on("dialog", (d: any) => d.accept());
-      await page.locator('.fabric-list-item', { hasText: 'Loft Linen' }).click();
-      if (await page.locator(".fabric-editor").getAttribute("open") === null) await page.locator(".fabric-editor summary").click();
+      await page.locator('.fm-fabric-item', { hasText: 'Loft Linen' }).click();
+      await page.locator('button:has-text("Edit fabric")').click();
       await page.locator('.fabric-editor button:has-text("Remove fabric")').click();
+      await page.locator('.fabric-editor .fm-confirm button:has-text("Remove")').click();
       await savePage(page);
       await expect.poll(() => state.rows[0].mapping.draft.fabrics.length).toBe(2);
       expect(state.rows[0].mapping.published.entries).toHaveLength(4);
+
+      // An incomplete mapping says exactly what it still needs and never publishes.
+      await page.locator('.fm-fabric-item', { hasText: 'Velvet' }).click();
       await page.locator('button:has-text("+ Add mapping")').click();
-      const incomplete = page.locator('.fabric-mapping tbody tr').last();
-      expect(await incomplete.textContent()).toContain("Needs mapping");
+      const incomplete = page.locator('.fm-map-row').last();
+      expect(await incomplete.locator(".fm-map-status").textContent()).toBe("Colour requires mapping");
       expect(await incomplete.locator('select[aria-label^="Variant "]').inputValue()).toBe("");
+      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 of 5 mappings ready for AI preview");
+      await incomplete.scrollIntoViewIfNeeded();
       await screenshot(page, `manager-incomplete-mapping-${width}`);
       await savePage(page);
       expect(state.rows[0].mapping.draft.bindings.at(-1).variantId).toBeNull();
       expect(state.rows[0].mapping.published.entries).toHaveLength(4);
       expect(errors).toEqual([]);
     } finally { await context.close(); }
-  }, 60_000);
+  }, 90_000);
 });
