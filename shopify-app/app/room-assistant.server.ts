@@ -430,7 +430,7 @@ export const ASSISTANT_TOOLS = [
             type: "object",
             properties: {
               productRef: { type: "string" },
-              variantRef: { type: ["string", "null"], description: "Exact variant matching the request, or null to let the shopper choose options." },
+              variantRef: { type: ["string", "null"], description: "The exact independently verified Shopify variant only, or null if unresolved. Never ask the shopper to select size, fabric or colour." },
               reason: { type: "string", description: "15-30 words, shown inside this product's card: why this particular product suits this shopper's room, using what is visible or stated (style, wall/floor colours, lighting, existing furniture) and this product's verified colour, fabric or style. Different for every card; no sizes, prices, delivery or preview status." },
             },
             required: ["productRef", "variantRef", "reason"],
@@ -1291,8 +1291,8 @@ export function previewReason(status: PreviewStatus, available: boolean, issue?:
   switch (status) {
     case "available": return null;
     case "not_configured": return "AI room preview isn't offered for this product.";
-    case "choose_options": return "Choose a fabric or colour to check AI room preview.";
-    case "product_page": return "This configuration is not verified for an in-chat preview. Choose another verified appearance or product.";
+    case "choose_options": return "An exact approved product appearance could not be verified for room preview."
+    case "product_page": return "AI room preview is not verified for this exact product image. View details for more information."
     case "unavailable": return PREVIEW_ISSUES[available ? issue ?? "not_approved" : "sold_out"].shopper;
   }
 }
