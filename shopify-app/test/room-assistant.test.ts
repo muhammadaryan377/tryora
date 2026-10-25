@@ -215,6 +215,17 @@ describe("input validation", () => {
 });
 
 describe("store-wide grounding", () => {
+  it("blocks recommendations until a new room image has been analysed", async () => {
+    const roomPhoto = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#eee" } }).jpeg().toBuffer();
+    const { client, requests } = scriptedModel([
+      search({ query: "bed" }), observeRoom({ walls: "white", floor: "oak" }),
+      search({ query: "bed" }), finalAnswer("I can compare these with your room."),
+    ]);
+    await ask(fixtureAdmin([aria]), client, "What suits my room?", { roomPhoto });
+    expect(toolOutputs(requests, "call-search_products")[0]).toMatchObject({ error: "room_analysis_required" });
+    expect(requests[1].tool_choice).toEqual({ type: "function", name: "record_room_observations" });
+  });
+
   it("discovers and recommends real products that are not configured for Tryora previews", async () => {
     const admin = fixtureAdmin([aria, aspen, oslo]);
     const gray = variantOf(oslo, { Colour: "Gray" });
@@ -249,9 +260,12 @@ describe("store-wide grounding", () => {
     expect(reply.recommendations).toHaveLength(1);
     expect(reply.recommendations[0]).toMatchObject({ productId: aria.id, variantId: cream.id, optionValue: "Cream", previewAvailable: true, previewStatus: "available", purchaseAvailable: true });
     expect(reply.room).toMatchObject({ colours: ["warm neutral"], style: "modern", walls: "white", placement: ["against the back wall"] });
-    expect(requests[0]).toMatchObject({ store: false, stream: true, tool_choice: "required", parallel_tool_calls: false });
+    expect(requests[0]).toMatchObject({ store: false, stream: true, tool_choice: { type: "function", name: "record_room_observations" }, parallel_tool_calls: false });
     expect(requests[0].input.at(-1).content[1].image_url).toMatch(/^data:image\/jpeg;base64,/);
     expect(requests[1].input.some((item: any) => item.type === "function_call_output")).toBe(true);
+    const cataloguePhotos = requests[2].input.flatMap((item: any) => Array.isArray(item.content) ? item.content : []).filter((part: any) => part.type === "input_image" && part.image_url.startsWith("https:"));
+    expect(cataloguePhotos.length).toBeGreaterThan(0);
+    expect(cataloguePhotos.length).toBeLessThanOrEqual(4);
     expect(requests.every((request) => request.store === false)).toBe(true);
     // Natural, concise replies by default; longer only when details are asked for.
     expect(requests[0].instructions).toContain("Default to 1-2 short, natural sentences.");
@@ -613,7 +627,9 @@ describe("multi-turn conversations", () => {
     });
     const developer = requests[0].input.find((item: any) => item.role === "developer");
     expect(developer.content).toContain("colours white, light oak; style Scandinavian; lighting bright daylight; layout window on the left; notes Small room");
-    expect(JSON.stringify(requests)).not.toContain("input_image");
+    // Follow-ups may compare store product photos, but never re-upload the private room photo.
+    expect(JSON.stringify(requests)).not.toContain("data:image/");
+    expect(requests[0].tool_choice).toBe("required");
     // Without a new photo, the browser keeps its existing room notes.
     expect(reply.room).toBeNull();
   });

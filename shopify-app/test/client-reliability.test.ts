@@ -37,3 +37,10 @@ describe("storefront delivery", () => {
     expect(denied).toHaveBeenCalledOnce();
   });
 });
+
+
+it("does not retry a cancelled preview request", async () => {
+  const send = vi.fn().mockRejectedValue(new DOMException("Aborted", "AbortError"));
+  await expect(createWithRetry(send)).rejects.toMatchObject({ name: "AbortError" });
+  expect(send).toHaveBeenCalledTimes(1);
+});

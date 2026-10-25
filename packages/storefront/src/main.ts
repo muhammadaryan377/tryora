@@ -1074,6 +1074,7 @@ interface ProductPreviewHandle {
   openForAssistant: (handoff: PopupPreviewHandoff) => void;
   launcher: HTMLElement | null;
   itemNoun?: string;
+  productTitle?: string;
 }
 
 /** Product previews: only for products the server reports as enabled and ready. */
@@ -1106,7 +1107,7 @@ async function bootPreview(productId: string | undefined): Promise<ProductPrevie
     }
   });
   if (location.hash === "#tryora") open();
-  return { open, launcher: mountPreviewLauncher(cfg, open), itemNoun: cfg.itemNoun,
+  return { open, launcher: mountPreviewLauncher(cfg, open), itemNoun: cfg.itemNoun, productTitle: cfg.product,
     openForAssistant: (handoff) => {
       assistantPopup ??= new Tryora(cfg);
       assistantPopup.openForAssistant(handoff);
@@ -1138,6 +1139,7 @@ async function bootAssistant(root: HTMLElement, productId: string | undefined, p
       openCurrentPreview: current?.open,
       openAssistantPreview: current?.openForAssistant,
       productNoun: current?.itemNoun,
+      productTitle: current?.productTitle,
       launcher,
       currentVariantId: () => document.querySelector<HTMLInputElement>('form[action*="/cart/add"] [name="id"]')?.value ?? null,
     });

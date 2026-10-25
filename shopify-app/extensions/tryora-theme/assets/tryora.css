@@ -398,7 +398,7 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant-launch {
   --ta-accent: #181818;
   --ta-accent-ink: #ffffff;
-  position: fixed; bottom: 20px; z-index: 2147482000; display: inline-flex; align-items: center; gap: 9px;
+  position: fixed; bottom: calc(20px + var(--ta-avoid, 0px)); z-index: 2147482000; display: inline-flex; align-items: center; gap: 9px;
   min-height: 48px; padding: 7px 18px 7px 7px; border: 0; border-radius: 999px;
   background: var(--ta-accent); color: var(--ta-accent-ink); cursor: pointer;
   font: 600 14.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif; letter-spacing: -.005em;
@@ -418,10 +418,8 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant-launch--bottom-left { left: 20px; }
 @keyframes tryora-assistant-launch-in { from { opacity: 0; transform: translateY(12px) scale(.96); } to { opacity: 1; transform: none; } }
 /* Sits above a floating "See it in your room" button on the same side instead of covering it. */
-.tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(16px + var(--ta-stack, 56px)); }
-/* Shopify Inbox and similar chat bubbles occupy the same corner. */
-.tryora-assistant-launch.tryora-assistant-launch--above-chat { bottom: 96px; }
-.tryora-assistant-launch.tryora-assistant-launch--stacked.tryora-assistant-launch--above-chat { bottom: calc(96px + var(--ta-stack, 56px)); }
+.tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(16px + var(--ta-stack, 56px) + var(--ta-avoid, 0px)); }
+/* Floating widgets are measured dynamically through --ta-avoid. */
 
 @media (max-width: 749px) {
   .tryora-assistant__panel, .tryora-assistant[data-view] .tryora-assistant__panel {
@@ -438,11 +436,10 @@ html.tryora-assistant-locked { overflow: hidden; }
   .tryora-assistant__card .tryora-assistant__thumb { width: 84px; }
   .tryora-assistant__bubble { max-width: 92%; }
   html:has(.tryora-assistant[data-state="open"]) { overflow: hidden; }
-  .tryora-assistant-launch { bottom: calc(14px + env(safe-area-inset-bottom)); min-height: 46px; padding-right: 15px; font-size: 14px; }
+  .tryora-assistant-launch { bottom: calc(14px + env(safe-area-inset-bottom) + var(--ta-avoid, 0px)); min-height: 46px; padding-right: 15px; font-size: 14px; }
   .tryora-assistant-launch--bottom-right { right: 14px; }
   .tryora-assistant-launch--bottom-left { left: 14px; }
-  .tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(14px + env(safe-area-inset-bottom) + var(--ta-stack, 56px)); }
-  .tryora-assistant-launch.tryora-assistant-launch--above-chat { bottom: calc(84px + env(safe-area-inset-bottom)); }
+  .tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(14px + env(safe-area-inset-bottom) + var(--ta-stack, 56px) + var(--ta-avoid, 0px)); }
 }
 @keyframes tryora-assistant-up { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
@@ -616,3 +613,8 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora__swrow--custom.tryora__swrow--scroll{flex-wrap:nowrap}
 .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot[style] > i,
 .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot[style] > img{border-radius:inherit}
+
+/* Guided preview context and comparison controls; recommendation card styling is unchanged. */
+.tryora-assistant__selection { margin: 4px 0; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.tryora-assistant__room-chip > img { flex: 0 0 40px; }
+.tryora-assistant__preview button[aria-pressed="true"] { background: var(--ta-text); color: var(--ta-bg); }
