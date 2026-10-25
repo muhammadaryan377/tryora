@@ -166,17 +166,29 @@ describe("shared storefront and server preview authority", () => {
       ["Navy", "https://cdn.shopify.com/201.jpg", null],
     ]);
     expect(data.fabricImages).toEqual({ "Plush Velvet": "https://cdn.shopify.com/201.jpg" });
-    expect(data.swatches.every((swatch) => !swatch.available && swatch.variants.length === 0)).toBe(true);
+    expect(data.swatches.every((swatch) => swatch.available && swatch.variants.length === f.variants.length)).toBe(true);
+    expect(data.previewOnly).toBe(true);
+    expect(data.swatches[0]!.variants[0]!.id).toBe(f.variants[0]!.id);
   });
 
-  it("shows a sample-only draft without authorizing generation", async () => {
+  it("uses the original real bed photo for preview-only recolours without changing native variants", async () => {
     const f = snapshot(); f.draft.bindings = [];
+    f.draft.fabrics[0]!.colours.push({ id: "black", name: "Black", enabled: true, swatchMediaId: null, hex: "#000000" });
     const { document } = compileFabricDocument(f.draft, shopId, productId, f);
     const context = { ...f.context, setting: { ...f.context.setting, active: false, mapping: document } };
     const data = await manualStorefrontData(context);
-    expect(data.swatches).toHaveLength(2);
-    expect(data.swatches.every((s) => !s.available && !s.variants.length)).toBe(true);
-    await expect(resolveConfiguredPreview(context, "anything", f.variants[0]!.id, "revision-1")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    const black = data.swatches.find((s) => s.label === "Black")!;
+    expect(black.available).toBe(true);
+    expect(black.variants[0]!.id).toBe(f.variants[0]!.id);
+    expect(data.previewOnly).toBe(true);
+    const approved = await resolveConfiguredPreview(context, black.value, f.variants[0]!.id, "revision-1");
+    expect(approved.urls).toEqual(["https://cdn.shopify.com/native.jpg"]);
+    expect(approved.variantId).toBe(f.variants[0]!.id);
+    expect(approved.previewOnlyAppearance).toEqual({ fabric: "Velvet", colour: "Black", hex: "#000000" });
+    const forged = { ...context, sourceVariantId: f.variants[1]!.id };
+    await expect(resolveConfiguredPreview(forged, black.value, f.variants[0]!.id, "revision-1")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(resolveConfiguredPreview(context, '["velvet","invented"]', f.variants[0]!.id, "revision-1")).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    await expect(resolveConfiguredPreview(context, black.value, f.variants[0]!.id, "stale")).rejects.toMatchObject({ code: "BAD_REQUEST" });
   });
 });
 
