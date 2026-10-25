@@ -5,6 +5,7 @@ import { referenceChoices, sampleChoices } from "../customization/media-roles";
 
 type Media = { id: string; url: string; alt?: string | null };
 export interface FabricManagerData {
+  shop?: string;
   installationReady: boolean;
   /** Sidebar entry opens the merchant workspace, without saving a provider change. */
   startInManualMode?: boolean;
@@ -74,7 +75,7 @@ function MediaField({ label, role, value, media, change, upload, disabled, kind,
         </label>
         {selected && <button type="button" className="fm-link" disabled={disabled || busy} onClick={() => { change(null); setDone(false); }}>Remove</button>}
       </div>
-      <p className="fm-muted">{kind === "sample" ? "Close-up photo of the real material. JPG, PNG or WebP, up to 8 MB." : "A complete photo of this exact configuration, used for AI previews."}</p>
+      <p className="fm-muted">{kind === "sample" ? "Optional close-up photo of the real material. JPG, PNG or WebP, up to 8 MB." : "A complete photo of this exact configuration, used for AI previews."}</p>
       {choices.length > 0 && <details className="fm-choices fabric-existing-images">
         <summary>{kind === "sample" ? "Choose an uploaded sample" : "Choose a product photo"} ({choices.length})</summary>
         <div className="fm-choice-grid fabric-media-choices">{choices.slice(0, 48).map((m) =>
@@ -106,7 +107,10 @@ function workspaceMode(data: FabricManagerData): "native" | "manual" {
 
 /** A client-only draft shown for a new product. No Shopify configuration is written until Save. */
 function workspaceDraft(data: FabricManagerData): FabricDraft {
-  const draft = data.selected?.draft ?? emptyFabricDraft();
+  const savedDraft = data.selected?.draft ?? emptyFabricDraft();
+  // Convert the retired rectangle choice in the editable draft; persist only on Save.
+  const draft = savedDraft.swatchAppearance?.shape === "rectangle" && data.installationReady && !data.selected?.importBlocked
+    ? { ...savedDraft, presentation: { shape: "square" as const, size: savedDraft.swatchAppearance.size }, swatchAppearance: undefined } : savedDraft;
   if (!data.startInManualMode || !data.installationReady || data.selected?.importBlocked ||
       !data.selected || draft.fabrics.length) return draft;
   const productNumber = data.selected.productId.split("/").pop() ?? "first";
@@ -162,13 +166,12 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   const fabric = draft.fabrics.find((f) => f.id === fabricId);
   const swatchShape = draft.swatchAppearance?.shape === "rectangle" ? "rectangle" : draft.presentation?.shape ?? DEFAULT_SWATCH_PRESENTATION.shape;
   const swatchSize = draft.swatchAppearance?.size ?? draft.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
-  const sampleReady = (name: string, hex: string | null | undefined, image: string | null | undefined) =>
-    !!name.trim() && (!!image || !!hex && HEX.test(hex));
-  const updateSwatchPresentation = (patch: Partial<{ shape: "round" | "square" | "rectangle"; size: number }>) =>
+  const entryReady = (name: string, hex: string | null | undefined) =>
+    !!name.trim() && (hex == null || HEX.test(hex));
+  const updateSwatchPresentation = (patch: Partial<{ shape: "round" | "square"; size: number }>) =>
     setDraft((value) => {
       const shape = patch.shape ?? (value.swatchAppearance?.shape === "rectangle" ? "rectangle" : value.presentation?.shape ?? "round");
       const size = patch.size ?? value.swatchAppearance?.size ?? value.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
-      if (shape === "rectangle") return { ...value, presentation: undefined, swatchAppearance: { shape: "rectangle" as const, size } };
       if (shape === "square") return { ...value, presentation: { shape: "square" as const, size }, swatchAppearance: undefined };
       return { ...value, presentation: { shape: "round" as const, size }, swatchAppearance: { shape: "circle" as const, size } };
     });
@@ -196,7 +199,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     requestAnimationFrame(() => { const panel = document.getElementById("fm-mapping") as HTMLDetailsElement | null; if (panel) { panel.open = true; panel.scrollIntoView({ block: "start" }); } });
   };
   const saveColour = () => {
-    if (!fabric || !colourDraft || !sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)) return;
+    if (!fabric || !colourDraft || !entryReady(colourDraft.name, colourDraft.hex)) return;
     const { isNew, ...colour } = colourDraft;
     updateFabric(fabric.id, { colours: isNew ? [...fabric.colours, colour] : fabric.colours.map((x) => x.id === colour.id ? colour : x) });
     setColourDraft(null);
@@ -224,32 +227,45 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     const states = draft.bindings.filter((b) => b.fabricId === f.id && b.colourId === c.id).map(readiness);
     if (states.some((s) => s.key === "ready")) return { label: "Ready for AI preview", tone: "success" };
     if (states.length) return { label: states[0]!.label, tone: states[0]!.tone };
-    return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : c.hex ? { label: "HEX added", tone: "neutral" } : { label: "Needs HEX or image", tone: "attention" };
+    return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : c.hex ? { label: "HEX added", tone: "neutral" } : { label: "Name added", tone: "neutral" };
   };
   const mappedReady = draft.bindings.filter((b) => readiness(b).key === "ready").length;
   const configuredColours = draft.fabrics.reduce((count, fabric) => count +
-    fabric.colours.filter((colour) => colour.enabled && sampleReady(colour.name, colour.hex, colour.swatchMediaId)).length, 0);
+    fabric.colours.filter((colour) => colour.enabled && entryReady(colour.name, colour.hex)).length, 0);
   const ready = draft.bindings.length ? mappedReady : configuredColours;
-  const invalidSamples = !draft.bindings.length && draft.fabrics.some((f) =>
-    !sampleReady(f.name, f.hex, f.textureMediaId) ||
-    f.colours.some((c) => !sampleReady(c.name, c.hex, c.swatchMediaId)));
-  const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || invalidSamples || !!colourDraft);
+  const invalidEntries = draft.fabrics.some((f) =>
+    !entryReady(f.name, f.hex) ||
+    f.colours.some((c) => !entryReady(c.name, c.hex)));
+  const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || invalidEntries || !!colourDraft);
   const saveHint = !manual || !data.installationReady ? "" : p?.importBlocked ? "This product's existing integration must be reviewed before editing." :
-    colourDraft ? "Save or cancel the colour you're editing first." : invalidSamples ? "Each fabric and colour needs a name plus a HEX colour or sample image before saving." : "";
+    colourDraft ? "Save or cancel the colour you're editing first." : invalidEntries ? "Each fabric and colour needs a name. HEX colours and images are optional; any entered HEX must use #RRGGBB." : "";
   const workspaceQuery = data.startInManualMode ? "&workspace=manual" : "";
   const link = p ? `/app/fabrics?product=${encodeURIComponent(p.productId)}${workspaceQuery}` : data.startInManualMode ? "/app/fabrics?workspace=manual" : "/app/fabrics";
   const scoped = draft.bindings.filter((b) => mappingScope === "all" || b.fabricId === fabricId);
   const pageCount = Math.max(1, Math.ceil(scoped.length / MAPPINGS_PER_PAGE));
   const currentPage = Math.min(mappingPage, pageCount - 1);
   const steps = [
-    { label: "Fabric & texture", done: draft.fabrics.some((f) => sampleReady(f.name, f.hex, f.textureMediaId)) },
-    { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => sampleReady(c.name, c.hex, c.swatchMediaId))) },
+    { label: "Fabric & texture", done: draft.fabrics.some((f) => entryReady(f.name, f.hex)) },
+    { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => entryReady(c.name, c.hex))) },
     { label: "Saved", done: !dirty && !!p?.revision },
   ];
 
-  return <s-page inlineSize="large">
+  return <div className="fm-shell">
     <style>{STYLES}</style>
-    <div className="fabric-manager">
+    <aside className="fm-sidebar" aria-label="Tryora navigation">
+      <a className="fm-brand" href="/app">Tryora</a>
+      <nav>
+        <a href="/app/products" className="is-active" aria-current="location"><FabricIcon name="product" />Products</a>
+        {data.shop && /^[a-z0-9-]+\.myshopify\.com$/.test(data.shop) && <a href={`https://${data.shop}/admin/orders`} target="_top"><FabricIcon name="orders" />Orders</a>}
+        <a href="/app/appearance"><FabricIcon name="settings" />Settings</a>
+      </nav>
+      <details className="fm-support"><summary><FabricIcon name="help" />Help &amp; support</summary>
+        <p>Choose a product, name your fabrics, then add colours. HEX colours and sample images are optional. Select Save changes when you are ready.</p>
+        <a href="https://help.shopify.com/" target="_blank" rel="noreferrer">Shopify help <span aria-hidden="true">↗</span></a>
+      </details>
+    </aside>
+    <main className="fabric-manager">
+      <a href="/app/products" className="fm-back"><FabricIcon name="back" />Products</a>
       <div className="fm-page-heading"><div><h1>Fabrics &amp; Colours</h1><p className="fm-muted">Manage fabrics and colour choices for your product.</p></div>
         {p && <div className="fm-save">
           <span className={`fm-pill fm-pill--${dirty || colourDraft ? "attention" : "success"}`} role="status">{colourDraft ? "Editing a colour" : dirty ? "Unsaved changes" : p.saved ? "Saved" : "No unsaved changes"}</span>
@@ -272,11 +288,14 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
           </label>}
         </div>
         {p && <div className="fm-subhead">
-          <span className="fm-muted">{p.title} · <s-link href={`/app/products/${p.productId.split("/").pop()}`}>Product preview settings</s-link></span>
+          <a className="fm-preview-step" href={`/app/products/${p.productId.split("/").pop()}`}><span aria-hidden="true" />Product preview settings</a>
           {manual && <ol className="fm-steps" aria-label="Setup progress">{steps.map((s) => <li key={s.label} className={s.done ? "is-done" : ""}><span aria-hidden="true">{s.done ? "✓" : ""}</span>{s.label}{s.done ? <span className="fm-sr"> (done)</span> : null}</li>)}</ol>}
           {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} {draft.bindings.length ? "preview-ready colour configurations" : "configured colour choices"}</span>}
         </div>}
-        {saveHint && <p className="fm-muted fm-save-hint" role="status">{saveHint}</p>}
+        <div className="fm-header-foot">
+          {p && <a className="fm-browse" href={`/app/fabrics?browse=1${workspaceQuery}`}>Browse more products <FabricIcon name="forward" /></a>}
+          <p className="fm-muted fm-save-hint" role="status">{saveHint || "Names are required. HEX colours and sample images are optional."}</p>
+        </div>
         {pendingProduct && <div className="fm-navigation-confirm" role="alert">
           <p>You have unsaved fabric or colour changes. Switch products without saving them?</p>
           <div className="fm-actions">
@@ -284,7 +303,6 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
           </div>
         </div>}
-        {p && <s-link href={`/app/fabrics?browse=1${workspaceQuery}`}>Browse more products</s-link>}
         {!p && data.products.pageInfo.hasNextPage && <s-link href={`/app/fabrics?browse=1&after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}${workspaceQuery}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
@@ -335,17 +353,17 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 <div className="fm-fabric-head">
                   <Thumb url={mediaUrl(fabric.textureMediaId)} hex={fabric.hex && HEX.test(fabric.hex) ? fabric.hex : null} label={`${fabric.name || "Untitled fabric"} texture`} empty="No texture" size={64} />
                   <div className="fm-grow"><h2>{fabric.name || "Untitled fabric"}</h2>
-                    <p className="fm-muted">{fabric.description || (fabric.textureMediaId ? "Fabric texture added." : "Upload a close-up of this fabric's texture.")}</p></div>
+                    <p className="fm-muted">{fabric.description || (fabric.textureMediaId ? "Fabric texture added." : "Optionally add a HEX colour or close-up texture image.")}</p></div>
                   {!fabric.enabled && <span className="fm-pill fm-pill--neutral">Disabled</span>}
-                  <button type="button" className="fm-btn" aria-expanded={editingFabric} onClick={() => setEditingFabric(!editingFabric)}>{editingFabric ? "Close editor" : "Edit fabric"}</button>
+                  <button type="button" className="fm-btn" aria-expanded={editingFabric} onClick={() => setEditingFabric(!editingFabric)}><FabricIcon name="edit" />{editingFabric ? "Close editor" : "Edit fabric"}</button>
                 </div>
                 {editingFabric && <div className="fm-editor fabric-editor" role="group" aria-label="Edit fabric">
                   <div className="fm-editor-grid">
-                    <label className="fm-field"><span className="fm-label">Fabric name</span><input aria-label={`Fabric name ${fabric.id}`} maxLength={140} value={fabric.name} placeholder="e.g. Plush Velvet" autoFocus={!fabric.name}
+                    <label className="fm-field"><span className="fm-label">Fabric name *</span><input required aria-label={`Fabric name ${fabric.id}`} maxLength={140} value={fabric.name} placeholder="e.g. Plush Velvet" autoFocus={!fabric.name}
                       aria-invalid={!fabric.name.trim()} onChange={(e) => updateFabric(fabric.id, { name: e.currentTarget.value })} /></label>
                     <label className="fm-field"><span className="fm-label">Description <span className="fm-muted">(optional)</span></span><textarea rows={2} maxLength={1000} value={fabric.description} onChange={(e) => updateFabric(fabric.id, { description: e.currentTarget.value })} /></label>
                   </div>
-                  <div className="fm-field"><span className="fm-label">Fabric HEX colour <span className="fm-muted">(or add a texture image)</span></span>
+                  <div className="fm-field"><span className="fm-label">Fabric HEX colour <span className="fm-muted">(optional)</span></span>
                     <div className="fm-hex">
                       <input type="color" aria-label={`Pick fabric colour ${fabric.id}`} value={HEX.test(fabric.hex ?? "") ? fabric.hex! : "#ffffff"}
                         onChange={(e) => updateFabric(fabric.id, { hex: e.currentTarget.value })} />
@@ -356,7 +374,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                     </div>
                   </div>
                   <MediaField label={`Fabric texture ${fabric.name}`} role="fabric texture" kind="sample" sampleIds={sampleIds} value={fabric.textureMediaId} media={media} change={(id) => updateFabric(fabric.id, { textureMediaId: id })} upload={uploadImage} disabled={disabledUpload} />
-                  {!sampleReady(fabric.name, fabric.hex, fabric.textureMediaId) && <p className="fm-muted" role="status">Fabric name and either HEX colour or texture image are required.</p>}
+                  {!fabric.name.trim() && <p className="fm-error" role="alert">Fabric name is required.</p>}
+                  {fabric.hex && !HEX.test(fabric.hex) && <p className="fm-error" role="alert">Use the #RRGGBB format, for example #F2E8D5.</p>}
                   <div className="fm-editor-foot">
                     <label className="fm-check"><input type="checkbox" checked={fabric.enabled} onChange={(e) => updateFabric(fabric.id, { enabled: e.currentTarget.checked })} />Show this fabric to shoppers</label>
                     <RemoveButton label="Remove fabric" onConfirm={() => removeFabric(fabric.id)} />
@@ -365,19 +384,14 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                   </div>
                 </div>}
 
-                <div className="fm-section-head fm-colours-head"><div><h3>Colours <span className="fm-count">{fabric.colours.length}</span></h3><p className="fm-muted">Add a name and a HEX colour or sample image.</p></div>
+                <div className="fm-section-head fm-colours-head"><div><h3>Colours <span className="fm-count">{fabric.colours.length}</span></h3><p className="fm-muted">Name required. HEX colour and sample image are optional.</p></div>
                   <div className="fm-swatch-prefs" role="group" aria-label="Swatch appearance">
                     <span className="fm-label">Swatch shape</span>
                     <button type="button" className="fm-btn fm-shape" aria-label="Circle swatches" aria-pressed={swatchShape === "round"} onClick={() => updateSwatchPresentation({ shape: "round" })}><span className="fm-shape-circle" /></button>
-                    <button type="button" className="fm-btn fm-shape" aria-label="Square swatches" aria-pressed={swatchShape === "square"} onClick={() => updateSwatchPresentation({ shape: "square" })}><span className="fm-shape-square" /></button>
-                    <button type="button" className="fm-btn fm-shape fm-shape-with-label" aria-label="Rectangle swatches" aria-pressed={swatchShape === "rectangle"} onClick={() => updateSwatchPresentation({ shape: "rectangle" })}><span className="fm-shape-rectangle" />Rectangle</button>
-                    <label className="fm-swatch-size">Swatch size
-                      <input aria-label="Swatch size" type="number" min={25} max={100} step={1} value={swatchSize}
-                        onChange={(e) => { const n = Number(e.currentTarget.value); if (Number.isInteger(n) && n >= 25 && n <= 100) updateSwatchPresentation({ size: n }); }} />
-                      <span>px</span>
-                    </label>
+                    <button type="button" className="fm-btn fm-shape fm-shape-with-label" aria-label="Square swatches" aria-pressed={swatchShape === "square"} onClick={() => updateSwatchPresentation({ shape: "square" })}><span className="fm-shape-square" />Square</button>
+                    <SwatchSizeControl key={p.productId} value={swatchSize} onChange={(size) => updateSwatchPresentation({ size })} />
                   </div>
-                  <button className="fm-btn fm-btn--primary" type="button" disabled={!!colourDraft} onClick={() => setColourDraft({ id: uid(), name: "", enabled: true, swatchMediaId: null, hex: null, isNew: true })}>+ Add colour</button></div>
+                  <button className="fm-btn fm-btn--primary fm-add-colour" type="button" disabled={!!colourDraft} onClick={() => setColourDraft({ id: uid(), name: "", enabled: true, swatchMediaId: null, hex: null, isNew: true })}>+ Add colour</button></div>
                 {fabric.colours.length ? <ul className="fm-colour-grid">{fabric.colours.map((c) => {
                   const status = colourStatus(fabric, c);
                   return <li key={c.id}><button type="button" className={`fm-colour${colourDraft?.id === c.id ? " is-editing" : ""}${c.enabled ? "" : " is-off"}`} aria-label={`Edit colour ${c.name}`} onClick={() => setColourDraft({ ...c, isNew: false })}>
@@ -385,12 +399,12 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                     <span className="fm-colour-text"><strong>{c.name}</strong><small className="fm-tabular">{c.swatchMediaId ? "Sample photo" : c.hex ? c.hex.toUpperCase() : "No sample yet"}</small></span>
                     <span className={`fm-pill fm-pill--${status.tone}`}>{status.label}</span><span className="fm-edit-label">Edit <span aria-hidden="true">↗</span></span>
                   </button></li>;
-                })}</ul> : !colourDraft && <p className="fm-muted">No colours for {fabric.name || "this fabric"} yet. Each colour needs a name and HEX colour or sample photo.</p>}
+                })}</ul> : !colourDraft && <div className="fm-colour-empty"><span className="fm-empty-icon"><FabricIcon name="palette" /></span><p>No colours for {fabric.name || "this fabric"} yet.</p><p className="fm-muted">Each colour needs a name. HEX colour and sample photo are optional.</p></div>}
 
                 {colourDraft && <div className="fm-editor fm-colour-editor" role="group" aria-label={colourDraft.isNew ? "New colour" : `Edit ${colourDraft.name}`}>
                   <h3>{colourDraft.isNew ? `New colour for ${fabric.name || "this fabric"}` : `Edit ${colourDraft.name || "colour"}`}</h3>
                   <div className="fm-editor-grid">
-                    <label className="fm-field"><span className="fm-label">Colour name</span><input aria-label={`Colour name ${colourDraft.id}`} maxLength={140} value={colourDraft.name} placeholder="e.g. Cream" autoFocus
+                    <label className="fm-field"><span className="fm-label">Colour name *</span><input required aria-invalid={!colourDraft.name.trim()} aria-label={`Colour name ${colourDraft.id}`} maxLength={140} value={colourDraft.name} placeholder="e.g. Cream" autoFocus
                       onChange={(e) => setColourDraft({ ...colourDraft, name: e.currentTarget.value })} /></label>
                     <div className="fm-field"><span className="fm-label">HEX colour <span className="fm-muted">(optional)</span></span>
                       <div className="fm-hex">
@@ -399,18 +413,19 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                           onChange={(e) => setColourDraft({ ...colourDraft, hex: e.currentTarget.value.trim() || null })} />
                         {colourDraft.hex && <button type="button" className="fm-link" onClick={() => setColourDraft({ ...colourDraft, hex: null })}>Clear</button>}
                       </div>
-                      <span className="fm-muted fm-tabular fm-rgb" aria-live="polite">{colourDraft.hex && HEX.test(colourDraft.hex) ? `RGB ${hexToRgb(colourDraft.hex)}` : colourDraft.hex ? "" : "Provide a HEX colour or sample photo. Both are allowed."}</span>
+                      <span className="fm-muted fm-tabular fm-rgb" aria-live="polite">{colourDraft.hex && HEX.test(colourDraft.hex) ? `RGB ${hexToRgb(colourDraft.hex)}` : colourDraft.hex ? "" : "HEX colour and sample photo are optional. You can add either or both."}</span>
                       {colourDraft.hex && !HEX.test(colourDraft.hex) && <span role="alert" className="fm-error">Use the #RRGGBB format, for example #F2E8D5.</span>}
                     </div>
                   </div>
                   <MediaField label={`Colour sample ${fabric.name} ${colourDraft.name}`} role="colour sample" kind="sample" sampleIds={sampleIds} value={colourDraft.swatchMediaId} media={media}
                     change={(id) => setColourDraft((c) => c && { ...c, swatchMediaId: id })} upload={uploadImage} disabled={disabledUpload} />
                   <div className="fm-editor-foot">
+                    {!colourDraft.name.trim() && <p className="fm-error" role="alert">Colour name is required.</p>}
                     <label className="fm-check"><input type="checkbox" checked={colourDraft.enabled} onChange={(e) => setColourDraft({ ...colourDraft, enabled: e.currentTarget.checked })} />Show this colour to shoppers</label>
                     {!colourDraft.isNew && <RemoveButton label="Remove colour" onConfirm={() => { const id = colourDraft.id; updateFabric(fabric.id, { colours: fabric.colours.filter((x) => x.id !== id) }); setDraft((d) => ({ ...d, bindings: d.bindings.filter((b) => b.colourId !== id) })); setColourDraft(null); }} />}
                     <span className="fm-grow" />
                     <button type="button" className="fm-btn" onClick={() => setColourDraft(null)}>Cancel</button>
-                    <button type="button" className="fm-btn fm-btn--primary" disabled={!sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)} onClick={saveColour}>Save colour</button>
+                    <button type="button" className="fm-btn fm-btn--primary" disabled={!entryReady(colourDraft.name, colourDraft.hex)} onClick={saveColour}>Save colour</button>
                   </div>
                 </div>}
               </>}
@@ -476,12 +491,53 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
           </details>}
-          <p className="fm-muted fm-footnote">Fabric textures and colour samples are saved to Shopify Files, not the product gallery. Full furniture reference photos may use product media. Removing selections from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
+          <footer className="fm-muted fm-footnote fm-footer"><span>Fabric textures and colour samples are saved to Shopify Files, not the product gallery. <a href={link}>Refresh from Shopify</a></span><span>Removing selections from Tryora never deletes Shopify images or variants.</span></footer>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>
       </>}
+    </main>
+  </div>;
+}
+
+
+
+function SwatchSizeControl({ value, onChange }: { value: number; onChange: (size: number) => void }) {
+  const [text, setText] = useState(String(value));
+  useEffect(() => { setText(String(value)); }, [value]);
+  const commit = (size: number) => {
+    const next = Math.max(25, Math.min(100, Math.round(size)));
+    setText(String(next));
+    onChange(next);
+  };
+  return <div className="fm-swatch-size" role="group" aria-label="Swatch size controls">
+    <span>Swatch size</span>
+    <div className="fm-size-stepper">
+      <button type="button" aria-label="Decrease swatch size" disabled={value <= 25} onClick={() => commit(value - 1)}>−</button>
+      <input aria-label="Swatch size" type="number" min={25} max={100} step={1} value={text}
+        onChange={(event) => {
+          const raw = event.currentTarget.value;
+          setText(raw);
+          const size = Number(raw);
+          if (raw && Number.isInteger(size) && size >= 25 && size <= 100) onChange(size);
+        }}
+        onBlur={() => { const size = Number(text); commit(text.trim() && Number.isFinite(size) ? size : value); }} />
+      <button type="button" aria-label="Increase swatch size" disabled={value >= 100} onClick={() => commit(value + 1)}>+</button>
     </div>
-  </s-page>;
+    <span>px</span>
+  </div>;
+}
+
+function FabricIcon({ name }: { name: string }) {
+  const paths: Record<string, string> = {
+    product: "M3 12 12 3h8v8l-9 9-8-8Zm12-5h.01",
+    orders: "M5 7h14l2 14H3L5 7Zm3 0V5a4 4 0 0 1 8 0v2M8 11a4 4 0 0 0 8 0",
+    settings: "m9 3 1-2h4l1 2 3 2 2 1v4l-2 1-1 3v2l-3 2-2-1-3-1-2 1-3-2v-2l-1-3-2-1V6l2-1 3-2Z M15 9a3 3 0 1 1-6 0 3 3 0 0 1 6 0",
+    help: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M9.5 9a2.5 2.5 0 1 1 4 2c-1 .7-1.5 1-1.5 3M12 17h.01",
+    back: "M19 12H5m6-6-6 6 6 6", forward: "M5 12h14m-6-6 6 6-6 6",
+    edit: "m15 4 5 5M4 20l5-1L21 7a2 2 0 0 0-5-5L4 14v6Z",
+    palette: "M12 3a9 9 0 1 0 0 18h1a2 2 0 0 0 1-4 2 2 0 0 1 1-4h3a3 3 0 0 0 3-3c0-4-4-7-9-7ZM7 10h.01M10 6h.01M15 7h.01M6 15h.01",
+  };
+  return <svg className="fm-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d={paths[name] ?? paths.product} /></svg>;
 }
 
 function KeyValues({ label, values, change }: { label: string; values: Record<string, string>; change: (value: Record<string, string>) => void }) {
@@ -593,37 +649,34 @@ const STYLES = `
   .fm-product .fm-field,.fm-product .fm-grow{min-width:100%}.fm-ready-count{margin-left:0}
 }
 
-/* Approved two-column layout: no customer preview card. */
-.fabric-manager{max-width:1500px;gap:20px;font-size:14px;padding:8px 0 24px}
-.fm-page-heading{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}
-.fm-page-heading h1{font-size:24px;line-height:1.25;margin:0 0 4px;font-weight:650}
-.fm-card{padding:22px;border:1px solid var(--fm-line);box-shadow:0 1px 2px #00000003}
-.fm-header{gap:16px}.fm-product{gap:20px;align-items:center}.fm-product-image{width:88px;height:88px}
-.fm-product .fm-field:last-child{flex:0 1 35%;min-width:260px}
-.fm-subhead{padding-top:14px;gap:16px}.fm-steps{gap:12px}.fm-steps li{background:transparent;padding:4px 0;gap:8px}
-.fm-steps li>span[aria-hidden]{width:28px;height:28px}.fm-ready-count{font-size:12px}
-.fm-workspace{grid-template-columns:minmax(260px,350px) minmax(0,1fr);gap:20px;align-items:stretch}
-.fm-fabrics{align-content:start;gap:20px;position:static}.fm-fabric-list{gap:12px}
-.fm-fabric-item{padding:12px;border-color:var(--fm-line);gap:16px;min-height:90px}
-.fm-fabric-text{gap:6px}.fm-chevron{font-size:24px;color:var(--fm-muted)}
-.fm-detail{gap:20px;align-content:start}.fm-fabric-head{padding-bottom:18px;border-bottom:1px solid var(--fm-line)}
-.fm-fabric-head h2{font-size:20px;margin-bottom:4px}.fm-colours-head h3{font-size:17px;margin-bottom:4px}
-.fm-colour-grid{grid-template-columns:1fr;gap:8px}
-.fm-colour{display:flex;gap:18px;padding:12px 16px;min-height:66px}.fm-colour .fm-thumb{flex-shrink:0}
-.fm-colour-text{display:flex;gap:20px;align-items:center;flex:1;min-width:0}.fm-colour-text strong{flex:1}
-.fm-colour-text small{flex:1}.fm-colour .fm-pill{font-size:11px}.fm-edit-label{color:var(--fm-accent);font-size:12px;white-space:nowrap}
-.fm-thumb--rectangle{border-radius:5px}.fm-appearance{border:1px solid var(--fm-line);border-radius:12px;padding:16px;display:grid;gap:6px}
-.fm-appearance-controls{display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-top:12px}.fm-shapes{display:flex;gap:4px}
-.fm-shapes [aria-pressed=true]{background:var(--fm-accent-soft);border-color:var(--fm-accent)}
-.fm-shape-icon{background:var(--fm-accent);width:16px;height:16px}.fm-shape-icon--circle{border-radius:50%}.fm-shape-icon--rectangle{height:12px;border-radius:2px}
-.fm-size{display:flex;align-items:center;gap:20px;border-left:1px solid var(--fm-line);padding-left:24px}.fm-size select{min-width:140px}
-.fm-advanced>summary{cursor:pointer;font-weight:650;list-style-position:inside}.fm-advanced>summary span{font-weight:400;margin-left:12px}
-.fm-advanced[open]>summary{padding-bottom:20px;margin-bottom:20px;border-bottom:1px solid var(--fm-line)}
-.fm-pill--attention{background:#fff0cc;color:#875300}.fm-save>.fm-pill{padding:8px 12px}.fm-btn{min-height:38px}
-@media(max-width:1050px){.fm-colour{flex-wrap:wrap}.fm-colour-text{flex-basis:calc(100% - 125px)}.fm-colour .fm-pill{margin-left:auto}}
-@media(max-width:760px){.fm-workspace{grid-template-columns:1fr}.fm-card{padding:16px}.fm-page-heading h1{font-size:21px}.fm-product .fm-field:last-child{min-width:100%}.fm-product-image{width:64px;height:64px}.fm-fabric-item{min-width:200px;min-height:78px}.fm-colour-text{display:grid;gap:4px}.fm-size{padding-left:0;border:0}.fm-appearance-controls{gap:12px}.fm-advanced>summary span{display:block;margin:6px 0 0}.fm-save{width:100%}}
-/* Rectangle inherits saved swatch appearance without duplicating controls. */
-.fm-shape-with-label{width:auto;gap:6px;padding:6px 10px}
-.fm-shape-rectangle{display:block;width:22px;height:15px;background:var(--fm-accent);border-radius:2px}
+
+/* Fabrics workspace: the approved Tryora reference design. */
+.fm-shell{display:grid;grid-template-columns:214px minmax(0,1fr);min-height:100vh;background:#f7f7f4;color:#171b2a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.fm-shell *{box-sizing:border-box}.fm-shell a{color:inherit}.fm-icon{width:22px;height:22px;flex:none;vertical-align:middle}
+.fm-sidebar{background:linear-gradient(115deg,#2d352b,#252d24);color:#f6f7f3;padding:20px 12px 28px;display:flex;flex-direction:column;gap:30px;position:sticky;top:0;height:100vh}
+.fm-brand{font:700 34px/1.2 Georgia,serif;letter-spacing:-1.4px;text-decoration:none;margin:0 14px}
+.fm-sidebar nav{display:grid;gap:8px}.fm-sidebar nav a,.fm-support summary{display:flex;align-items:center;gap:18px;padding:14px 16px;border-radius:9px;text-decoration:none;font-size:15px;cursor:pointer}
+.fm-sidebar nav a:hover{background:#ffffff12}.fm-sidebar nav a.is-active{background:#65715eaa}.fm-support{margin: auto 14px 0;border-top:1px solid #ffffff24;padding-top:18px}.fm-support summary{padding:12px 0;list-style:none;white-space:nowrap}.fm-support summary::-webkit-details-marker{display:none}.fm-support p{font-size:13px;line-height:1.6;color:#e2e6dc}.fm-support>a{font-size:13px;display:inline-block;margin-top:10px}
+.fabric-manager{--fm-text:#171b2a;--fm-muted:#717582;--fm-line:#e7e7e5;--fm-line-strong:#cbcec9;--fm-accent:#30432c;--fm-accent-soft:#f0f3ec;max-width:none;width:100%;gap:24px;margin:0;padding:24px 30px 22px 40px;font-size:15px;align-content:start;min-width:0;background:radial-gradient(ellipse at 10% 0,#fff9,transparent 65%)}
+.fm-back{display:flex;gap:10px;align-items:center;width:max-content;text-decoration:none;font-size:14px;color:#353d3c!important;margin-bottom:-5px}.fm-back .fm-icon{width:18px;height:18px}
+.fm-page-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-top:-8px}.fm-page-heading h1{font:700 38px/1.15 Georgia,"Times New Roman",serif;letter-spacing:-1.3px;margin:0 0 7px}.fm-page-heading p{font-size:17px}
+.fm-save{display:flex;gap:10px;align-items:center}.fm-save .fm-pill{font-size:12px}.fm-save .fm-btn{white-space:nowrap}
+.fm-card{border:1px solid var(--fm-line);border-radius:17px;background:#fff;box-shadow:0 3px 22px #252d2403;padding:22px 24px;min-width:0}
+.fm-header{gap:20px}.fm-product{gap:26px;align-items:center}.fm-product-image{width:154px;height:140px;object-fit:cover;border-radius:10px}.fm-product .fm-field:last-child{flex:0 1 37%;min-width:260px}.fm-product .fm-grow{min-width:240px}.fm-label{font-weight:550;color:#151a17;font-size:15px}.fm-field select,.fm-field input:not([type=color]),.fm-field textarea{font-size:16px;border-color:#d9dadc;border-radius:9px;min-height:43px;background:#fff;padding:10px 14px}
+.fm-subhead{border-top:1px solid #eceeeb;padding-top:18px;gap:30px;min-height:51px}.fm-preview-step{display:inline-flex;align-items:center;gap:11px;color:var(--fm-accent)!important;font-weight:550;font-size:14px;text-decoration:none;white-space:nowrap}.fm-preview-step>span{width:31px;height:31px;border:1px solid var(--fm-accent);border-radius:50%;padding:4px;background:var(--fm-accent);background-clip:content-box;box-shadow:inset 0 0 0 2px #fff}
+.fm-steps{gap:28px}.fm-steps li{background:transparent;padding:0;gap:10px;font-size:14px}.fm-steps li>span[aria-hidden]{width:31px;height:31px;border-color:#8b909e;font-size:15px}.fm-ready-count{font-size:14px;margin-left:auto}.fm-header-foot{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-top:10px}.fm-browse{display:inline-flex;align-items:center;gap:12px;color:var(--fm-accent)!important;font-weight:550;text-decoration:none;white-space:nowrap;font-size:14px}.fm-save-hint{font-size:13px;max-width:660px;line-height:1.5}
+.fm-workspace{grid-template-columns:minmax(280px,.435fr) minmax(0,1fr);gap:10px;align-items:stretch}.fabric-manager-fields{gap:16px}.fm-fabrics{position:static;align-content:start;gap:24px;min-height:410px;padding:20px 16px}.fm-fabrics>.fm-section-head{align-items:center;padding:0 10px}.fabric-manager h2{font-size:21px;font-weight:650}.fm-count{font-size:14px;padding:1px 8px;color:#23272b;background:#f0f0f1;font-weight:550}.fm-fabric-list{gap:12px}.fm-fabric-item{gap:18px;padding:14px;min-height:112px;border:1px solid var(--fm-line);border-radius:11px}.fm-fabric-item[aria-pressed=true]{background:linear-gradient(125deg,#f0f3ed,#f6f7f2);border-color:#cbd4c5}.fm-fabric-item>.fm-thumb{width:82px!important;height:82px!important}.fm-fabric-text{gap:8px}.fm-fabric-text strong{font-weight:600;font-size:16px}.fm-fabric-text small{font-size:14px}.fm-chevron{font-size:24px;color:var(--fm-muted)}
+.fm-detail{gap:20px;align-content:start;padding:20px 24px;min-height:410px}.fm-fabric-head{gap:20px;padding-bottom:20px;border-bottom:1px solid #eceeeb;flex-wrap:nowrap}.fm-fabric-head>.fm-thumb{width:94px!important;height:94px!important}.fm-fabric-head h2{margin-bottom:6px}.fm-fabric-head .fm-btn{white-space:nowrap}.fm-fabric-head p{font-size:14px}.fm-fabric-head .fm-btn .fm-icon{width:18px;height:18px}
+.fm-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:43px;border-radius:9px;padding:9px 16px;font-size:14px;font-weight:550;border-color:#d6dad2;box-shadow:0 1px 2px #00000004}.fm-btn--primary{background:linear-gradient(#3b4d33,#2d3e27);border-color:#2d3e27;color:white}.fm-btn:disabled{opacity:.5;cursor:not-allowed}.fm-btn:not(:disabled):hover{filter:brightness(.97)}.fm-fabrics>.fm-section-head>.fm-btn{background:#f4f6f1}
+.fm-colours-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:start}.fm-colours-head h3{font-size:21px;margin-bottom:5px}.fm-colours-head p{font-size:14px}.fm-add-colour{grid-column:1;grid-row:2;justify-self:start}.fm-colours-head>.fm-swatch-prefs{grid-column:2;grid-row:1 / span 2}.fm-swatch-prefs{justify-content:flex-end;max-width:320px;gap:8px}.fm-swatch-prefs>.fm-label{display:none}.fm-shape{width:48px;height:48px;padding:10px}.fm-shape-with-label{width:auto;gap:6px}.fm-shape-rectangle{display:block;width:22px;height:15px;background:var(--fm-accent);border-radius:2px}.fm-swatch-size{font-size:12px}.fm-swatch-size input{width:58px}
+.fm-colour-empty{border:1px dashed #e3e4e1;border-radius:10px;background:linear-gradient(#fcfcfb,#fdfdfc);min-height:108px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;padding:12px;text-align:center;font-size:14px}.fm-empty-icon{display:grid;place-items:center;border-radius:50%;background:#f0f1ee;width:44px;height:44px;margin-top:-10px;margin-bottom:2px}.fm-empty-icon .fm-icon{width:23px;height:23px}.fm-colour-empty p{max-width:100%}
+.fm-colour-grid{grid-template-columns:1fr;gap:10px}.fm-colour{display:flex;gap:16px;padding:12px 16px;min-height:76px}.fm-colour .fm-thumb{flex-shrink:0}.fm-colour-text{display:grid;gap:5px;flex:1;min-width:0}.fm-colour .fm-pill{font-size:11px}.fm-edit-label{color:var(--fm-accent);font-size:12px}.fm-pill--attention{background:#fff0cc;color:#795820}.fm-thumb--rectangle{border-radius:5px}
+.fm-editor{padding:18px;gap:16px;background:#f7f8f5;border:1px solid #e6e9e1}.fm-editor .fm-field input{min-width:0;width:100%}.fm-editor .fm-field input[type=color]{width:40px}.fm-footer{display:flex;justify-content:space-between;gap:20px;font-size:12px;line-height:1.6}.fm-footer a{color:#374a32;text-decoration:underline;margin-left:6px}.fm-footer>span:last-child{text-align:right}.fm-footnote{font-size:12px}
+.fm-shell a:focus-visible,.fm-shell button:focus-visible,.fm-shell summary:focus-visible{outline:2px solid #6a815a;outline-offset:4px}.fm-shell input:focus-visible,.fm-shell select:focus-visible,.fm-shell textarea:focus-visible{outline:2px solid #6a815a;outline-offset:2px}
+@media(max-width:1350px){.fm-shell{grid-template-columns:184px minmax(0,1fr)}.fabric-manager{padding:24px;gap:20px}.fm-product-image{width:110px;height:110px}.fm-subhead{gap:16px}.fm-steps{gap:14px}.fm-ready-count{width:100%;margin-left:0}.fm-workspace{grid-template-columns:minmax(240px,.43fr) minmax(0,1fr)}.fm-card{padding:20px}.fm-fabric-item{gap:12px;padding:10px}.fm-fabric-item>.fm-thumb{width:58px!important;height:68px!important}.fm-fabric-text strong{font-size:14px}.fm-fabric-head{flex-wrap:wrap}.fm-fabric-head>.fm-thumb{width:72px!important;height:72px!important}.fm-swatch-prefs{max-width:240px}.fm-colours-head{grid-template-columns:1fr}.fm-colours-head>.fm-swatch-prefs{grid-column:1;grid-row:2;justify-content:flex-start}.fm-add-colour{grid-row:3}.fm-footer{flex-wrap:wrap}.fm-footer>span:last-child{text-align:left}}
+@media(max-width:1000px){.fm-shell{grid-template-columns:160px minmax(0,1fr)}.fm-sidebar{padding:20px 8px}.fm-sidebar nav a{gap:10px;padding:12px}.fm-brand{font-size:30px}.fm-support{margin-left:10px;margin-right:6px}.fm-support summary{font-size:12px;gap:8px}.fm-workspace{grid-template-columns:1fr}.fm-fabrics{min-height:0}.fm-fabric-list{display:flex;overflow-x:auto;gap:10px}.fm-fabric-item{width:260px;flex:none}.fm-product{flex-wrap:wrap}.fm-product .fm-field:last-child{flex:1;min-width:100%}.fm-header-foot{align-items:flex-start;flex-direction:column}.fm-save-hint{text-align:left}.fm-colours-head{grid-template-columns:minmax(0,1fr) auto}.fm-colours-head>.fm-swatch-prefs{grid-column:2;grid-row:1 / span 2}.fm-add-colour{grid-row:auto}.fm-page-heading h1{font-size:32px}}
+@media(max-width:640px){.fm-shell{display:block}.fm-sidebar{position:static;height:auto;padding:16px;gap:16px}.fm-brand{margin:0}.fm-sidebar nav{display:flex;gap:8px;flex-wrap:wrap}.fm-sidebar nav a{font-size:13px;padding:10px}.fm-sidebar .fm-support{margin:0;padding-top:10px}.fm-support summary{font-size:13px;padding:2px}.fabric-manager{padding:22px 16px;gap:18px}.fm-page-heading h1{font-size:32px}.fm-page-heading p{font-size:14px}.fm-save{width:100%;justify-content:space-between}.fm-save .fm-pill{font-size:11px}.fm-card{padding:16px;border-radius:14px}.fm-product{gap:14px}.fm-product-image{width:76px;height:76px}.fm-product .fm-grow{min-width:0;flex:1}.fm-product .fm-field:last-child{min-width:100%}.fm-field select{font-size:14px;padding:10px 8px}.fm-subhead{gap:16px}.fm-steps{gap:14px}.fm-steps li{font-size:12px}.fm-steps li>span[aria-hidden]{width:25px;height:25px}.fm-preview-step{font-size:13px}.fm-header-foot{gap:12px}.fm-detail{min-height:0}.fm-fabric-head{gap:12px}.fm-fabric-list>.fm-fabric-item{width:100%;max-width:none}.fm-fabric-head .fm-grow{min-width:140px}.fm-fabric-head h2{font-size:20px}.fm-fabric-head>.fm-btn{margin-left:auto}.fm-colours-head{grid-template-columns:1fr}.fm-colours-head>.fm-swatch-prefs{grid-column:1;grid-row:2;justify-content:flex-start;max-width:none}.fm-add-colour{grid-row:3}.fm-footer{gap:8px}.fm-colour{flex-wrap:wrap}.fm-colour-text{min-width:120px}.fm-media{flex-wrap:wrap}.fm-editor{padding:12px}.fm-editor-grid{grid-template-columns:1fr}.fm-map-grid,.fm-kv-grid{grid-template-columns:1fr}}
+
+.fm-size-stepper{display:inline-flex;align-items:stretch;border:1px solid #ccd2c8;border-radius:8px;background:#fff;overflow:hidden}.fm-size-stepper button{border:0;background:#f4f6f1;color:var(--fm-accent);width:32px;font:inherit;font-size:18px;font-weight:600;line-height:1;cursor:pointer}.fm-size-stepper button:disabled{opacity:.35;cursor:not-allowed}.fm-size-stepper button:hover:not(:disabled){background:#e7edde}.fm-size-stepper input[aria-label="Swatch size"]{width:56px;min-height:34px;text-align:center;border:0;border-radius:0;appearance:textfield;-moz-appearance:textfield}.fm-size-stepper input::-webkit-inner-spin-button,.fm-size-stepper input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
 
 `;

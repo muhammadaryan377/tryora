@@ -125,6 +125,71 @@ afterEach(async () => {
 });
 
 describe("two-column fabric manager interactions", () => {
+  it("offers two shapes and supports typing and single-pixel size steps", async () => {
+    const data = fixture();
+    data.selected!.draft.swatchAppearance = { shape: "rectangle", size: 50 };
+    await render(data);
+    expect(container.querySelectorAll('.fm-swatch-prefs .fm-shape')).toHaveLength(2);
+    expect(container.querySelector('[aria-label="Rectangle swatches"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Square swatches"]')!.getAttribute('aria-pressed')).toBe('true');
+    const input = container.querySelector<HTMLInputElement>('[aria-label="Swatch size"]')!;
+    const increase = container.querySelector<HTMLButtonElement>('[aria-label="Increase swatch size"]')!;
+    const decrease = container.querySelector<HTMLButtonElement>('[aria-label="Decrease swatch size"]')!;
+    const type = async (value: string) => act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await type('');
+    expect(input.value).toBe('');
+    await type('7');
+    expect(input.value).toBe('7');
+    await type('75');
+    expect(container.querySelector<HTMLElement>('.fm-colour .fm-thumb')!.style.width).toBe('75px');
+    await act(async () => { increase.click(); });
+    expect(input.value).toBe('76');
+    await act(async () => { decrease.click(); });
+    expect(input.value).toBe('75');
+    await type('25');
+    expect(decrease.disabled).toBe(true);
+    await type('100');
+    expect(increase.disabled).toBe(true);
+    await act(async () => { button('Save changes').click(); });
+    expect(save.mock.calls[0]![1].presentation).toEqual({ shape: 'square', size: 100 });
+  });
+
+  it("adds a colour by name alone and keeps optional colour and image controls", async () => {
+    const data = fixture();
+    data.selected!.draft.fabrics[0]!.hex = null;
+    await render(data);
+    await act(async () => { button("+ Add colour").click(); });
+    const name = container.querySelector<HTMLInputElement>('.fm-colour-editor input[aria-label^="Colour name"]')!;
+    const hex = container.querySelector<HTMLInputElement>('.fm-colour-editor input[aria-label^="HEX "]')!;
+    const setValue = async (input: HTMLInputElement, value: string) => {
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    expect(name.required).toBe(true);
+    expect(container.querySelector('.fm-colour-editor input[type="color"]')).not.toBeNull();
+    expect(container.querySelector('.fm-colour-editor input[type="file"]')).not.toBeNull();
+    await setValue(name, "   ");
+    expect(button("Save colour").disabled).toBe(true);
+    await setValue(name, "Cream");
+    expect(button("Save colour").disabled).toBe(false);
+    await setValue(hex, "#bad");
+    expect(button("Save colour").disabled).toBe(true);
+    await setValue(hex, "#AABBCC");
+    expect(button("Save colour").disabled).toBe(false);
+    await setValue(hex, "");
+    await act(async () => { button("Save colour").click(); });
+    expect(button("Save changes").disabled).toBe(false);
+    await act(async () => { button("Save changes").click(); });
+    const saved = parseFabricDraft(save.mock.calls[0]![1]);
+    expect(saved.fabrics[0]!.hex).toBeNull();
+    expect(saved.fabrics[0]!.colours.at(-1)).toMatchObject({ name: "Cream", hex: null, swatchMediaId: null });
+  });
+
   it(
     "saves shape and size, restores them after reload, and keeps exact mapping drafts intact",
     async () => {
@@ -141,20 +206,20 @@ describe("two-column fabric manager interactions", () => {
         "Customer preview"
       );
 
-      // Select rectangle swatches.
-      const rectangleButton =
+      // Select square swatches.
+      const squareButton =
         container.querySelector<HTMLButtonElement>(
-          '[aria-label="Rectangle swatches"]'
+          '[aria-label="Square swatches"]'
         );
 
-      expect(rectangleButton).not.toBeNull();
+      expect(squareButton).not.toBeNull();
 
       await act(async () => {
-        rectangleButton!.click();
+        squareButton!.click();
       });
 
       expect(
-        rectangleButton!.getAttribute("aria-pressed")
+        squareButton!.getAttribute("aria-pressed")
       ).toBe("true");
 
       // Find the controlled swatch-size input.
@@ -200,7 +265,7 @@ describe("two-column fabric manager interactions", () => {
       expect(swatch).not.toBeNull();
 
       expect(swatch!.style.width).toBe("100px");
-      expect(swatch!.style.height).toBe("70px");
+      expect(swatch!.style.height).toBe("100px");
 
       // Save the configuration.
       await act(async () => {
@@ -214,8 +279,8 @@ describe("two-column fabric manager interactions", () => {
       );
 
       // Confirm the saved appearance.
-      expect(saved.swatchAppearance).toEqual({
-        shape: "rectangle",
+      expect(saved.presentation).toEqual({
+        shape: "square",
         size: 100,
       });
 
@@ -236,16 +301,16 @@ describe("two-column fabric manager interactions", () => {
 
       await render(data);
 
-      // Confirm the rectangle preference is restored.
-      const restoredRectangle =
+      // Confirm the square preference is restored.
+      const restoredSquare =
         container.querySelector<HTMLButtonElement>(
-          '[aria-label="Rectangle swatches"]'
+          '[aria-label="Square swatches"]'
         );
 
-      expect(restoredRectangle).not.toBeNull();
+      expect(restoredSquare).not.toBeNull();
 
       expect(
-        restoredRectangle!.getAttribute("aria-pressed")
+        restoredSquare!.getAttribute("aria-pressed")
       ).toBe("true");
 
       const restoredSize =
