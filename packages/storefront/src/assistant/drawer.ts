@@ -510,7 +510,7 @@ export class RoomAssistant {
         numeric(item.productRef) !== numeric(item.productId) || item.purchaseAvailable === false ||
         item.previewStatus === "not_configured" || item.previewStatus === "unavailable") return null;
     const selected = this.state.selected;
-    const explicitChatChoice = selected?.source === "conversation" && selected.productRef === item.productRef && selected.variantRef === item.variantRef;
+    const explicitChatChoice = (selected?.source === "conversation" || selected?.source === "card") && selected.productRef === item.productRef && selected.variantRef === item.variantRef;
     const panelChoice = [...this.cardOptions.values()].some(panel => panel.productId === item.productId && panel.data && resolveVariant(panel.data, panel.selections)?.ref === item.variantRef);
     if (explicitChatChoice || panelChoice) return null;
     return this.context.currentVariantId?.() ?? null;
@@ -1297,12 +1297,12 @@ export class RoomAssistant {
     const id = escapeHtml(item.id);
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
-    const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
+    const note = item.previewAvailable && item.referenceImage ? "Preview reference" : generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
     const pageVariant = this.currentPageVariantFor(item);
-    const canCheckCurrentPage = !!pageVariant && numeric(pageVariant) !== numeric(item.variantId);
-    const canChooseOptions = item.previewStatus === "choose_options" && item.purchaseAvailable && this.config.previewsAvailable !== false;
+    const canCheckCurrentPage = false; // Never substitute the page variant for the clicked recommendation image.
+    const canChooseOptions = false; // Chat cards never ask shoppers to choose fabric, colour or size.
     const reason = item.previewAvailable || canCheckCurrentPage || canChooseOptions ? "" : item.previewStatus === "choose_options"
-      ? "Choose an available product configuration on its product page before previewing."
+      ? "An exact approved preview image is not available for this product. View details for more information."
       : item.previewReason ?? (item.previewStatus === "not_configured"
         ? "AI room preview is not configured for this product."
         : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
@@ -1310,22 +1310,22 @@ export class RoomAssistant {
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const generating = this.generating(item);
-    const canStartPreview = item.previewAvailable || canCheckCurrentPage || canChooseOptions;
+    const canStartPreview = item.previewAvailable && !!item.variantId && !!item.optionValue && this.config.previewsAvailable !== false;
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
-      ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
+      ${this.thumbHtml(canStartPreview && item.referenceImage ? item.referenceImage : item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
         <span class="tryora-assistant__eyebrow">${label}</span>
         <h4>${escapeHtml(item.title)}</h4>
         ${this.priceHtml(item)}
         ${item.reason ? `<p class="tryora-assistant__card-reason">${escapeHtml(shortReason(item.reason))}</p>` : ""}
-        ${generalPhoto ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
+
       </div>
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(item.url)}">View details</a>
-          <button type="button" class="tryora-assistant__primary" data-ta="${canStartPreview ? "preview" : "unavailable-product"}" data-card="${escapeHtml(key)}" data-id="${id}" ${generating ? "disabled" : ""}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>${generating ? "Creating preview…" : !canStartPreview ? "View product" : canChooseOptions ? "Choose options" : this.roomPhoto || this.attachment ? "Generate preview" : "Upload room photo"}</button>
+          <button type="button" class="tryora-assistant__primary" data-ta="preview" data-card="${escapeHtml(key)}" data-id="${id}" ${!canStartPreview ? "disabled" : ""}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>Preview in my room</button>
         </div>
         ${reason ? `<p class="tryora-assistant__image-note tryora-assistant__preview-note" id="ta-why-${id}" role="status">${escapeHtml(reason)}</p>` : ""}
-    </article>${this.cardOptions.has(key) ? this.optionsPanelHtml(key, this.cardOptions.get(key)!) : ""}`;
+    </article>`;
   }
 
   private visualiseHtml(item: Recommendation) {
