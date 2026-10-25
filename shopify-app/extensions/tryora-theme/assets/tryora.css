@@ -286,7 +286,7 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__failed { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 92%; padding: 9px 12px; border: 1px solid #ecd0ca; border-radius: 12px; background: #fdf4f2; color: #6f2a1f; font-size: 13px; }
 
 .tryora-assistant__cards { display: grid; gap: 10px; }
-.tryora-assistant__card { display: grid; grid-template-columns: 96px 1fr; gap: 12px; padding: 10px; border: 1px solid var(--ta-line); border-radius: 14px; background: var(--ta-bg); }
+.tryora-assistant__card { display: grid; grid-template-columns: 106px minmax(0,1fr); grid-template-areas: "image info" "actions actions" "notice notice"; align-items: start; gap: 12px 14px; padding: 14px; border: 1px solid var(--ta-line); border-radius: 20px; background: var(--ta-bg); }
 /* Real Shopify product thumbnails: whole product visible (contain), never stretched, with loading and error states. */
 .tryora-assistant__thumb { position: relative; align-self: start; width: 96px; aspect-ratio: 1 / 1; overflow: hidden; border-radius: 10px; background: var(--ta-bg); border: 1px solid var(--ta-line); }
 .tryora-assistant__thumb img { display: block; width: 100%; height: 100%; object-fit: contain; opacity: 1; transition: opacity .2s ease; }
@@ -307,6 +307,30 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__badge.is-yes { border-color: #c5d0ad; background: #f2f6ea; color: #3c4a1f; }
 .tryora-assistant__badge.is-no { border-color: #e6c9c3; background: #fbf2f0; color: #78291f; }
 .tryora-assistant__card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+/* Two consistent full-width CTAs beneath each product card, never mixed into the photo/details row. */
+.tryora-assistant__card > .tryora-assistant__thumb { grid-area: image; width: 106px; border-radius: 14px; }
+.tryora-assistant__card > .tryora-assistant__card-body { grid-area: info; }
+.tryora-assistant__card > .tryora-assistant__card-actions { grid-area: actions; display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; width: 100%; margin-top: 0; }
+.tryora-assistant__card > .tryora-assistant__card-actions > * { display: flex; width: 100%; min-width: 0; min-height: 44px; padding: 10px 8px; white-space: normal; text-align: center; font-size: 12.5px; }
+.tryora-assistant__card > .tryora-assistant__preview-note { grid-area: notice; margin: -3px 0 0; }
+.tryora-assistant__card > .tryora-assistant__card-body .tryora-assistant__eyebrow { letter-spacing: .035em; font-size: 10px; }
+.tryora-assistant__card > .tryora-assistant__card-body h4 { font-size: 16px; line-height: 1.3; }
+.tryora-assistant__card > .tryora-assistant__card-body .tryora-assistant__price { font-size: 14px; }
+.tryora-assistant__card > .tryora-assistant__card-body .tryora-assistant__card-reason { font-size: 12.5px; line-height: 1.5; }
+.tryora-assistant__confirm { display: grid; gap: 12px; border: 1px solid var(--ta-line); border-radius: 18px; background: var(--ta-bg); padding: 14px; margin-top: 12px; }
+.tryora-assistant__confirm-product { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.tryora-assistant__confirm-product .tryora-assistant__thumb { width: 72px; flex: none; }
+.tryora-assistant__confirm-product > div:last-child { min-width: 0; }
+.tryora-assistant__confirm-product strong { display: block; font-size: 15px; }
+.tryora-assistant__confirm-product p, .tryora-assistant__confirm-note { font-size: 12.5px; line-height: 1.45; color: var(--ta-muted); margin: 4px 0 0; }
+.tryora-assistant__confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.tryora-assistant__confirm-actions > * { min-width: 0; width: 100%; min-height: 43px; }
+@media (max-width: 380px) {
+  .tryora-assistant__card { grid-template-columns: 84px minmax(0,1fr); padding: 11px; gap: 10px; }
+  .tryora-assistant__card > .tryora-assistant__thumb { width: 84px; }
+  .tryora-assistant__card > .tryora-assistant__card-actions { gap: 6px; }
+  .tryora-assistant__card > .tryora-assistant__card-actions > * { font-size: 11.5px; }
+}
 .tryora-assistant__primary, .tryora-assistant__secondary, .tryora-assistant__chip-button {
   display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: 6px 13px; border-radius: 999px;
   font-size: 13px; font-weight: 600; line-height: 1.2; text-decoration: none; cursor: pointer; white-space: nowrap;
