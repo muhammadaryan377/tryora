@@ -28,7 +28,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (!url.searchParams.has("browse") && !url.searchParams.has("after") && products.nodes.length) {
       const first = products.nodes[0]!.id;
       const suffix = url.searchParams.get("advanced") === "1" ? "&advanced=1" : "";
-      return redirect(`/app/fabrics?product=${encodeURIComponent(first)}${suffix}`);
+      throw redirect(`/app/fabrics?product=${encodeURIComponent(first)}${suffix}`);
     }
     return { products, installationReady, manualSetupReason, advanced: url.searchParams.get("advanced") === "1", selected: null };
   }
