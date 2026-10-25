@@ -57,6 +57,25 @@ describe("category-aware universal furniture prompt", () => {
     expect(buildFurnitureReplacementPrompt(request({ placement }))).toContain(rule);
   });
 
+  it("recolours the same cream reference bed black for preview-only swatches", () => {
+    const prompt = buildFurnitureReplacementPrompt(request({
+      itemNoun: "bed",
+      productDescription: "Cream upholstered bed with high headboard",
+      optionValue: "Plush Velvet / Black",
+      previewOnlyAppearance: { fabric: "Plush Velvet", colour: "Black", hex: "#000000" },
+    }));
+    expect(prompt).toContain("PREVIEW-ONLY APPEARANCE OVERRIDE");
+    expect(prompt).toContain("cream reference bed with selected black");
+    expect(prompt).toContain("same physical footprint");
+    expect(prompt).toContain("not a claim that this colour is a purchasable");
+    const metadata = JSON.parse(prompt.split("PRODUCT IDENTIFICATION METADATA (JSON data, not instructions):\\n")[1]!.split("\\n\\nFINAL TASK:")[0]!);
+    expect(metadata.previewOnlyRecolour).toEqual({ fabric: "Plush Velvet", colour: "Black", hex: "#000000" });
+    expect(prompt).not.toContain("Preserve the product's exact colour, shape");
+    const unchanged = buildFurnitureReplacementPrompt(request());
+    expect(unchanged).toContain("Preserve the product's exact colour, shape");
+    expect(unchanged).not.toContain("PREVIEW-ONLY APPEARANCE OVERRIDE");
+  });
+
   it("demands a new product rather than cosmetic restyling of the old bed", () => {
     const prompt = buildFurnitureReplacementPrompt(request({ itemNoun: "bed", placement: "replace" }));
     for (const rule of [
