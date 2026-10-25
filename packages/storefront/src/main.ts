@@ -1,3 +1,4 @@
+import { swatchAppearanceStyle, type SwatchAppearance } from "./swatch-appearance.js";
 import type { PopupPreviewHandoff } from "./preview-handoff.js";
 /**
  * Tryora storefront popup. Bundled into the theme app extension as assets/tryora.js.
@@ -41,6 +42,7 @@ interface Swatch {
 }
 
 interface Config {
+  swatchAppearance?: SwatchAppearance;
   enabled: boolean;
   available: boolean;
   productId: string;
@@ -875,7 +877,7 @@ export class Tryora {
     return '<div class="tryora__sw ' + (!c.fabricOptionName && /fabric/i.test(c.selectorLabel ?? c.optionName ?? "") ? 'tryora__sw--fabric' : 'tryora__sw--colour') + '"><p class="tryora__label"><strong>' + esc(c.product) + '</strong>' +
       (selected ? ' · ' + esc(selected) : '') + '</p>' + this.fabricPicker(locked) +
       '<p class="tryora__label">Choose ' + esc(c.selectorLabel ?? c.optionName ?? 'option') + '</p>' +
-      '<div class="tryora__swrow ' + (mobile ? 'tryora__swrow--scroll' : '') + '" role="radiogroup" aria-label="' + esc(c.selectorLabel ?? c.optionName ?? 'Options') + '">' +
+      '<div class="tryora__swrow ' + (mobile ? 'tryora__swrow--scroll' : '') + (swatchAppearanceStyle(c.swatchAppearance) ? ' tryora__swrow--custom' : '') + '" role="radiogroup" aria-label="' + esc(c.selectorLabel ?? c.optionName ?? 'Options') + '">' +
       shown.map((x) => this.swatch(x, locked)).join("") +
       (more ? '<button class="tryora__more" data-act="more" aria-label="Show all options">+' + more + '<br>more</button>' : '') + '</div>' +
       (mobile && all.length > 5 ? '<button class="tryora__link" data-act="more">All ' + all.length + ' options</button>' : '') +
@@ -908,10 +910,11 @@ export class Tryora {
     const text = !x.image && fabricOnly;
     // A colour with no sample image or Shopify colour keeps the same round size: an empty sample, named below.
     const nosample = !x.image && !x.colour && !fabricOnly;
+    const chipStyle = (!text ? swatchAppearanceStyle(this.cfg.swatchAppearance) : "") + (!text && !x.image && x.colour ? "background:" + esc(x.colour) + ";" : "");
     return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-unavailable ' : '') + (text ? 'is-text' : nosample ? 'is-nosample' : '') +
-      '" data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
+      '"' + (swatchAppearanceStyle(this.cfg.swatchAppearance) ? ' style="min-width:' + this.cfg.swatchAppearance!.size + 'px;flex-basis:auto"' : '') + ' data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
       ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', preview not supported for selected options' : '') + '">' +
-      '<span class="tryora__chip"' + (!text && !x.image && x.colour ? ' style="background:' + esc(x.colour) + '"' : '') + '>' +
+      '<span class="tryora__chip"' + (chipStyle ? ' style="' + chipStyle + '"' : '') + '>' +
       (x.image ? '<img src="' + esc(x.image) + '" alt="' + esc(label) + '" loading="lazy">' : text ? esc(label) : '') + '</span>' +
       (text ? '' : '<span class="tryora__sname">' + esc(label) + '</span>') +
       (locked && !selected ? '<span class="tryora__lock" aria-hidden="true">' + LOCK + '</span>' : '') +
@@ -923,7 +926,7 @@ export class Tryora {
     const locked = !!this.state.generation;
     return '<div class="tryora__panel ' + (isMobile() ? 'tryora__panel--sheet' : '') + '" role="dialog" aria-label="All options">' +
       '<div class="tryora__ptop"><strong>All options</strong><button class="tryora__x" data-act="panel-close" aria-label="Close options">×</button></div>' +
-      this.fabricPicker(locked) + '<div class="tryora__grid" role="radiogroup" aria-label="' + esc(this.cfg.selectorLabel ?? this.cfg.optionName ?? 'Options') + '">' +
+      this.fabricPicker(locked) + '<div class="tryora__grid' + (swatchAppearanceStyle(this.cfg.swatchAppearance) ? ' tryora__swrow--custom' : '') + '" role="radiogroup" aria-label="' + esc(this.cfg.selectorLabel ?? this.cfg.optionName ?? 'Options') + '">' +
       all.map((x) => this.swatch(x, locked)).join("") + '</div></div>';
   }
 

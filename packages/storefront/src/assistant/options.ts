@@ -20,6 +20,7 @@ export interface OptionVariant {
   previewContext?: { mappingRevision: string; sourceVariantId: string; pageSourceVariantId?: string };
 }
 export interface ProductOptions {
+  swatchAppearance?: { shape: "circle" | "rectangle"; size: 25 | 50 | 75 | 100 };
   productRef: string;
   productId: string;
   title: string;

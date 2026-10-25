@@ -8,7 +8,8 @@ export interface ManagedBinding {
   nativeOptions: Record<string, string>; preserved: Record<string, string>; externalValues: Record<string, string>;
   referenceMediaIds: string[]; reviewed: boolean;
 }
-export interface FabricDraft { fabrics: ManagedFabric[]; bindings: ManagedBinding[]; roles: ManualMapping["roles"] }
+export interface SwatchAppearance { shape: "circle" | "rectangle"; size: 25 | 50 | 75 | 100 }
+export interface FabricDraft { swatchAppearance?: SwatchAppearance; fabrics: ManagedFabric[]; bindings: ManagedBinding[]; roles: ManualMapping["roles"] }
 export interface FabricDocument {
   kind: "fabric_colour_manager"; schemaVersion: 1; shopId: string; productId: string;
   draft: FabricDraft; published: ManualMapping | null;
@@ -25,9 +26,15 @@ const strings = (x: unknown): x is Record<string, string> => record(x) && Object
   text(k, 256) && !["constructor", "prototype", "__proto__", "__tryora_preserved_configuration__", "__tryora_mapped_fabric__"].includes(k) && text(v, 2048));
 
 export function parseFabricDraft(raw: unknown): FabricDraft {
-  if (!record(raw) || !keys(raw, ["fabrics", "bindings", "roles"]) || !Array.isArray(raw.fabrics) || raw.fabrics.length > 100 ||
+  if (!record(raw) || !keys(raw, ["fabrics", "bindings", "roles", "swatchAppearance"]) || !Array.isArray(raw.fabrics) || raw.fabrics.length > 100 ||
       !Array.isArray(raw.bindings) || raw.bindings.length > 2048 || !strings(raw.roles) || !keys(raw.roles, ["fabric", "colour", "size", "composite"]) ||
       new Set(Object.values(raw.roles)).size !== Object.values(raw.roles).length || JSON.stringify(raw).length > 900_000) throw new FabricConfigError("Invalid or oversized fabric configuration.");
+  if (raw.swatchAppearance !== undefined) {
+    const appearance = raw.swatchAppearance;
+    if (!record(appearance) || !keys(appearance, ["shape", "size"]) ||
+        typeof appearance.shape !== "string" || !["circle", "rectangle"].includes(appearance.shape) || ![25, 50, 75, 100].includes(appearance.size as number))
+      throw new FabricConfigError("Choose a circle or rectangle and a swatch size of 25, 50, 75 or 100 px.");
+  }
   const fabricIds = new Set<string>(), names = new Set<string>(), colourIds = new Set<string>();
   const pairs = new Set<string>();
   for (const fabric of raw.fabrics) {

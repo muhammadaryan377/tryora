@@ -36,6 +36,11 @@ const ask = (selected?: any, currentProductId?: string) => {
     client: model.client, env: {} as any, settings: { ...DEFAULT_ROOM_ASSISTANT_SETTINGS, enabled: true } });
 };
 describe("managed manual configurations in Room Assistant", () => {
+  it("passes saved swatch appearance to the chat option selector", async () => {
+    state.preview.swatchAppearance = { shape: "rectangle", size: 75 };
+    const data = await productOptionsForAssistant(admin, shopId, productId);
+    expect(data.swatchAppearance).toEqual({ shape: "rectangle", size: 75 });
+  });
   it("offers only exact reviewed native combinations and locks the source size/storage", async () => {
     const data = await productOptionsForAssistant(admin, shopId, productId, "gid://shopify/ProductVariant/11");
     expect(data.variants.find((v) => v.id.endsWith("/12"))).toMatchObject({ previewOption: expect.any(String), referenceImage: "https://cdn.shopify.com/102.jpg", previewContext: { mappingRevision: "revision-1", sourceVariantId: "gid://shopify/ProductVariant/11" } });
