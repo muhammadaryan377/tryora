@@ -335,7 +335,7 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__room-chip { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 10px; border-radius: 10px; background: var(--ta-surface); font-size: 12.5px; }
 .tryora-assistant__room-chip svg { width: 16px; height: 16px; color: var(--ta-accent); }
 .tryora-assistant__room-chip span { flex: 1; min-width: 0; }
-.tryora-assistant__attachment { display: flex; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--ta-line); border-radius: 12px; background: #fff; font-size: 13px; }
+.tryora-assistant__attachment { display: flex; align-items: center; gap: 8px; padding: 6px; border: 1px solid var(--ta-line); border-radius: 12px; background: var(--ta-bg); font-size: 13px; }
 .tryora-assistant__attachment img { width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }
 .tryora-assistant__attachment-name { flex: 1; min-width: 0; font-weight: 600; }
 .tryora-assistant__composer-error { padding: 6px 10px; border-radius: 10px; background: #fdf4f2; color: #6f2a1f; font-size: 12.5px; }
@@ -388,7 +388,7 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant__lead h4 { font-size: 14.5px; font-weight: 650; }
 .tryora-assistant__lead > p { color: var(--ta-muted); font-size: 12.5px; }
 .tryora-assistant__field { display: grid; gap: 3px; font-size: 12.5px; color: var(--ta-muted); }
-.tryora-assistant__field input { min-height: 40px; padding: 8px 10px; border: 1px solid #d9d6cc; border-radius: 10px; background: var(--ta-bg); color: var(--ta-ink); font: inherit; font-size: 15px; }
+.tryora-assistant__field input { min-height: 40px; padding: 8px 10px; border: 1px solid var(--ta-line); border-radius: 10px; background: var(--ta-bg); color: var(--ta-ink); font: inherit; font-size: 15px; }
 .tryora-assistant__field input:focus { outline: none; border-color: var(--ta-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ta-accent) 16%, transparent); }
 .tryora-assistant__field input[aria-invalid="true"] { border-color: #c0573f; }
 .tryora-assistant__check { display: flex; gap: 8px; align-items: flex-start; font-size: 12px; color: var(--ta-muted); }
