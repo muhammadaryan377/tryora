@@ -591,3 +591,22 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant[data-view=fullscreen] .tryora-assistant__card { grid-template-columns:140px minmax(0,1fr);padding:16px;gap:14px; }
 .tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb { width:140px;height:145px; }
 @media(max-width:480px){.tryora-assistant__card,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card{grid-template-columns:84px minmax(0,1fr);padding:12px;gap:10px}.tryora-assistant__card .tryora-assistant__thumb,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb{width:84px;height:100px}.tryora-assistant__card > .tryora-assistant__card-actions > *{font-size:12px;padding:10px 8px}}
+
+/* Product-scoped merchant swatch preferences, used only when a valid saved
+   presentation is returned. Existing native/legacy product selectors unchanged. */
+.tryora[data-tryora-swatch-shape] .tryora__sw--colour .tryora__swrow:not(.tryora__swrow--scroll) {
+  grid-template-columns: repeat(auto-fill, minmax(max(64px, calc(var(--t-merchant-sw-size) + 12px)), 1fr));
+}
+.tryora[data-tryora-swatch-shape] .tryora__sw--colour .tryora__swrow--scroll .tryora__s {
+  flex: 0 0 max(64px, calc(var(--t-merchant-sw-size) + 12px));
+}
+.tryora[data-tryora-swatch-shape] .tryora__sw--colour .tryora__s:not(.is-text) .tryora__chip,
+.tryora[data-tryora-swatch-shape] .tryora__grid .tryora__s:not(.is-text) .tryora__chip {
+  width: var(--t-merchant-sw-size);
+  height: var(--t-merchant-sw-size);
+  max-width: 100%;
+  aspect-ratio: 1;
+  border-radius: var(--t-merchant-sw-radius);
+}
+.tryora[data-tryora-swatch-shape] .tryora__sname { max-width: calc(var(--t-merchant-sw-size) + 12px); }
+.tryora__fabric-colour { width: 22px; height: 22px; display: inline-block; border-radius: 5px; border: 1px solid var(--t-line); margin-right: 6px; vertical-align: middle; }
