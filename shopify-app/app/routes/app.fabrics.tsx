@@ -4,20 +4,15 @@ import prisma from "../db.server";
 import { FabricColourManager } from "../components/fabric-colour-manager";
 import { FabricConfigError, emptyFabricDraft } from "../customization/fabric-manager";
 import { fabricProducts, draftFromMapping, compileFabricDocument, saveFabricConfiguration } from "../customization/fabric-manager.server";
-import { fabricForm, uploadFabricMedia } from "../customization/fabric-media.server";
+import { fabricForm } from "../customization/fabric-media.server";
+import { handleFabricUpload, productScope } from "../customization/fabric-upload.server";
+import { requestFabricUpload } from "../customization/fabric-upload-request";
 import { effectiveSetting, providerSettingsEnabled, providerAccess, STORE_DEFAULT } from "../customization/provider-config.server";
 import { nativeSnapshot } from "../customization/reference-resolver.server";
 import { nativeSelections } from "../core/customization";
 import { discoverNativeOptions } from "../core/native-option-discovery";
 import { isSampleMedia } from "../customization/media-roles";
 
-function productScope(request: Request) {
-  const raw = new URL(request.url).searchParams.get("product");
-  if (!raw) return null;
-  const id = /^\d+$/.test(raw) ? `gid://shopify/Product/${raw}` : raw;
-  if (!/^gid:\/\/shopify\/Product\/\d{1,20}$/.test(id)) throw new Response("Invalid product", { status: 400 });
-  return id;
-}
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const url = new URL(request.url), productId = productScope(request);
@@ -82,21 +77,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const form = await fabricForm(request);
   const revision = String(form.get("revision") ?? "");
   try {
-    if (form.get("intent") === "upload") {
-      // A merchant may upload a sample while preparing an unsaved Manual Setup draft.
-      // Uploads do not activate a mapping, alter provider mode or authorize a preview.
-      if (form.get("mode") !== "manual") throw new FabricConfigError("Select Manual Setup before uploading a fabric or colour sample.");
-      // Ownership is read from this authenticated shop, never a submitted shop ID.
-      await nativeSnapshot(admin, productId, false);
-      const saved = await prisma.customizationConfig.findUnique({ where: { shopId_productId: { shopId: session.shop, productId } } });
-      if ((saved?.revision ?? "") !== revision) throw new FabricConfigError("Product settings changed in another session. Reload before uploading.");
-      if (saved && !["shopify_native", "manual_mapping", "cloudlift"].includes(saved.providerId)) throw new FabricConfigError("Review this product's existing provider before uploading samples.");
-      const purpose = form.get("purpose");
-      if (purpose !== "sample" && purpose !== "reference") throw new FabricConfigError("Choose fabric sample or full-product reference image.");
-      const file = form.get("image");
-      if (!(file instanceof Blob)) throw new FabricConfigError("Choose an image to upload.");
-      return await uploadFabricMedia(admin, productId, file, purpose);
-    }
+    // The page itself uploads through the JSON-only /app/fabrics/upload route; this keeps direct action callers working.
+    if (form.get("intent") === "upload") return await handleFabricUpload(admin, session.shop, productId, form);
     if (form.get("intent") !== "save") throw new FabricConfigError("Choose a supported configuration action.");
     const raw = String(form.get("draft") ?? "");
     if (raw.length > 900_000) throw new FabricConfigError("Configuration is too large.");
@@ -112,14 +94,7 @@ export default function FabricsPage() {
   const data = useLoaderData<typeof loader>(), actionData = useActionData<typeof action>(), navigation = useNavigation(), submit = useSubmit();
   return <FabricColourManager data={data} error={actionData && "error" in actionData ? actionData.error : undefined} busy={navigation.state !== "idle"}
     save={(mode, draft) => submit({ intent: "save", mode, revision: data.selected?.revision ?? "", draft: JSON.stringify(draft) }, { method: "post" })}
-    upload={async (file, purpose) => {
-      const form = new FormData(); form.set("intent", "upload"); form.set("mode", "manual"); form.set("purpose", purpose); form.set("revision", data.selected?.revision ?? ""); form.set("image", file);
-      const response = await fetch(window.location.href, { method: "POST", body: form, credentials: "same-origin" });
-      const result = await response.json();
-      if (!response.ok || result.error) throw new Error(result.error ?? "Upload failed. Please try again.");
-      if (result.pending) throw new Error("Shopify is processing this image. Refresh from Shopify, then select the new image; do not upload it again.");
-      return result.media;
-    }} />;
+    upload={(file, purpose) => requestFabricUpload({ productId: data.selected?.productId ?? "", revision: data.selected?.revision ?? "", file, purpose })} />;
 }
 
 /** Show a useful recovery screen rather than an empty Shopify embedded app on a loader failure. */
