@@ -78,7 +78,11 @@ function pageKind(pageType: string): AssistantPageType {
   return "other";
 }
 
-const normalized = (value: string | undefined) => value?.trim().toLowerCase() ?? "";
+// Theme Liquid sends numeric IDs, while merchants may exclude Shopify GIDs.
+const normalized = (value: string | undefined) => {
+  const cleaned = value?.trim().toLowerCase() ?? "";
+  return cleaned.match(/^gid:\/\/shopify\/(?:product|collection)\/(\d+)$/)?.[1] ?? cleaned;
+};
 
 export function roomAssistantVisible(settings: RoomAssistantSettings, page: AssistantPageContext): boolean {
   if (!settings.enabled || !settings.pages[pageKind(page.pageType)]) return false;
