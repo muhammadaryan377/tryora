@@ -14,6 +14,7 @@ import { earlierFor, historyFor, loadState, saveState, type ChatState, type Entr
 import { cardForVariant, resolveVariant, selectionsFor, valuesFor, type ProductOptions } from "./options.js";
 import { PROXY } from "./transport.js";
 import { tagBasket } from "../attribution.js";
+import { applyAssistantTheme, storefrontAssistantTheme } from "./theme.js";
 
 export interface AssistantConfig {
   enabled: boolean;
@@ -858,7 +859,7 @@ export class RoomAssistant {
     root.hidden = true;
     root.dataset.view = this.state.ui.view;
     root.dataset.position = this.config.launcher.position;
-    root.style.setProperty("--ta-accent", this.config.launcher.colour);
+    applyAssistantTheme(root, storefrontAssistantTheme());
     root.innerHTML = `<div class="tryora-assistant__backdrop"></div>
       <section class="tryora-assistant__panel" role="dialog" aria-labelledby="tryora-assistant-title" aria-describedby="tryora-assistant-subtitle">
         <header class="tryora-assistant__header">
