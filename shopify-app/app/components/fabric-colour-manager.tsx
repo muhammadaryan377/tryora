@@ -348,7 +348,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                     </div>
                   </div>
                   <MediaField label={`Fabric texture ${fabric.name}`} role="fabric texture" kind="sample" sampleIds={sampleIds} value={fabric.textureMediaId} media={media} change={(id) => updateFabric(fabric.id, { textureMediaId: id })} upload={uploadImage} disabled={disabledUpload} />
-                  {!sampleReady(fabric.name, fabric.hex, fabric.textureMediaId) && <p className="fm-muted" role="status">Fabric name and either HEX colour or texture image are required.</p>
+                  {!sampleReady(fabric.name, fabric.hex, fabric.textureMediaId) && <p className="fm-muted" role="status">Fabric name and either HEX colour or texture image are required.</p>}
                   <div className="fm-editor-foot">
                     <label className="fm-check"><input type="checkbox" checked={fabric.enabled} onChange={(e) => updateFabric(fabric.id, { enabled: e.currentTarget.checked })} />Show this fabric to shoppers</label>
                     <RemoveButton label="Remove fabric" onConfirm={() => removeFabric(fabric.id)} />
