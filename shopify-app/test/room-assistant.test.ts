@@ -29,6 +29,7 @@ import {
   normalisePreferences,
   normaliseRoomContext,
   parseToolArguments,
+  orderPriceComparison,
   runAssistantTurn,
   sanitiseMessage,
   wantsMoreOptions,
@@ -211,6 +212,18 @@ describe("input validation", () => {
     // A budget the shopper typed may be repeated back.
     expect(sanitiseMessage("Here are beds under £500.", allowed, "grey bed under £500").message).toBe("Here are beds under £500.");
     expect(sanitiseMessage("It costs 450 GBP.", allowed, "").removed).toBe(1);
+  });
+
+  it("orders different-price requests by verified Shopify prices, not model card order", () => {
+    const picks = [
+      { productRef: "3", price: "379.99", title: "Opulence Bed" },
+      { productRef: "2", price: "299.99", title: "Madison Bed" },
+      { productRef: "4", price: "319.99", title: "Aspen Bed" },
+      { productRef: "1", price: "599.99", title: "Premium Bed" },
+    ];
+    expect(orderPriceComparison(picks, "show me beds with different prices").map(p => p.price))
+      .toEqual(["299.99", "319.99", "599.99"]);
+    expect(orderPriceComparison(picks, "show me some beds")).toEqual(picks);
   });
 });
 
