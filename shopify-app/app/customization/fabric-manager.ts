@@ -41,7 +41,7 @@ export function parseFabricDraft(raw: unknown): FabricDraft {
     if (!record(fabric) || !keys(fabric, ["id", "name", "description", "enabled", "textureMediaId", "hex", "colours"]) || !id(fabric.id) || !text(fabric.name, 140) ||
         typeof fabric.description !== "string" || fabric.description.length > 1000 || typeof fabric.enabled !== "boolean" || !nullableMedia(fabric.textureMediaId) ||
         !(fabric.hex === undefined || fabric.hex === null || typeof fabric.hex === "string" && /^#[0-9a-fA-F]{6}$/.test(fabric.hex)) ||
-        !Array.isArray(fabric.colours) || fabric.colours.length > 100 || fabricIds.has(fabric.id) || names.has(fabric.name.trim().toLocaleLowerCase())) throw new FabricConfigError("Fabric names and IDs must be unique; use a valid product-media texture.");
+        !Array.isArray(fabric.colours) || fabric.colours.length > 100 || fabricIds.has(fabric.id) || names.has(fabric.name.trim().toLocaleLowerCase())) throw new FabricConfigError("Fabric names and IDs must be unique; use a valid HEX colour or uploaded sample image.");
     fabricIds.add(fabric.id); names.add(fabric.name.trim().toLocaleLowerCase());
     const colourNames = new Set<string>();
     for (const colour of fabric.colours) {
