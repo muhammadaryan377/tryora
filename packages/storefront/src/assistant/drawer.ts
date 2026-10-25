@@ -1349,6 +1349,7 @@ export class RoomAssistant {
         <h4>${escapeHtml(item.title)}</h4>
         ${this.priceHtml(item)}
         ${item.reason ? `<p class="tryora-assistant__card-reason">${escapeHtml(shortReason(item.reason))}</p>` : ""}
+        ${generalPhoto && !item.previewAvailable ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
 
       </div>
         <div class="tryora-assistant__card-actions">
