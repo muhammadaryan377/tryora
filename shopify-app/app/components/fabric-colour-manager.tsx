@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { hexToRgb } from "../customization/colour-values";
-import { emptyFabricDraft, type FabricDraft, type ManagedBinding, type ManagedColour, type ManagedFabric } from "../customization/fabric-manager";
+import { DEFAULT_SWATCH_PRESENTATION, emptyFabricDraft, type FabricDraft, type ManagedBinding, type ManagedColour, type ManagedFabric } from "../customization/fabric-manager";
 import { referenceChoices, sampleChoices } from "../customization/media-roles";
 
 type Media = { id: string; url: string; alt?: string | null };
@@ -160,6 +160,12 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   }, [dirty]);
 
   const fabric = draft.fabrics.find((f) => f.id === fabricId);
+  const swatchShape = draft.presentation?.shape ?? DEFAULT_SWATCH_PRESENTATION.shape;
+  const swatchSize = draft.presentation?.size ?? DEFAULT_SWATCH_PRESENTATION.size;
+  const sampleReady = (name: string, hex: string | null | undefined, image: string | null | undefined) =>
+    !!name.trim() && (!!image || !!hex && HEX.test(hex));
+  const updateSwatchPresentation = (patch: Partial<{ shape: "round" | "square"; size: number }>) =>
+    setDraft((value) => ({ ...value, presentation: { shape: swatchShape, size: swatchSize, ...patch } }));
   const mediaUrl = (id: string | null) => media.find((m) => m.id === id)?.url;
   const sampleIds = new Set(draft.fabrics.flatMap((f) => [f.textureMediaId, ...f.colours.map((c) => c.swatchMediaId)]).filter((id): id is string => !!id));
   const manual = mode === "manual";
@@ -173,7 +179,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   });
   const updateBinding = (id: string, patch: Partial<ManagedBinding>) => setDraft((d) => ({ ...d, bindings: d.bindings.map((b) => b.id === id ? { ...b, ...patch, reviewed: patch.reviewed ?? false } : b) }));
   const uploadImage = async (file: File, purpose: "sample" | "reference") => { const m = await upload(file, purpose); if (m) setMedia((all) => [...all.filter((x) => x.id !== m.id), m]); return m; };
-  const addFabric = () => { const id = uid(); setDraft((d) => ({ ...d, fabrics: [...d.fabrics, { id, name: "", description: "", enabled: true, textureMediaId: null, colours: [] }] })); setFabricId(id); setEditingFabric(true); };
+  const addFabric = () => { const id = uid(); setDraft((d) => ({ ...d, fabrics: [...d.fabrics, { id, name: "", description: "", enabled: true, textureMediaId: null, hex: null, colours: [] }] })); setFabricId(id); setEditingFabric(true); };
   const removeFabric = (id: string) => { setDraft((d) => ({ ...d, fabrics: d.fabrics.filter((x) => x.id !== id), bindings: d.bindings.filter((b) => b.fabricId !== id) })); setFabricId(draft.fabrics.find((x) => x.id !== id)?.id ?? ""); setEditingFabric(false); };
   const addMapping = (colourId?: string) => {
     const c = colourId ? fabric?.colours.find((x) => x.id === colourId) : fabric?.colours[0]; if (!fabric || !c) return;
@@ -184,7 +190,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     requestAnimationFrame(() => document.getElementById("fm-mapping")?.scrollIntoView({ block: "start" }));
   };
   const saveColour = () => {
-    if (!fabric || !colourDraft) return;
+    if (!fabric || !colourDraft || !sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)) return;
     const { isNew, ...colour } = colourDraft;
     updateFabric(fabric.id, { colours: isNew ? [...fabric.colours, colour] : fabric.colours.map((x) => x.id === colour.id ? colour : x) });
     setColourDraft(null);
@@ -215,18 +221,20 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
     return c.swatchMediaId ? { label: "Sample added", tone: "neutral" } : { label: "Needs sample", tone: "neutral" };
   };
   const ready = draft.bindings.filter((b) => readiness(b).key === "ready").length;
-  const unnamed = draft.fabrics.some((f) => !f.name.trim() || f.colours.some((c) => !c.name.trim()));
-  const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || unnamed || !!colourDraft);
+  const invalidSamples = draft.fabrics.some((f) =>
+    !sampleReady(f.name, f.hex, f.textureMediaId) ||
+    f.colours.some((c) => !sampleReady(c.name, c.hex, c.swatchMediaId)));
+  const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || invalidSamples || !!colourDraft);
   const saveHint = !manual || !data.installationReady ? "" : p?.importBlocked ? "This product's existing integration must be reviewed before editing." :
-    colourDraft ? "Save or cancel the colour you're editing first." : unnamed ? "Name every fabric and colour before saving." : "";
+    colourDraft ? "Save or cancel the colour you're editing first." : invalidSamples ? "Each fabric and colour needs a name plus a HEX colour or sample image before saving." : "";
   const workspaceQuery = data.startInManualMode ? "&workspace=manual" : "";
   const link = p ? `/app/fabrics?product=${encodeURIComponent(p.productId)}${workspaceQuery}` : data.startInManualMode ? "/app/fabrics?workspace=manual" : "/app/fabrics";
   const scoped = draft.bindings.filter((b) => mappingScope === "all" || b.fabricId === fabricId);
   const pageCount = Math.max(1, Math.ceil(scoped.length / MAPPINGS_PER_PAGE));
   const currentPage = Math.min(mappingPage, pageCount - 1);
   const steps = [
-    { label: "Fabric & texture", done: draft.fabrics.some((f) => f.name.trim() && f.textureMediaId) },
-    { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => c.swatchMediaId || c.hex)) },
+    { label: "Fabric & texture", done: draft.fabrics.some((f) => sampleReady(f.name, f.hex, f.textureMediaId)) },
+    { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => sampleReady(c.name, c.hex, c.swatchMediaId))) },
     { label: "Saved", done: !dirty && !!p?.revision },
   ];
 
@@ -302,7 +310,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
               <div className="fabric-list fm-fabric-list" role="list">{draft.fabrics.map((f) => {
                 const draftItem = !f.name.trim();
                 return <button role="listitem" className="fabric-list-item fm-fabric-item" type="button" key={f.id} aria-pressed={f.id === fabricId} onClick={() => { if (f.id !== fabricId) { setFabricId(f.id); setEditingFabric(draftItem); } }}>
-                  <Thumb url={mediaUrl(f.textureMediaId)} label={`${f.name || "Untitled fabric"} texture`} empty="No texture" size={44} />
+                  <Thumb url={mediaUrl(f.textureMediaId)} hex={f.hex && HEX.test(f.hex) ? f.hex : null} label={`${f.name || "Untitled fabric"} texture`} empty="No texture" size={44} />
                   <span className="fm-fabric-text"><strong>{draftItem ? "Untitled fabric" : f.name}</strong>
                     <small>{f.colours.length} {f.colours.length === 1 ? "colour" : "colours"}{f.enabled ? "" : " · Disabled"}</small></span>
                   {draftItem && <span className="fm-pill fm-pill--attention">Draft</span>}
@@ -314,7 +322,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <section className="fm-card fm-detail" aria-label="Selected fabric">
               {!fabric ? <div className="fm-empty"><h2>Add a fabric to begin</h2><p className="fm-muted">Each fabric holds its own colours and samples, such as Plush Velvet with Cream, Grey and Navy.</p></div> : <>
                 <div className="fm-fabric-head">
-                  <Thumb url={mediaUrl(fabric.textureMediaId)} label={`${fabric.name || "Untitled fabric"} texture`} empty="No texture" size={64} />
+                  <Thumb url={mediaUrl(fabric.textureMediaId)} hex={fabric.hex && HEX.test(fabric.hex) ? fabric.hex : null} label={`${fabric.name || "Untitled fabric"} texture`} empty="No texture" size={64} />
                   <div className="fm-grow"><h2>{fabric.name || "Untitled fabric"}</h2>
                     <p className="fm-muted">{fabric.description || (fabric.textureMediaId ? "Fabric texture added." : "Upload a close-up of this fabric's texture.")}</p></div>
                   {!fabric.enabled && <span className="fm-pill fm-pill--neutral">Disabled</span>}
@@ -344,7 +352,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                     <span className="fm-colour-text"><strong>{c.name}</strong><small className="fm-tabular">{c.swatchMediaId ? "Sample photo" : c.hex ? c.hex.toUpperCase() : "No sample yet"}</small></span>
                     <span className={`fm-pill fm-pill--${status.tone}`}>{status.label}</span>
                   </button></li>;
-                })}</ul> : !colourDraft && <p className="fm-muted">No colours for {fabric.name || "this fabric"} yet. Add each colour with its own sample photo.</p>}
+                })}</ul> : !colourDraft && <p className="fm-muted">No colours for {fabric.name || "this fabric"} yet. Each colour needs a name and HEX colour or sample photo.</p>}
 
                 {colourDraft && <div className="fm-editor fm-colour-editor" role="group" aria-label={colourDraft.isNew ? "New colour" : `Edit ${colourDraft.name}`}>
                   <h3>{colourDraft.isNew ? `New colour for ${fabric.name || "this fabric"}` : `Edit ${colourDraft.name || "colour"}`}</h3>
@@ -358,7 +366,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                           onChange={(e) => setColourDraft({ ...colourDraft, hex: e.currentTarget.value.trim() || null })} />
                         {colourDraft.hex && <button type="button" className="fm-link" onClick={() => setColourDraft({ ...colourDraft, hex: null })}>Clear</button>}
                       </div>
-                      <span className="fm-muted fm-tabular fm-rgb" aria-live="polite">{colourDraft.hex && HEX.test(colourDraft.hex) ? `RGB ${hexToRgb(colourDraft.hex)}` : colourDraft.hex ? "" : "Shown only when there is no sample photo."}</span>
+                      <span className="fm-muted fm-tabular fm-rgb" aria-live="polite">{colourDraft.hex && HEX.test(colourDraft.hex) ? `RGB ${hexToRgb(colourDraft.hex)}` : colourDraft.hex ? "" : "Provide a HEX colour or sample photo. Both are allowed."}</span>
                       {colourDraft.hex && !HEX.test(colourDraft.hex) && <span role="alert" className="fm-error">Use the #RRGGBB format, for example #F2E8D5.</span>}
                     </div>
                   </div>
@@ -369,7 +377,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                     {!colourDraft.isNew && <RemoveButton label="Remove colour" onConfirm={() => { const id = colourDraft.id; updateFabric(fabric.id, { colours: fabric.colours.filter((x) => x.id !== id) }); setDraft((d) => ({ ...d, bindings: d.bindings.filter((b) => b.colourId !== id) })); setColourDraft(null); }} />}
                     <span className="fm-grow" />
                     <button type="button" className="fm-btn" onClick={() => setColourDraft(null)}>Cancel</button>
-                    <button type="button" className="fm-btn fm-btn--primary" disabled={!colourDraft.name.trim() || !!colourDraft.hex && !HEX.test(colourDraft.hex)} onClick={saveColour}>Save colour</button>
+                    <button type="button" className="fm-btn fm-btn--primary" disabled={!sampleReady(colourDraft.name, colourDraft.hex, colourDraft.swatchMediaId)} onClick={saveColour}>Save colour</button>
                   </div>
                 </div>}
               </>}
