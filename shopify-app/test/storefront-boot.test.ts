@@ -79,7 +79,7 @@ function setup(options: Page) {
   });
   vi.stubGlobal("window", { matchMedia: () => ({ matches: !!options.mobile }) });
   vi.stubGlobal("location", { hash: "", pathname: "/products/aria", search: "" });
-  vi.stubGlobal("getComputedStyle", () => ({ position: "static" }));
+  vi.stubGlobal("getComputedStyle", () => ({ position: "static", getPropertyValue: () => "" }));
   vi.stubGlobal("localStorage", { getItem: () => "00000000-0000-4000-8000-000000000001", setItem: vi.fn() });
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     fetches.push(url);

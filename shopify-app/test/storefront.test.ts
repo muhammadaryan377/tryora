@@ -3,6 +3,12 @@ import sharp from "sharp";
 import { PreviewService, InMemoryStore } from "../app/core/index";
 
 const fixture = vi.hoisted(() => ({ service: null as any, config: null as any, providerSettings: [] as any[], usages: [] as any[], events: new Map<string, unknown>(), leadUpdates: [] as any[] }));
+// Exercise the real mock provider without the development UI's artificial delay.
+// Timeout/abort behaviour is tested separately with an explicitly hung provider.
+vi.mock("../app/image-provider.server", async () => {
+  const { MockImageProvider } = await import("../app/core/provider");
+  return { createImageProvider: () => new MockImageProvider(0) };
+});
 vi.mock("../app/db.server", () => ({ default: {
   productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
   customizationConfig: { findMany: vi.fn(async () => fixture.providerSettings) },
