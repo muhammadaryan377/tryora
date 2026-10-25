@@ -1312,7 +1312,8 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
       continue;
     }
     const variantRef = isRef(entry.variantRef) ? entry.variantRef : null;
-    if (picks.some((pick) => pick.productRef === entry.productRef && pick.variantRef === variantRef)) continue;
+    // Product cards represent distinct bed designs, not repeated colour/size variants of one bed.
+    if (picks.some((pick) => pick.productRef === entry.productRef)) continue;
     picks.push({ productRef: entry.productRef, variantRef, reason: String(entry.reason ?? "") });
   }
   // Fresh price, stock and variant data before anything actionable is shown.
