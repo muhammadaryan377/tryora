@@ -1,14 +1,21 @@
-/** Merchant-authored catalogue metadata. Images remain product-owned Shopify media IDs. */
+/** Merchant-authored preview-only catalogue metadata. Sample images may be standalone Shopify Files; full furniture references remain product-owned. */
 import type { ManualMapping } from "./option-model";
 export class FabricConfigError extends Error {}
 export interface ManagedColour { id: string; name: string; enabled: boolean; swatchMediaId: string | null; hex: string | null }
-export interface ManagedFabric { id: string; name: string; description: string; enabled: boolean; textureMediaId: string | null; colours: ManagedColour[] }
+export interface ManagedFabric { id: string; name: string; description: string; enabled: boolean; textureMediaId: string | null; /** Optional on legacy records; required on new entries if no image is provided. */ hex?: string | null; colours: ManagedColour[] }
+export interface SwatchPresentation { shape: "round" | "square"; size: number }
+export const DEFAULT_SWATCH_PRESENTATION: SwatchPresentation = { shape: "round", size: 50 };
+export function validSwatchPresentation(value: unknown): value is SwatchPresentation {
+  if (!record(value) || !keys(value, ["shape", "size"])) return false;
+  return (value.shape === "round" || value.shape === "square") && typeof value.size === "number" &&
+    Number.isInteger(value.size) && value.size >= 25 && value.size <= 100;
+}
 export interface ManagedBinding {
   id: string; fabricId: string; colourId: string; variantId: string | null;
   nativeOptions: Record<string, string>; preserved: Record<string, string>; externalValues: Record<string, string>;
   referenceMediaIds: string[]; reviewed: boolean;
 }
-export interface FabricDraft { fabrics: ManagedFabric[]; bindings: ManagedBinding[]; roles: ManualMapping["roles"] }
+export interface FabricDraft { fabrics: ManagedFabric[]; bindings: ManagedBinding[]; roles: ManualMapping["roles"]; /** Optional for older saved records. */ presentation?: SwatchPresentation }
 export interface FabricDocument {
   kind: "fabric_colour_manager"; schemaVersion: 1; shopId: string; productId: string;
   draft: FabricDraft; published: ManualMapping | null;
@@ -25,14 +32,15 @@ const strings = (x: unknown): x is Record<string, string> => record(x) && Object
   text(k, 256) && !["constructor", "prototype", "__proto__", "__tryora_preserved_configuration__", "__tryora_mapped_fabric__"].includes(k) && text(v, 2048));
 
 export function parseFabricDraft(raw: unknown): FabricDraft {
-  if (!record(raw) || !keys(raw, ["fabrics", "bindings", "roles"]) || !Array.isArray(raw.fabrics) || raw.fabrics.length > 100 ||
+  if (!record(raw) || !keys(raw, ["fabrics", "bindings", "roles", "presentation"]) || (raw.presentation !== undefined && !validSwatchPresentation(raw.presentation)) || !Array.isArray(raw.fabrics) || raw.fabrics.length > 100 ||
       !Array.isArray(raw.bindings) || raw.bindings.length > 2048 || !strings(raw.roles) || !keys(raw.roles, ["fabric", "colour", "size", "composite"]) ||
       new Set(Object.values(raw.roles)).size !== Object.values(raw.roles).length || JSON.stringify(raw).length > 900_000) throw new FabricConfigError("Invalid or oversized fabric configuration.");
   const fabricIds = new Set<string>(), names = new Set<string>(), colourIds = new Set<string>();
   const pairs = new Set<string>();
   for (const fabric of raw.fabrics) {
-    if (!record(fabric) || !keys(fabric, ["id", "name", "description", "enabled", "textureMediaId", "colours"]) || !id(fabric.id) || !text(fabric.name, 140) ||
+    if (!record(fabric) || !keys(fabric, ["id", "name", "description", "enabled", "textureMediaId", "hex", "colours"]) || !id(fabric.id) || !text(fabric.name, 140) ||
         typeof fabric.description !== "string" || fabric.description.length > 1000 || typeof fabric.enabled !== "boolean" || !nullableMedia(fabric.textureMediaId) ||
+        !(fabric.hex === undefined || fabric.hex === null || typeof fabric.hex === "string" && /^#[0-9a-fA-F]{6}$/.test(fabric.hex)) ||
         !Array.isArray(fabric.colours) || fabric.colours.length > 100 || fabricIds.has(fabric.id) || names.has(fabric.name.trim().toLocaleLowerCase())) throw new FabricConfigError("Fabric names and IDs must be unique; use a valid product-media texture.");
     fabricIds.add(fabric.id); names.add(fabric.name.trim().toLocaleLowerCase());
     const colourNames = new Set<string>();
@@ -58,6 +66,21 @@ export function parseFabricDraft(raw: unknown): FabricDraft {
     } else if (Object.keys(binding.nativeOptions).length) throw new FabricConfigError("Native option values require an exact Shopify variant.");
   }
   return JSON.parse(JSON.stringify(raw)) as FabricDraft;
+}
+/** Check merchant-created preview-only fabric/colour entries before saving to the database.
+ * Legacy variant-bound mappings stay readable and unchanged until explicitly migrated.
+ */
+export function validateFabricAppearance(draft: FabricDraft): void {
+  for (const fabric of draft.fabrics) {
+    if (!fabric.name.trim() || !(fabric.textureMediaId || fabric.hex)) {
+      throw new FabricConfigError("Each fabric needs a name and either a HEX colour or a texture image.");
+    }
+    for (const colour of fabric.colours) {
+      if (!colour.name.trim() || !(colour.hex || colour.swatchMediaId)) {
+        throw new FabricConfigError("Each colour needs a name and either a HEX colour or a sample image.");
+      }
+    }
+  }
 }
 export function parseFabricDocument(raw: unknown, shopId: string, productId: string): FabricDocument {
   if (!record(raw) || !keys(raw, ["kind", "schemaVersion", "shopId", "productId", "draft", "published"]) || raw.kind !== "fabric_colour_manager" ||
