@@ -240,7 +240,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
         {pendingProduct && <div className="fm-navigation-confirm" role="alert">
           <p>You have unsaved fabric or colour changes. Switch products without saving them?</p>
           <div className="fm-actions">
-            <button type="button" className="fm-btn fm-btn--primary" onClick={() => { const next = pendingProduct; setPendingProduct(null); selectProduct?.(next); }}>Discard changes and switch</button>
+            <button type="button" className="fm-btn fm-btn--primary" onClick={() => { if (!pendingProduct) return; const next = pendingProduct; setPendingProduct(null); selectProduct?.(next); }}>Discard changes and switch</button>
             <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
           </div>
         </div>}
