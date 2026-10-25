@@ -367,14 +367,16 @@ describe("upload route answers JSON, never the HTML page", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
-      const original = state.admin.graphql; let marker = "", checks = 0, ready = false;
+      const original = state.admin.graphql; let marker = "", checks = 0, ready = false, failed = false;
       state.admin.graphql = async (query: string, variables: any) => {
         if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } });
         if (query.includes("TryoraAttachFabricImage")) { marker = variables.variables.media[0].alt; return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } }); }
         if (query.includes("TryoraFabricUploadStatus")) {
+          // Like the real Admin API: this query shape was the live cause of every "failed" upload.
+          if (/\blast:/.test(query) && !/\bbefore:/.test(query)) throw Object.assign(new Error("GraphQL Client"), { name: "GraphqlQueryError", body: { errors: [{ message: "using last without before is not supported" }] } });
           checks += 1;
           if (checks === 1) throw Object.assign(new Error("GraphQL Client: An error occurred"), { name: "GraphqlQueryError", body: { errors: [{ message: "Throttled" }] } });
-          return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/993", alt: marker, image: ready ? { url: "https://cdn.shopify.com/993.jpg" } : null }] } } } });
+          return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/993", alt: marker, status: failed ? "FAILED" : ready ? "READY" : "PROCESSING", image: ready ? { url: "https://cdn.shopify.com/993.jpg" } : null }] } } } });
         }
         return original(query, variables);
       };
@@ -392,6 +394,9 @@ describe("upload route answers JSON, never the HTML page", () => {
       checks = 0; form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
       expect(await (await post(form)).json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/993" } });
       expect(warn.mock.calls.some((call) => String(call[0]).includes('"step":"status"'))).toBe(true);
+      // An image Shopify could not process is reported, never left "pending" forever.
+      failed = true; ready = false;
+      expect(await (await status(marker)).json()).toEqual({ error: "Shopify could not process this image. Try a different JPG or PNG; no fabric configuration was changed." });
       expect(state.writes).toEqual([]);
     } finally { UPLOAD_STATUS_DELAYS_MS.splice(0, UPLOAD_STATUS_DELAYS_MS.length, ...delays); warn.mockRestore(); }
   });
