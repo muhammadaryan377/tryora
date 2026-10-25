@@ -52,7 +52,8 @@ describe("embedded Fabrics & Colours product navigation", () => {
     const navigate = vi.fn();
     const host = await mount(base, navigate);
     await choose(host, FIRST);
-    expect(navigate).toHaveBeenCalledExactlyOnceWith(FIRST);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith(FIRST);
   });
 
   it("asks before discarding unsaved fabric manager edits during SPA navigation", async () => {
@@ -74,6 +75,7 @@ describe("embedded Fabrics & Colours product navigation", () => {
     await act(async () => {
       [...host.querySelectorAll("button")].find((button) => button.textContent === "Discard changes and switch")!.click();
     });
-    expect(navigate).toHaveBeenCalledExactlyOnceWith(SECOND);
+    expect(navigate).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledWith(SECOND);
   });
 });
