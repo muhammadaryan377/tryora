@@ -219,7 +219,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   const saveBlocked = !data.installationReady || manual && (!!p?.importBlocked || unnamed || !!colourDraft);
   const saveHint = !manual || !data.installationReady ? "" : p?.importBlocked ? "This product's existing integration must be reviewed before editing." :
     colourDraft ? "Save or cancel the colour you're editing first." : unnamed ? "Name every fabric and colour before saving." : "";
-  const link = p ? `/app/fabrics?product=${encodeURIComponent(p.productId)}` : "/app/fabrics";
+  const workspaceQuery = data.startInManualMode ? "&workspace=manual" : "";
+  const link = p ? `/app/fabrics?product=${encodeURIComponent(p.productId)}${workspaceQuery}` : data.startInManualMode ? "/app/fabrics?workspace=manual" : "/app/fabrics";
   const scoped = draft.bindings.filter((b) => mappingScope === "all" || b.fabricId === fabricId);
   const pageCount = Math.max(1, Math.ceil(scoped.length / MAPPINGS_PER_PAGE));
   const currentPage = Math.min(mappingPage, pageCount - 1);
@@ -264,8 +265,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
           </div>
         </div>}
-        {p && <s-link href="/app/fabrics?browse=1">Browse more products</s-link>}
-        {!p && data.products.pageInfo.hasNextPage && <s-link href={`/app/fabrics?browse=1&after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
+        {p && <s-link href={`/app/fabrics?browse=1${workspaceQuery}`}>Browse more products</s-link>}
+        {!p && data.products.pageInfo.hasNextPage && <s-link href={`/app/fabrics?browse=1&after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}${workspaceQuery}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
       {p && <>
@@ -434,7 +435,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
           </details>}
-          <p className="fm-muted fm-footnote">Uploads are added to this product's Shopify media. Removing a fabric, colour or mapping from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
+          <p className="fm-muted fm-footnote">Fabric textures and colour samples are saved to Shopify Files, not the product gallery. Full furniture reference photos may use product media. Removing selections from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>
       </>}
