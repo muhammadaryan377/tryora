@@ -54,6 +54,8 @@ interface Config {
   swatches: Swatch[];
   fabricOptionName?: string | null;
   fabricImages?: Record<string, string>;
+  fabricColours?: Record<string, string>;
+  swatchPresentation?: { shape: "round" | "square"; size: number };
   selectionOptionNames?: string[];
   productVariants?: VariantChoice[];
   singleVariants?: VariantChoice[];
@@ -244,6 +246,14 @@ export class Tryora {
     const root = document.createElement("div");
     root.className = "tryora";
     root.dataset.tryoraStyle = this.cfg.style.template;
+    // Scoped cosmetic choices; do not change Shopify variants or checkout.
+    const presentation = this.cfg.swatchPresentation;
+    if (presentation && (presentation.shape === "round" || presentation.shape === "square") &&
+        Number.isInteger(presentation.size) && presentation.size >= 25 && presentation.size <= 100) {
+      root.dataset.tryoraSwatchShape = presentation.shape;
+      root.style.setProperty("--t-merchant-sw-size", presentation.size + "px");
+      root.style.setProperty("--t-merchant-sw-radius", presentation.shape === "round" ? "50%" : "5px");
+    }
     if (this.cfg.style.accent) root.style.setProperty("--t-accent", this.cfg.style.accent);
     if (this.cfg.style.useThemeFont) root.classList.add("tryora--theme-font");
     root.addEventListener("click", (e) => this.onClick(e));
