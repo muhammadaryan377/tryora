@@ -193,6 +193,11 @@ describe("shared storefront and server preview authority", () => {
 });
 
 describe("authenticated two-mode admin", () => {
+  it("opens a product editor on first sidebar visit instead of the empty selection page", async () => {
+    await expect(loader({ request: new Request("https://tryora.example/app/fabrics") } as any))
+      .rejects.toMatchObject({ status: 302, headers: expect.any(Headers) });
+  });
+
   it("loads product-owned evidence without changing merchant config or product data", async () => {
     const view = await loader({ request: new Request(`https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}`) } as any);
     expect(view.selected).toMatchObject({ title: "Synthetic bed", mode: "native", explicitlyOff: true });
