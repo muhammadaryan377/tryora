@@ -1422,6 +1422,17 @@ const ABSENCE_CLAIM = new RegExp(String.raw`\b(?:(?:does\s+not|doesn['’]t|do\s
  * Removes "the store has none" sentences when no complete catalogue check proved it. Such claims are what a failed
  * or partial catalogue lookup produces, and they are exactly what must never reach a shopper unverified.
  */
+/** A model may still ask for colour, fabric or size despite instructions.
+ * Never forward that extra selection step into the shopper's final chat response.
+ * Merchants can still discuss product specifications when directly asked.
+ */
+export function removeAppearanceChoiceRequests(text: string): string {
+  const asks = /\b(?:which|what|choose|select|pick|specify|confirm|provide|share|tell me|let me know)\b[^.!?]{0,90}\b(?:sizes?|fabrics?|colou?rs?|configurations?|variants?)\b|\b(?:sizes?|fabrics?|colou?rs?|configurations?|variants?)\b[^.!?]{0,90}\b(?:prefer|want|would you like|choose|select|pick)\b/i;
+  const keep = text.split(/(?<=[.!?])\s+/).filter((sentence) => !asks.test(sentence));
+  const clean = keep.join(" ").trim();
+  return clean || "Choose a product card to view its details, or use Preview in my room on an approved product.";
+}
+
 export function guardAbsenceClaims(message: string, current: Pick<CatalogueProduct, "title"> | null) {
   let replaced = 0;
   const sentences = message.split(/(?<=[.!?])\s+/);
@@ -1888,11 +1899,11 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   // Prefer a concise grounded introduction over contradicting what was actually returned.
   const contradictsCards = ctx.recommendations.length > 0 &&
     /\b(?:found no|couldn['’]t find|cannot find|no (?:matching|suitable|available)|nothing matches|no beds|no sofas)\b/i.test(guarded.message);
-  const message = contradictsCards
+  const message = removeAppearanceChoiceRequests(contradictsCards
     ? (ctx.recommendations.length === 1
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
-    : guarded.message;
+    : guarded.message);
   const reply: AssistantReply = {
     message,
     room: ctx.room,
