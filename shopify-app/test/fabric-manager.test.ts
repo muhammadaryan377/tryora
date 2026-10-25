@@ -15,7 +15,7 @@ vi.mock("../app/db.server", () => {
   return { default: { ...db, $transaction: async (fn: any) => { const original = structuredClone(state.rows), writes = state.writes.length; try { return await fn(db); } catch (e) { state.rows = original; state.writes.length = writes; throw e; } } } };
 });
 import prisma from "../app/db.server";
-import { emptyFabricDraft, parseFabricDraft, parseFabricDocument } from "../app/customization/fabric-manager";
+import { emptyFabricDraft, parseFabricDraft, parseFabricDocument, validateFabricAppearance, DEFAULT_SWATCH_PRESENTATION } from "../app/customization/fabric-manager";
 import { compileFabricDocument, draftFromMapping, saveFabricConfiguration } from "../app/customization/fabric-manager.server";
 import { cleanFabricImage, fabricForm, uploadFabricMedia } from "../app/customization/fabric-media.server";
 import { parseManualMapping } from "../app/customization/option-model";
@@ -40,6 +40,37 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 describe("fabric and colour data boundary", () => {
+  it("saves 25-100px round/square swatch preferences without changing legacy documents", () => {
+    const old = emptyFabricDraft();
+    expect(parseFabricDraft(old).presentation).toBeUndefined();
+    const modern = { ...old, presentation: { shape: "square", size: 100 } };
+    expect(parseFabricDraft(modern).presentation).toEqual({ shape: "square", size: 100 });
+    expect(DEFAULT_SWATCH_PRESENTATION).toEqual({ shape: "round", size: 50 });
+    expect(parseFabricDraft({ ...old, presentation: { shape: "round", size: 25 } }).presentation?.size).toBe(25);
+    for (const size of [24, 101, 50.5, NaN]) {
+      expect(() => parseFabricDraft({ ...old, presentation: { shape: "round", size } })).toThrow(/Invalid or oversized/);
+    }
+    expect(() => parseFabricDraft({ ...old, presentation: { shape: "triangle", size: 50 } })).toThrow();
+  });
+
+  it("requires a name and either HEX or a real sample ID for both fabric and colour", () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: "#e0ddcf",
+      colours: [{ id: "stone", name: "Stone Grey", enabled: true, hex: "#888888", swatchMediaId: null }] });
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
+    draft.fabrics[0]!.hex = null;
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).toThrow(/Each fabric needs/);
+    draft.fabrics[0]!.textureMediaId = "gid://shopify/MediaImage/201";
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
+    draft.fabrics[0]!.colours[0]!.hex = null;
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).toThrow(/Each colour needs/);
+    draft.fabrics[0]!.colours[0]!.swatchMediaId = "gid://shopify/MediaImage/201";
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
+    draft.fabrics[0]!.colours[0]!.name = "";
+    expect(() => parseFabricDraft(draft)).toThrow();
+  });
+
+
   it("imports existing exact native-linked mappings without parsing composite values", () => {
     const f = snapshot(), compiled = compileFabricDocument(f.draft, shopId, productId, f);
     expect(compiled.document.draft.bindings.map((b) => b.nativeOptions)).toEqual(f.mapping.entries.map((e) => e.nativeOptions));
@@ -193,6 +224,20 @@ describe("shared storefront and server preview authority", () => {
 });
 
 describe("authenticated two-mode admin", () => {
+  it("rejects incomplete preview-only sample catalogues before any database writes", async () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, hex: null,
+      textureMediaId: null, colours: [{ id: "beige", name: "Beige", enabled: true, hex: null, swatchMediaId: null }] });
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft }))
+      .rejects.toThrow(/Each fabric needs/);
+    expect(state.writes).toEqual([]);
+    draft.fabrics[0]!.hex = "#dddddd";
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft }))
+      .rejects.toThrow(/Each colour needs/);
+    expect(state.writes).toEqual([]);
+  });
+
+
   it("honours the merchant workspace URL without switching the saved Shopify provider", async () => {
     const view = await loader({ request: new Request(
       `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}&workspace=manual`,
