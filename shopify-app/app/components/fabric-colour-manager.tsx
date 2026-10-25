@@ -334,7 +334,18 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                       aria-invalid={!fabric.name.trim()} onChange={(e) => updateFabric(fabric.id, { name: e.currentTarget.value })} /></label>
                     <label className="fm-field"><span className="fm-label">Description <span className="fm-muted">(optional)</span></span><textarea rows={2} maxLength={1000} value={fabric.description} onChange={(e) => updateFabric(fabric.id, { description: e.currentTarget.value })} /></label>
                   </div>
+                  <div className="fm-field"><span className="fm-label">Fabric HEX colour <span className="fm-muted">(or add a texture image)</span></span>
+                    <div className="fm-hex">
+                      <input type="color" aria-label={`Pick fabric colour ${fabric.id}`} value={HEX.test(fabric.hex ?? "") ? fabric.hex! : "#ffffff"}
+                        onChange={(e) => updateFabric(fabric.id, { hex: e.currentTarget.value })} />
+                      <input aria-label={`Fabric HEX ${fabric.id}`} placeholder="#RRGGBB" maxLength={7}
+                        value={fabric.hex ?? ""} aria-invalid={!!fabric.hex && !HEX.test(fabric.hex)}
+                        onChange={(e) => updateFabric(fabric.id, { hex: e.currentTarget.value.trim() || null })} />
+                      {fabric.hex && <button type="button" className="fm-link" onClick={() => updateFabric(fabric.id, { hex: null })}>Clear</button>}
+                    </div>
+                  </div>
                   <MediaField label={`Fabric texture ${fabric.name}`} role="fabric texture" kind="sample" sampleIds={sampleIds} value={fabric.textureMediaId} media={media} change={(id) => updateFabric(fabric.id, { textureMediaId: id })} upload={uploadImage} disabled={disabledUpload} />
+                  {!sampleReady(fabric.name, fabric.hex, fabric.textureMediaId) && <p className="fm-muted" role="status">Fabric name and either HEX colour or texture image are required.</p>
                   <div className="fm-editor-foot">
                     <label className="fm-check"><input type="checkbox" checked={fabric.enabled} onChange={(e) => updateFabric(fabric.id, { enabled: e.currentTarget.checked })} />Show this fabric to shoppers</label>
                     <RemoveButton label="Remove fabric" onConfirm={() => removeFabric(fabric.id)} />
@@ -344,11 +355,21 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 </div>}
 
                 <div className="fm-section-head fm-colours-head"><h3>Colours <span className="fm-count">{fabric.colours.length}</span></h3>
+                  <div className="fm-swatch-prefs" role="group" aria-label="Swatch appearance">
+                    <span className="fm-label">Swatch shape</span>
+                    <button type="button" className="fm-btn fm-shape" aria-label="Circle swatches" aria-pressed={swatchShape === "round"} onClick={() => updateSwatchPresentation({ shape: "round" })}><span className="fm-shape-circle" /></button>
+                    <button type="button" className="fm-btn fm-shape" aria-label="Square swatches" aria-pressed={swatchShape === "square"} onClick={() => updateSwatchPresentation({ shape: "square" })}><span className="fm-shape-square" /></button>
+                    <label className="fm-swatch-size">Swatch size
+                      <input aria-label="Swatch size" type="number" min={25} max={100} step={1} value={swatchSize}
+                        onChange={(e) => { const n = Number(e.currentTarget.value); if (Number.isInteger(n) && n >= 25 && n <= 100) updateSwatchPresentation({ size: n }); }} />
+                      <span>px</span>
+                    </label>
+                  </div>
                   <button className="fm-btn" type="button" disabled={!!colourDraft} onClick={() => setColourDraft({ id: uid(), name: "", enabled: true, swatchMediaId: null, hex: null, isNew: true })}>+ Add colour</button></div>
                 {fabric.colours.length ? <ul className="fm-colour-grid">{fabric.colours.map((c) => {
                   const status = colourStatus(fabric, c);
                   return <li key={c.id}><button type="button" className={`fm-colour${colourDraft?.id === c.id ? " is-editing" : ""}${c.enabled ? "" : " is-off"}`} aria-label={`Edit colour ${c.name}`} onClick={() => setColourDraft({ ...c, isNew: false })}>
-                    <Thumb url={mediaUrl(c.swatchMediaId)} hex={HEX.test(c.hex ?? "") ? c.hex : null} label={`${fabric.name} ${c.name} sample`} empty="No sample" shape="round" size={44} />
+                    <Thumb url={mediaUrl(c.swatchMediaId)} hex={HEX.test(c.hex ?? "") ? c.hex : null} label={`${fabric.name} ${c.name} sample`} empty="No sample" shape={swatchShape} size={swatchSize} />
                     <span className="fm-colour-text"><strong>{c.name}</strong><small className="fm-tabular">{c.swatchMediaId ? "Sample photo" : c.hex ? c.hex.toUpperCase() : "No sample yet"}</small></span>
                     <span className={`fm-pill fm-pill--${status.tone}`}>{status.label}</span>
                   </button></li>;
@@ -474,6 +495,13 @@ const STYLES = `
 .fm-header{display:grid;gap:10px}.fm-product{display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap}
 .fm-product-image{width:56px;height:56px;border-radius:10px;object-fit:cover;flex:none}
 .fm-subhead{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;border-top:1px solid var(--fm-line);padding-top:10px}
+.fm-swatch-prefs{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.fm-shape{display:grid;place-items:center;width:42px;height:42px;padding:7px}
+.fm-shape[aria-pressed="true"]{border-color:var(--fm-accent);box-shadow:0 0 0 1px var(--fm-accent)}
+.fm-shape-circle,.fm-shape-square{width:22px;height:22px;background:var(--fm-accent)}
+.fm-shape-circle{border-radius:50%}.fm-shape-square{border-radius:3px}
+.fm-swatch-size{display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-left:10px}
+.fm-swatch-size input{width:64px;min-height:36px;border:1px solid var(--fm-line-strong);border-radius:8px;padding:5px}
 .fm-ready-count{margin-left:auto}
 .fm-save{display:flex;align-items:center;gap:10px;margin-left:auto}.fm-save-hint{text-align:right}
 .fm-field{display:grid;gap:4px;min-width:0;align-content:start}.fm-label{font-weight:550;font-size:12px}
