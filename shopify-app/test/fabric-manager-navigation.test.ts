@@ -113,7 +113,7 @@ describe("embedded Fabrics & Colours product navigation", () => {
     const mode = host.querySelector<HTMLSelectElement>('select[aria-label="Configuration mode"]');
     expect(mode?.value).toBe("native");
     expect(host.textContent).not.toContain("Untitled fabric");
-    expect(host.textContent).toContain("Manual setup is not enabled");
+    expect(host.textContent).toContain("Your app administrator needs to authorize merchant-managed customization for this installation.");
   });
 
   it("delegates product selection to the authenticated client router", async () => {
