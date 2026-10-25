@@ -139,7 +139,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect(await page.locator('.fm-fabric-item[aria-pressed=true]').textContent()).toContain("Velvet");
       expect(await cards()).toEqual(["Cream", "Grey"]);
       expect(await page.locator(".fm-pill", { hasText: "No unsaved changes" }).count()).toBe(1);
-      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 of 4 mappings ready for AI preview");
+      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 preview-ready colour configurations");
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await fits()).toBe(true);
 
@@ -231,7 +231,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       const incomplete = page.locator('.fm-map-row').last();
       expect(await incomplete.locator(".fm-map-status").textContent()).toBe("Colour requires mapping");
       expect(await incomplete.locator('select[aria-label^="Variant "]').inputValue()).toBe("");
-      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 of 5 mappings ready for AI preview");
+      expect(await page.locator(".fm-ready-count").textContent()).toBe("4 preview-ready colour configurations");
       await incomplete.scrollIntoViewIfNeeded();
       await screenshot(page, `manager-incomplete-mapping-${width}`);
       await savePage(page);
