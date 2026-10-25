@@ -151,7 +151,8 @@ describe("launcher", () => {
     expect(button.getAttribute("aria-expanded")).toBe("false");
     expect(button.querySelector(".tryora-assistant-launch__label")!.textContent).toBe("Room Assistant");
     expect(button.querySelector("svg")).not.toBeNull();
-    expect(button.style.getPropertyValue("--ta-accent")).toBe("#123456");
+    // The Room Assistant deliberately follows the storefront palette, not the old merchant override.
+    expect(button.style.getPropertyValue("--ta-accent")).toBe("#181818");
   });
 
   it("moves above a chat widget in the same corner", () => {
