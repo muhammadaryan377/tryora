@@ -244,7 +244,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
           </div>
         </div>}
-        {data.products.pageInfo.hasNextPage && <s-link href={`${link}${p ? "&" : "?"}after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
+        {!p && data.products.pageInfo.hasNextPage && <s-link href={`${link}?after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
       {p && <>
@@ -351,6 +351,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             </section>
           </div>
 
+          <details className="fm-advanced-setup">
+            <summary>Advanced AI preview setup</summary>
           <section id="fm-mapping" className="fm-card fabric-mapping" aria-labelledby="fm-mapping-title">
             <div className="fm-section-head"><div><h2 id="fm-mapping-title">Variants & AI preview readiness</h2>
               <p className="fm-muted">Link each colour to its exact Shopify variant and a full furniture photo. Only reviewed, exact mappings can create AI previews.</p></div>
@@ -407,6 +409,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
               <select aria-label={`${role} option role`} value={draft.roles[role] ?? ""} onChange={(e) => { const value = e.currentTarget.value; setDraft((d) => { const roles = { ...d.roles }; if (value) roles[role] = value; else delete roles[role]; return { ...d, roles, bindings: d.bindings.map((b) => ({ ...b, reviewed: false })) }; }); }}>
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
+          </details>
           <p className="fm-muted fm-footnote">Uploads are added to this product's Shopify media. Removing a fabric, colour or mapping from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>
