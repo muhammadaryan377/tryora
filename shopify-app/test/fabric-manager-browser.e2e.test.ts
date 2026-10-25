@@ -85,7 +85,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
         }
         const data = await loader({ request } as any);
         res.setHeader("Content-Type", "text/html");
-        res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script><style>body{margin:0;background:#fafafa}#root{padding:16px}</style></head><body><div id="root"></div><script>window.managerData=${JSON.stringify(data).replace(/</g, "\\u003c")}</script><script src="/manager.js"></script></body></html>`);
+        res.end(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><script src="https://cdn.shopify.com/shopifycloud/polaris.js"></script><style>body{margin:0;background:#fafafa}#root{padding:16px}</style></head><body><div id="root"></div><script>window.managerData=${JSON.stringify({ ...data, advanced: true }).replace(/</g, "\\u003c")}</script><script src="/manager.js"></script></body></html>`);
       } catch (err) { res.writeHead(500); res.end("Local fixture error"); }
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)); origin = `http://127.0.0.1:${server.address().port}`;
