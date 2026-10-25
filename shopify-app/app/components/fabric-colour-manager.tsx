@@ -501,7 +501,7 @@ const STYLES = `
 .fm-shape-circle,.fm-shape-square{width:22px;height:22px;background:var(--fm-accent)}
 .fm-shape-circle{border-radius:50%}.fm-shape-square{border-radius:3px}
 .fm-swatch-size{display:inline-flex;align-items:center;gap:5px;font-size:12px;margin-left:10px}
-.fm-swatch-size input{width:64px;min-height:36px;border:1px solid var(--fm-line-strong);border-radius:8px;padding:5px}
+.fabric-manager .fm-swatch-size input{width:64px;min-width:64px;min-height:36px;border:1px solid var(--fm-line-strong);border-radius:8px;padding:5px}
 .fm-ready-count{margin-left:auto}
 .fm-save{display:flex;align-items:center;gap:10px;margin-left:auto}.fm-save-hint{text-align:right}
 .fm-field{display:grid;gap:4px;min-width:0;align-content:start}.fm-label{font-weight:550;font-size:12px}
