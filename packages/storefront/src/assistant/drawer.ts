@@ -1209,36 +1209,26 @@ export class RoomAssistant {
   private cardHtml(raw: Recommendation, index: number, entryId = "") {
     const item = this.effective(raw);
     const key = `${entryId}:${index}`;
-    const panel = this.cardOptions.get(key);
-    // The newest cards show their real fabric and colour choices straight away; older cards load them on request.
-    if (item.hasOptions && !panel && entryId && entryId === this.latestCardsEntry()) queueMicrotask(() => void this.loadOptions(key));
-    const tags = item.hasOptions ? "" : Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value) && /fabric|colou?r|material|upholstery|finish|shade/i.test(name))
-      .map(([name, value]) => `<span class="tryora-assistant__tag">${escapeHtml(name)}: ${escapeHtml(value)}</span>`).join("");
     const id = escapeHtml(item.id);
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const missing = item.previewAvailable ? null : panel?.loading ? "Loading fabric and colour options…" : this.missingChoice(item, panel);
-    const reason = item.previewAvailable ? "" : missing ?? (item.previewStatus === "not_configured" ? "AI room preview is not configured for this product." : item.previewReason ?? (item.previewStatus === "product_page"
-      ? "This configuration cannot be safely previewed in chat yet. Choose another verified appearance or product."
-      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview."));
+    const reason = item.previewAvailable ? "" : item.previewReason ?? (item.previewStatus === "not_configured"
+      ? "AI room preview is not configured for this product."
+      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
     const selected = this.isSelected(raw);
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const generating = this.generating(item);
-    const choices = panel ? this.optionsPanelHtml(key, panel)
-      : item.hasOptions ? `<button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${escapeHtml(key)}">Show fabric &amp; colour options</button>` : "";
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
         <span class="tryora-assistant__eyebrow">${label}</span>
         <h4>${escapeHtml(item.title)}</h4>
-        ${tags ? `<div class="tryora-assistant__tags">${tags}</div>` : ""}
         ${this.priceHtml(item)}
         ${item.reason ? `<p class="tryora-assistant__card-reason">${escapeHtml(shortReason(item.reason))}</p>` : ""}
         ${generalPhoto ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
       </div>
-      ${choices ? `<div class="tryora-assistant__card-choices">${choices}</div>` : ""}
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(item.url)}">View details</a>
           <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${item.previewAvailable && !generating ? "" : "disabled"}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>${generating ? "Creating preview…" : "Preview in my room"}</button>
