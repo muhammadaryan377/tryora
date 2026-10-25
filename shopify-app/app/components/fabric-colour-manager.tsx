@@ -6,6 +6,8 @@ import { referenceChoices, sampleChoices } from "../customization/media-roles";
 type Media = { id: string; url: string; alt?: string | null };
 export interface FabricManagerData {
   installationReady: boolean;
+  /** Sidebar entry opens the merchant workspace, without saving a provider change. */
+  startInManualMode?: boolean;
   /** Keep legacy reviewed variant editor out of the simple merchant setup. */
   advanced?: boolean;
   manualSetupReason?: string;
@@ -97,6 +99,22 @@ function RemoveButton({ label, onConfirm, disabled }: { label: string; onConfirm
   </span>;
 }
 
+function workspaceMode(data: FabricManagerData): "native" | "manual" {
+  return data.startInManualMode && data.installationReady && !data.selected?.importBlocked && data.selected
+    ? "manual" : data.selected?.mode ?? "native";
+}
+
+/** A client-only draft shown for a new product. No Shopify configuration is written until Save. */
+function workspaceDraft(data: FabricManagerData): FabricDraft {
+  const draft = data.selected?.draft ?? emptyFabricDraft();
+  if (!data.startInManualMode || !data.installationReady || data.selected?.importBlocked ||
+      !data.selected || draft.fabrics.length) return draft;
+  const productNumber = data.selected.productId.split("/").pop() ?? "first";
+  return { ...draft, fabrics: [{
+    id: `draft_${productNumber}`, name: "", description: "", enabled: true, textureMediaId: null, colours: [],
+  }] };
+}
+
 export function FabricColourManager({ data, save, upload, selectProduct, error, busy = false }: {
   data: FabricManagerData; save: (mode: "native" | "manual", draft: FabricDraft) => void;
   upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>;
@@ -105,8 +123,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   error?: string; busy?: boolean;
 }) {
   const p = data.selected;
-  const [mode, setMode] = useState<"native" | "manual">(p?.mode ?? "native"), [draft, setDraft] = useState<FabricDraft>(p?.draft ?? emptyFabricDraft());
-  const [fabricId, setFabricId] = useState(p?.draft.fabrics[0]?.id ?? ""), [media, setMedia] = useState(p?.media ?? []);
+  const [mode, setMode] = useState<"native" | "manual">(() => workspaceMode(data)), [draft, setDraft] = useState<FabricDraft>(() => workspaceDraft(data));
+  const [fabricId, setFabricId] = useState(() => workspaceDraft(data).fabrics[0]?.id ?? ""), [media, setMedia] = useState(p?.media ?? []);
   const [editingFabric, setEditingFabric] = useState(false);
   const [pendingProduct, setPendingProduct] = useState<string | null>(null);
   const [colourDraft, setColourDraft] = useState<(ManagedColour & { isNew: boolean }) | null>(null);
@@ -117,10 +135,11 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   const initial = useRef(JSON.stringify({ mode: p?.mode ?? "native", draft: p?.draft ?? emptyFabricDraft() }));
   const saving = useRef(false);
   useEffect(() => {
-    setMode(p?.mode ?? "native"); setDraft(p?.draft ?? emptyFabricDraft()); setMedia(p?.media ?? []); setFabricId(p?.draft.fabrics[0]?.id ?? "");
+    const openedDraft = workspaceDraft(data);
+    setMode(workspaceMode(data)); setDraft(openedDraft); setMedia(p?.media ?? []); setFabricId(openedDraft.fabrics[0]?.id ?? "");
     setColourDraft(null); setEditingFabric(false); setPendingProduct(null); saving.current = false;
     initial.current = JSON.stringify({ mode: p?.mode ?? "native", draft: p?.draft ?? emptyFabricDraft() });
-  }, [p?.productId, p?.revision]);
+  }, [p?.productId, p?.revision, data.startInManualMode, data.installationReady]);
   useEffect(() => { setMappingPage(0); setColourDraft(null); }, [fabricId]);
   const dirty = JSON.stringify({ mode, draft }) !== initial.current;
   const switchProduct = (next: string) => {
