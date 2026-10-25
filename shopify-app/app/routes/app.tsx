@@ -33,7 +33,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Home</s-link>
         <s-link href="/app/products">Products</s-link>
-        <s-link href={lastFabricProduct ? `/app/fabrics?product=${encodeURIComponent(lastFabricProduct)}` : "/app/fabrics"}>Fabrics &amp; Colours</s-link>
+        <s-link href={lastFabricProduct ? `/app/fabrics?product=${encodeURIComponent(lastFabricProduct)}&workspace=manual` : "/app/fabrics?workspace=manual"}>Fabrics &amp; Colours</s-link>
         <s-link href="/app/appearance">Appearance</s-link>
         <s-link href="/app/assistant">Room assistant</s-link>
         <s-link href="/app/leads">Leads &amp; offers</s-link>
