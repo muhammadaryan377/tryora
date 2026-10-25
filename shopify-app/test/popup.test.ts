@@ -145,16 +145,22 @@ describe("dependent fabric and colour popup", () => {
   });
 
 
-  it("explains unsupported configurations without selling or inventing colour choices", async () => {
+  it("lets a shopper select an unverified colour, but never generate for it", async () => {
     await setup("4");
     click("fabric", "Velvet");
+    const colour = key("Velvet", "Cream");
+    expect(popup.state.selectedOption).toBe(colour);
+    expect(popup.selectedVariant(colour)).toBeNull();
     const html = popup.swatches();
-    expect(html).toContain("preview not supported for selected options");
     expect(html).toContain('is-unavailable');
-    expect(html).not.toContain('tryora__sold');
-    expect(html).not.toContain('is-soldout');
-    expect(html).toContain("selected size and configuration");
-    expect(popup.state.selectedOption).toBeNull();
+    expect(html).toContain('aria-label="Velvet / Cream, preview not supported for selected options"');
+    expect(html).not.toContain('data-act="swatch" data-value="' + colour + '" role="radio" aria-checked="true" disabled');
+    expect(html).toContain("AI room preview is not yet verified");
+    expect(popup.canPreviewOption(colour)).toBe(false);
+    const fetcher = vi.fn();
+    vi.stubGlobal("fetch", fetcher);
+    click("generate", "");
+    expect(fetcher).not.toHaveBeenCalled();
   });
 
   it("keeps fabric-only composite identities opaque and reports missing colour mapping", async () => {
@@ -194,9 +200,10 @@ describe("dependent fabric and colour popup", () => {
   it("never substitutes a different size when the selected fabric has no matching combination", async () => {
     await setup("4");
     click("fabric", "Velvet");
-    expect(popup.state.selectedOption).toBeNull();
+    expect(popup.state.selectedOption).toBe(key("Velvet", "Cream"));
     expect(popup.selectedVariant(key("Velvet", "Cream"))).toBeNull();
-    expect(popup.swatches()).toContain("No supported colours");
+    expect(popup.canPreviewOption(key("Velvet", "Cream"))).toBe(false);
+    expect(popup.swatches()).toContain("AI room preview is not yet verified");
   });
 
   it("blocks unknown live variants rather than using stale Liquid defaults", async () => {
