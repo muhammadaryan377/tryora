@@ -987,12 +987,18 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   }
   const all = await verifiedRecommendations(ctx, items);
   // Fresh prices can differ from the index: check again.
-  const verified = all.filter((item) => {
+  const fitting = all.filter((item) => {
     const product = ctx.fresh.get(item.productRef);
     const issue = product ? constraintIssue(ctx, product, Number(item.price)) : null;
     if (issue) excluded.push({ title: item.title, reason: ISSUE_TEXT[issue](ctx) });
     return !issue;
   });
+  // Previewable cards come first. For an explicit "see it in my room" request, cards that cannot be previewed are left
+  // out when at least one previewable product exists; eligibility itself is never relaxed.
+  const previewable = (item: AssistantRecommendation) => item.previewAvailable || item.previewStatus === "choose_options";
+  const roomPreview = wantsRoomPreview(ctx.latestMessage) && fitting.some(previewable);
+  const verified = roomPreview ? fitting.filter(previewable) : [...fitting.filter(previewable), ...fitting.filter((item) => !previewable(item))];
+  const notPreviewable = fitting.length - verified.length;
   if (verified.length) {
     ctx.recommendations = verified;
     verified.forEach((item) => ctx.explored.add(item.productRef));
@@ -1004,6 +1010,7 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
     dropped: args.items.length - verified.length,
     excludedForShopperConstraints: excluded,
     ...(alreadyShown ? { excludedAlreadyShown: alreadyShown } : {}),
+    ...(notPreviewable ? { excludedNotPreviewable: notPreviewable } : {}),
     note: verified.length
       ? "These cards are now visible with verified price, stock, AI preview status and their own reasons. Do not repeat the reasons or card details; at most one short sentence, or a single relevant question."
       : alreadyShown && !excluded.length
@@ -1211,6 +1218,11 @@ function previewStatusFor(ctx: RequestContext, product: CatalogueProduct, varian
 // ---------- recommendations ----------
 
 interface ModelRecommendation { productRef: string; variantRef: string | null; reason: string }
+
+/** "Preview it in my room", "visualise", "see how it looks in my room": the shopper wants an AI room preview. */
+export function wantsRoomPreview(message: string): boolean {
+  return /\b(preview|visuali[sz]e)\b|\bsee (it|them|this|that|these|those|how)\b[^.?!]*room\b|\bshow (it|them|this|that|these|those|me (it|them|this|that))\b[^.?!]*\bin (my|this|the|our) (\w+ )?\w*room\b|\bhow (would|will|does|do) (it|this|that|they|these|those) look\b/i.test(message);
+}
 
 /** "Show more", "other options", "something different" and similar: the next batch must not repeat earlier cards. */
 export function wantsMoreOptions(message: string): boolean {

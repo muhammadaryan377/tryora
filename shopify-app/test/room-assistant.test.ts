@@ -32,6 +32,7 @@ import {
   runAssistantTurn,
   sanitiseMessage,
   wantsMoreOptions,
+  wantsRoomPreview,
   type AssistantEvent,
 } from "../app/room-assistant.server";
 import {
@@ -545,6 +546,23 @@ describe("visual-first recommendations and show more", () => {
     const last = await ask(fixtureAdmin(products), next.client, "Any other options?", { room, shown: all.slice(4), explored: all });
     expect(toolOutputs(next.requests, "call-search_products")[0]).toMatchObject({ results: [], note: expect.stringContaining("already shown") });
     expect(last.recommendations).toEqual([]);
+  });
+
+  it("puts preview-ready products first, and shows only previewable ones for an explicit in-room preview request", async () => {
+    const cream = variantOf(aria, { Colour: "Cream", Size: "King" }), gray = variantOf(oslo, { Colour: "Gray" });
+    const cards = [{ productRef: ref(oslo.id), variantRef: ref(gray.id), reason: "Its soft grey suits a calm living room with pale walls." },
+      { productRef: ref(aria.id), variantRef: ref(cream.id), reason: "Cream upholstery warms the room and matches the light oak floor." }];
+    const general = scriptedModel([search({ query: "furniture", limit: 6 }), recommend(cards), finalAnswer("A couple of ideas.")]);
+    const listed = await ask(fixtureAdmin([aria, oslo]), general.client, "Recommend something for my living room");
+    expect(listed.recommendations.map((item) => [item.title, item.previewStatus])).toEqual([["Aria Bed", "available"], ["Oslo Couch", "not_configured"]]);
+    const visual = scriptedModel([search({ query: "furniture", limit: 6 }), recommend(cards), finalAnswer("Here is one you can preview.")]);
+    const preview = await ask(fixtureAdmin([aria, oslo]), visual.client, "Which of these can I preview in my room?");
+    expect(preview.recommendations.map((item) => item.title)).toEqual(["Aria Bed"]);
+    expect(toolOutputs(visual.requests, "call-recommend_products")[0]).toMatchObject({ excludedNotPreviewable: 1 });
+    expect(["Show it in my room", "Can I visualise this?", "see how it looks in the bedroom"].every(wantsRoomPreview)).toBe(true);
+    // Ordinary room recommendations keep every fitting product; only explicit preview wording narrows the cards.
+    expect(["Recommend furniture for my room", "Which bed would look best in this room?", "Show me more"].some(wantsRoomPreview)).toBe(false);
+    expect(["Show me it in my bedroom", "How would it look?"].every(wantsRoomPreview)).toBe(true);
   });
 
   it("recognises show-more requests without treating ordinary questions as one", () => {

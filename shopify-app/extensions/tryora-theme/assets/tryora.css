@@ -560,6 +560,27 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant__card-choices:empty { display:none; }
 .tryora-assistant__card-choices > button { border:0;background:transparent;text-decoration:underline;padding:4px;font-size:12px; }
 .tryora-assistant__card-choices .tryora-assistant__options { flex-basis:100%; }
+/* In-card choices: fabrics as compact pills (with the real texture when there is one), colours as clean round samples. */
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric { gap:6px; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch { flex-direction:row; width:auto; gap:6px; padding:3px 10px 3px 3px; border-radius:999px; background:#f1f1ee; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch-dot { width:24px; height:24px; padding:0; border-radius:50%; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch-dot > i, .tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch-dot > img { border-radius:50%; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch-name { max-width:none; font-size:12.5px; font-weight:500; -webkit-line-clamp:1; white-space:nowrap; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch[aria-pressed="true"] { background:var(--ta-ink); }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch[aria-pressed="true"] .tryora-assistant__swatch-name { color:#fff; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-fabric .tryora-assistant__swatch[aria-pressed="true"] .tryora-assistant__swatch-dot { box-shadow:none; border-color:#fff; }
+.tryora-assistant__card-choices .tryora-assistant__opt { background:#f1f1ee; border-color:transparent; }
+.tryora-assistant__card-choices .tryora-assistant__opt[aria-pressed="true"] { background:var(--ta-ink); color:#fff; box-shadow:none; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour { gap:10px; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch { width:auto; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot { width:36px; height:36px; }
+/* Names stay visible in a row where any colour has no real sample, so plain samples are never ambiguous. */
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour:not(.has-plain) .tryora-assistant__swatch-name { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour.has-plain .tryora-assistant__swatch { width:54px; }
+.tryora-assistant__card-choices .tryora-assistant__optgroup legend { color:var(--ta-ink); font-size:13px; font-weight:600; }
+.tryora-assistant__card-choices .tryora-assistant__optgroup legend strong { font-weight:400; color:var(--ta-muted); }
+.tryora-assistant__card-choices > .tryora-assistant__chip-button { border:1px solid var(--ta-line); background:#fff; text-decoration:none; border-radius:999px; padding:6px 12px; }
+.tryora-assistant__card .tryora-assistant__preview-note { margin:0; }
 .tryora-assistant__card > .tryora-assistant__card-actions { display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0; }
 .tryora-assistant__card > .tryora-assistant__card-actions > * { display:flex;align-items:center;justify-content:center;text-align:center;min-height:44px;border-radius:999px;padding:10px 12px;line-height:1.3; }
 .tryora-assistant__composer { flex:none; padding-bottom:max(12px,env(safe-area-inset-bottom)); }

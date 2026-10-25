@@ -127,6 +127,8 @@ export class RoomAssistant {
   /** In-card option selectors, keyed by "<entry id>:<card index>". Memory only. */
   private readonly cardOptions = new Map<string, CardOptionsState>();
   private readonly optionsCache = new Map<string, ProductOptions>();
+  /** Latest option-change number per card; an eligibility check for an older choice is ignored. */
+  private readonly checkSeq = new Map<string, number>();
   /** Typed email form values, memory only (never saved to session storage). */
   private readonly leadDrafts = new Map<string, { email: string; firstName: string; marketing: boolean }>();
 
@@ -170,6 +172,15 @@ export class RoomAssistant {
     this.syncLauncher();
     this.syncLock();
     (this.context.launcher ?? this.lastFocus)?.focus?.();
+  }
+
+  /**
+   * "View details" navigates away with the drawer open. The open state is saved as closed so the product page does not
+   * reopen it on load; the conversation and room stay in the session and the launcher reopens it on request.
+   */
+  private leaveForProduct() {
+    this.state.ui.open = false;
+    this.save();
   }
 
   /** Closes the drawer. The conversation stays in this tab's session and is restored on reopen. */
@@ -749,6 +760,12 @@ export class RoomAssistant {
       }
       case "cancel-preview": return this.previews.get(id)?.abort();
       case "options": return void this.toggleOptions(element.dataset.card ?? "");
+      case "view-details": {
+        // Leaving for the product page is not a request to reopen the drawer there. A new-tab click keeps this tab as it is.
+        const click = event as MouseEvent;
+        if (!click.ctrlKey && !click.metaKey && !click.shiftKey && !(click.button > 0)) this.leaveForProduct();
+        return;
+      }
       case "select": return this.selectCard(element.dataset.card ?? "");
       case "opt": return this.chooseOption(element.dataset.card ?? "", element.dataset.attr ?? "", element.dataset.value ?? "");
       case "lead-submit": return void this.submitLead(id);
@@ -1153,49 +1170,64 @@ export class RoomAssistant {
     return !!selected && selected.productRef === item.productRef && (selected.variantRef ?? null) === (item.variantRef ?? null);
   }
 
+  /** The assistant entry holding the newest recommendation cards; only its cards load options without a tap. */
+  private latestCardsEntry(): string | null {
+    for (let i = this.state.entries.length - 1; i >= 0; i -= 1) {
+      const entry = this.state.entries[i]!;
+      if (entry.kind === "assistant" && entry.recommendations.length) return entry.id;
+    }
+    return null;
+  }
+
+  /** What the shopper still has to choose before a preview can be checked, or null when the selection is complete. */
+  private missingChoice(item: Recommendation, panel: CardOptionsState | undefined): string | null {
+    if (!item.hasOptions) return null;
+    if (panel?.data) {
+      const missing = panel.data.attributes.filter((attribute) => attribute.kind !== "size" && panel.selections[attribute.name] === undefined).map((attribute) => attribute.name.toLowerCase());
+      if (missing.length) return `Select a ${missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}` : missing[0]} to preview.`;
+      return resolveVariant(panel.data, panel.selections) ? null : "That combination isn't available. Choose another option.";
+    }
+    return item.variantRef ? null : "Select a fabric and colour to preview.";
+  }
+
   private cardHtml(raw: Recommendation, index: number, entryId = "") {
     const item = this.effective(raw);
     const key = `${entryId}:${index}`;
-    const options = Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value) && /fabric|colou?r|material|upholstery|finish|shade/i.test(name))
+    const panel = this.cardOptions.get(key);
+    // The newest cards show their real fabric and colour choices straight away; older cards load them on request.
+    if (item.hasOptions && !panel && entryId && entryId === this.latestCardsEntry()) queueMicrotask(() => void this.loadOptions(key));
+    const tags = item.hasOptions ? "" : Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value) && /fabric|colou?r|material|upholstery|finish|shade/i.test(name))
       .map(([name, value]) => `<span class="tryora-assistant__tag">${escapeHtml(name)}: ${escapeHtml(value)}</span>`).join("");
     const id = escapeHtml(item.id);
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const choose = !!item.hasOptions && !item.variantRef && item.previewStatus === "choose_options";
-    const unavailable = !item.previewAvailable && !choose;
-    const tryAnotherAppearance = unavailable && item.hasOptions === true && item.purchaseAvailable && item.previewStatus === "unavailable" && this.config.previewsAvailable !== false;
-    const reason = item.previewStatus === "not_configured" ? "AI room preview is not configured for this product." : item.previewReason ?? (item.previewStatus === "product_page"
+    const missing = item.previewAvailable ? null : panel?.loading ? "Loading fabric and colour options…" : this.missingChoice(item, panel);
+    const reason = item.previewAvailable ? "" : missing ?? (item.previewStatus === "not_configured" ? "AI room preview is not configured for this product." : item.previewReason ?? (item.previewStatus === "product_page"
       ? "This configuration cannot be safely previewed in chat yet. Choose another verified appearance or product."
-      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
-    const panel = this.cardOptions.get(key);
-    const optionsButton = item.hasOptions
-      ? `<button type="button" class="tryora-assistant__secondary" data-ta="options" data-card="${escapeHtml(key)}" aria-expanded="${!!panel}">${item.variantRef ? "Change appearance" : "Choose appearance"}</button>` : "";
+      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview."));
     const selected = this.isSelected(raw);
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
-    const selectButton = selected || focus ? ""
-      : `<button type="button" class="tryora-assistant__secondary" data-ta="select" data-card="${escapeHtml(key)}" aria-label="Select ${escapeHtml(item.title)}">Select this look</button>`;
+    const generating = this.generating(item);
+    const choices = panel ? this.optionsPanelHtml(key, panel)
+      : item.hasOptions ? `<button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${escapeHtml(key)}">Show fabric &amp; colour options</button>` : "";
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
         <span class="tryora-assistant__eyebrow">${label}</span>
         <h4>${escapeHtml(item.title)}</h4>
-        ${options ? `<div class="tryora-assistant__tags">${options}</div>` : ""}
+        ${tags ? `<div class="tryora-assistant__tags">${tags}</div>` : ""}
         ${this.priceHtml(item)}
         ${item.reason ? `<p class="tryora-assistant__card-reason">${escapeHtml(shortReason(item.reason))}</p>` : ""}
         ${generalPhoto ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
       </div>
-      <div class="tryora-assistant__card-choices">${selectButton}${optionsButton}${panel ? this.optionsPanelHtml(key, panel) : ""}</div>
+      ${choices ? `<div class="tryora-assistant__card-choices">${choices}</div>` : ""}
         <div class="tryora-assistant__card-actions">
-          <a class="tryora-assistant__secondary" href="${escapeHtml(item.url)}">View details</a>
-          ${item.previewAvailable ? `<button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : "Preview in my room"}</button>`
-            : choose ? `<button type="button" class="tryora-assistant__primary" data-ta="options" data-card="${escapeHtml(key)}">Choose a preview option</button>`
-            : tryAnotherAppearance ? `<button type="button" class="tryora-assistant__primary" data-ta="options" data-card="${escapeHtml(key)}" aria-describedby="ta-why-${id}">Check other appearances</button>`
-            : unavailable ? `<button type="button" class="tryora-assistant__primary" disabled aria-describedby="ta-why-${id}">Preview in my room</button>` : ""}
+          <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(item.url)}">View details</a>
+          <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${id}" ${item.previewAvailable && !generating ? "" : "disabled"}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>${generating ? "Creating preview…" : "Preview in my room"}</button>
         </div>
-        ${unavailable ? `<p class="tryora-assistant__image-note" id="ta-why-${id}">${escapeHtml(reason)}</p>` : ""}
-        ${choose && !panel ? `<p class="tryora-assistant__image-note">Choose an available fabric or colour to check your preview.</p>` : ""}
+        ${reason ? `<p class="tryora-assistant__image-note tryora-assistant__preview-note" id="ta-why-${id}" role="status">${escapeHtml(reason)}</p>` : ""}
     </article>`;
   }
 
@@ -1235,7 +1267,7 @@ export class RoomAssistant {
             <span>AI-generated visualisation for illustration only. Colour and placement may differ from the actual product.</span></figcaption>
           <div class="tryora-assistant__card-actions">
             <a class="tryora-assistant__primary" href="${escapeHtml(url)}" download="${escapeHtml(file)}">Download</a>
-            <a class="tryora-assistant__secondary" href="${escapeHtml(entry.item.url)}">View details</a>
+            <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(entry.item.url)}">View details</a>
             <button type="button" class="tryora-assistant__secondary" data-ta="another" data-id="${escapeHtml(entry.item.id)}">Try another option</button>
           </div>
         </figure></div>`;
@@ -1409,14 +1441,15 @@ export class RoomAssistant {
     return entry && item ? { entry, index, item } : null;
   }
 
-  /** Opens or closes a card's option selector, loading the product's real options once per product. */
+  /** Shows a card's option selector (older cards load it on request; the newest cards load it automatically). */
   async toggleOptions(key: string) {
+    if (!this.cardOptions.has(key)) await this.loadOptions(key);
+  }
+
+  /** Loads a card's real Shopify options once per product and source configuration. */
+  private async loadOptions(key: string) {
     const card = this.cardAt(key);
-    if (!card) return;
-    if (this.cardOptions.has(key)) {
-      this.cardOptions.delete(key);
-      return this.renderEntry(card.entry.id);
-    }
+    if (!card || this.cardOptions.has(key)) return;
     const pageProduct = numeric(this.context.productId) === numeric(card.item.productId);
     const rawSource = pageProduct ? this.context.currentVariantId?.() : null;
     const sourceVariant = rawSource ? rawSource.startsWith("gid://") ? rawSource : `gid://shopify/ProductVariant/${rawSource}`
@@ -1426,8 +1459,8 @@ export class RoomAssistant {
     const cached = this.optionsCache.get(cacheKey);
     const panel: CardOptionsState = { productId: card.item.productId, data: cached ?? null, selections: cached ? selectionsFor(cached, knownVariantRef) : {}, loading: !cached, error: "" };
     this.cardOptions.set(key, panel);
+    if (cached) { this.renderEntry(card.entry.id); return this.autoSelectOnly(key, panel, knownVariantRef); }
     this.renderEntry(card.entry.id);
-    if (cached) return;
     try {
       const response = await fetch(`${PROXY}/assistant/options?product=${encodeURIComponent(card.item.productId)}&visitor=${encodeURIComponent(storedVisitorId())}${sourceVariant ? `&sourceVariant=${encodeURIComponent(sourceVariant)}` : ""}`, { credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));
@@ -1444,13 +1477,22 @@ export class RoomAssistant {
       panel.loading = false;
       if (this.cardOptions.get(key) === panel) this.renderEntry(card.entry.id);
     }
+    if (this.cardOptions.get(key) === panel) this.autoSelectOnly(key, panel, knownVariantRef);
+  }
+
+  /** With exactly one purchasable configuration there is nothing to choose: use it and check its preview directly. */
+  private autoSelectOnly(key: string, panel: CardOptionsState, knownVariantRef: string | null) {
+    if (knownVariantRef || !panel.data) return;
+    const available = panel.data.variants.filter((variant) => variant.available);
+    if (available.length !== 1) return;
+    panel.selections = selectionsFor(panel.data, available[0]!.ref);
+    this.applySelection(key, panel, false);
   }
 
   /** Applies one option choice; when the choices identify exactly one variant, the card becomes that variant. */
   chooseOption(key: string, attribute: string, value: string) {
     const panel = this.cardOptions.get(key);
-    const card = this.cardAt(key);
-    if (!panel?.data || !card) return;
+    if (!panel?.data) return;
     const data = panel.data;
     panel.selections = { ...panel.selections, [attribute]: value };
     // Fabric changes clear only its dependent colour. Size and other configuration never disappear.
@@ -1459,20 +1501,27 @@ export class RoomAssistant {
       const colour = data.attributes.find((a) => a.kind === "colour");
       if (colour) delete panel.selections[colour.name];
     }
-    const variant = resolveVariant(data, panel.selections);
+    this.applySelection(key, panel, true);
+  }
+
+  private applySelection(key: string, panel: CardOptionsState, byShopper: boolean) {
+    const card = this.cardAt(key);
+    if (!card || !panel.data) return;
+    // Any change invalidates a check still in flight for an earlier choice.
+    this.checkSeq.set(key, (this.checkSeq.get(key) ?? 0) + 1);
+    const variant = resolveVariant(panel.data, panel.selections);
     if (variant) {
-      const updated = cardForVariant(card.item, data, variant, this.config.previewsAvailable !== false);
+      const updated = cardForVariant(card.item, panel.data, variant, this.config.previewsAvailable !== false);
       const previous = card.item;
       card.entry.recommendations[card.index] = updated;
       this.state.shown = this.state.shown.map((ref) => ref.productRef === previous.productRef && ref.variantRef === previous.variantRef
         ? { productRef: updated.productRef, variantRef: updated.variantRef } : ref);
-      this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef, source: "options" };
+      if (byShopper) this.state.selected = { productRef: updated.productRef, variantRef: updated.variantRef, source: "options" };
       this.syncCards([updated], card.entry.id);
       this.save();
       if (updated.previewAvailable) void this.confirmPreview(key, updated);
     } else {
-      card.entry.recommendations[card.index] = { ...card.item, previewAvailable: false, optionValue: null,
-        previewReason: "Complete the fabric and colour selection before previewing this configuration." };
+      card.entry.recommendations[card.index] = { ...card.item, previewAvailable: false, optionValue: null, previewStatus: "choose_options", previewReason: null };
     }
     this.renderAll();
   }
@@ -1483,11 +1532,12 @@ export class RoomAssistant {
    * reason when it fails, so the button never starts a preview that can only be refused.
    */
   private async confirmPreview(key: string, item: Recommendation) {
-    const current = () => this.cardAt(key);
-    const stillShown = () => current()?.item.id === item.id;
+    const seq = this.checkSeq.get(key) ?? 0;
+    // Only the newest check for this card, for the variant it still shows, may change the button.
+    const current = () => { const card = this.cardAt(key); return card && card.item.id === item.id && this.checkSeq.get(key) === seq ? card : null; };
     const apply = (patch: Partial<Recommendation>) => {
       const card = current();
-      if (!card || !stillShown()) return;
+      if (!card) return;
       card.entry.recommendations[card.index] = { ...card.item, ...patch };
       this.syncCards([card.entry.recommendations[card.index]!], card.entry.id);
       this.save(); this.renderEntry(card.entry.id);
@@ -1513,27 +1563,27 @@ export class RoomAssistant {
   private optionsPanelHtml(key: string, panel: CardOptionsState) {
     const card = escapeHtml(key);
     if (panel.loading) return `<div class="tryora-assistant__options" role="status"><span class="tryora-assistant__spinner" aria-hidden="true"></span> Loading options…</div>`;
-    if (panel.error || !panel.data) return `<div class="tryora-assistant__options"><p class="tryora-assistant__composer-error" role="alert">${escapeHtml(panel.error || "Options are unavailable.")}</p>
-      <button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${card}">Close</button></div>`;
+    if (panel.error || !panel.data) return `<div class="tryora-assistant__options"><p class="tryora-assistant__composer-error" role="alert">${escapeHtml(panel.error || "Options are unavailable.")}</p></div>`;
     const data = panel.data;
     const groups = data.attributes.filter((attribute) => attribute.kind !== "size").map((attribute) => {
       const values = valuesFor(data, attribute, panel.selections);
-      const swatches = attribute.kind === "colour" || values.some((value) => value.colour || value.image);
+      const colourKind = attribute.kind === "colour";
+      const swatches = colourKind || values.some((value) => value.colour || value.image);
       const buttons = values.map((value) => {
         const label = `${value.value}${value.soldOut ? " (sold out)" : ""}`;
         const common = `type="button" data-ta="opt" data-card="${card}" data-attr="${escapeHtml(attribute.name)}" data-value="${escapeHtml(value.value)}" aria-pressed="${value.selected}" ${value.disabled ? "disabled" : ""}`;
         if (!swatches) return `<button ${common} class="tryora-assistant__opt${value.soldOut ? " is-soldout" : ""}">${escapeHtml(label)}</button>`;
         const colour = value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour) ? value.colour : null;
         const dot = value.image ? `<img src="${escapeHtml(value.image)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
-        return `<button ${common} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}">
+        return `<button ${common} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
           <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}">${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
-        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}">${buttons}</div></fieldset>`;
+        <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}${colourKind ? " is-colour" : ""}${colourKind && values.some((value) => !value.image && !(value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour))) ? " has-plain" : ""}">${buttons}</div></fieldset>`;
     }).join("");
-    const missing = data.attributes.filter((attribute) => panel.selections[attribute.name] === undefined).map((attribute) => attribute.name.toLowerCase());
-    const status = missing.length ? (data.attributes.some((a) => a.kind === "size" && panel.selections[a.name] === undefined) ? "A verified product configuration is needed before this appearance can be previewed. No configuration has been chosen automatically." : `Choose ${missing.join(", ")}.`) : resolveVariant(data, panel.selections) ? "" : "That combination isn't available. Choose another option.";
-    return `<div class="tryora-assistant__options">${groups}${status ? `<p class="tryora-assistant__image-note" role="status">${escapeHtml(status)}</p>` : ""}</div>`;
+    // Choosing a size is never done for the shopper; the incomplete-choice instruction sits under the Preview button.
+    const sizeNeeded = data.attributes.some((a) => a.kind === "size" && panel.selections[a.name] === undefined);
+    return `<div class="tryora-assistant__options">${groups}${sizeNeeded ? `<p class="tryora-assistant__image-note" role="status">A verified product configuration is needed before this appearance can be previewed. No configuration has been chosen automatically.</p>` : ""}</div>`;
   }
 
   // ---------- helpers ----------
