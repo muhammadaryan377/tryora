@@ -1248,7 +1248,6 @@ export class RoomAssistant {
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${escapeHtml(item.title)}</h4>
-        ${options ? `<p>${escapeHtml(options)}</p>` : ""}
         <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Tryora places the item automatically.</p>
         <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : this.roomPhoto ? "Generate preview" : "Add room photo and preview"}</button>
       </div>
@@ -1257,8 +1256,7 @@ export class RoomAssistant {
 
   private previewHtml(entry: PreviewEntry) {
     const id = escapeHtml(entry.id);
-    const options = appearanceSummary(entry.item.options);
-    const label = `${entry.item.title}${options ? ` · ${options}` : ""}`;
+    const label = entry.item.title;
     if (entry.status === "generating") {
       return `<div class="tryora-assistant__message tryora-assistant__message--preview" data-entry="${id}">
         <div class="tryora-assistant__preview is-loading"><span class="tryora-assistant__spinner" aria-hidden="true"></span>
