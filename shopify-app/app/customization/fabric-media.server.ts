@@ -14,7 +14,7 @@ mutation TryoraAttachFabricImage($product: ProductUpdateInput!, $media: [CreateM
 }`;
 export const FABRIC_UPLOAD_STATUS = `#graphql
 query TryoraFabricUploadStatus($id: ID!) {
-  product(id: $id) { id media(last: 20) { nodes { id alt ... on MediaImage { image { url } } } } }
+  product(id: $id) { id media(first: 250, reverse: true) { nodes { id alt status ... on MediaImage { image { url } } } } }
 }`;
 /** Shopify's own error text from a GraphQL body, a thrown GraphqlQueryError, or a list of userErrors. */
 export function shopifyMessages(source: unknown): string[] {
@@ -106,7 +106,11 @@ export async function findUploadedMedia(admin: AdminGraphql, productId: string, 
   if (!response.ok || json?.errors?.length || !json?.data) throw Object.assign(new Error("Upload status unavailable"), { body: json });
   const data = json.data;
   if (data.product?.id !== productId) throw new FabricConfigError("Product ownership could not be verified.");
-  const image = data.product.media.nodes.find((m: any) => m?.alt === marker && m.image?.url && safeShopifyMediaUrl(m.image.url));
+  // Shopify rejects "media(last:)" without "before". Newest first with reverse: true, and up to 250 so the marker is
+  // found on any product whatever its media order.
+  const node = data.product.media.nodes.find((m: any) => m?.alt === marker);
+  if (node?.status === "FAILED") throw new FabricConfigError("Shopify could not process this image. Try a different JPG or PNG; no fabric configuration was changed.");
+  const image = node?.image?.url && safeShopifyMediaUrl(node.image.url) ? node : null;
   // The marker travels with the new image so the manager keeps samples and full-product photos in separate pickers.
   return image ? { id: String(image.id), url: String(image.image.url), alt: marker } : null;
 }

@@ -1,6 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import { fabricForm, findUploadedMedia, UPLOAD_MARKER } from "../customization/fabric-media.server";
+import { fabricForm, findUploadedMedia, logUploadFailure, UPLOAD_MARKER } from "../customization/fabric-media.server";
 import { FabricConfigError } from "../customization/fabric-manager";
 import { handleFabricUpload, productScope } from "../customization/fabric-upload.server";
 import { providerSettingsEnabled } from "../customization/provider-config.server";
@@ -19,7 +19,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const media = await findUploadedMedia(admin, productId, marker);
     return Response.json(media ? { pending: false, media } : { pending: true, marker });
   } catch (e) {
-    // A temporary Shopify error while checking is not a failed upload: the browser simply checks again.
+    // A temporary Shopify error while checking is not a failed upload: the browser simply checks again. It is still logged.
+    if (!(e instanceof FabricConfigError)) logUploadFailure("status", e);
     return Response.json(e instanceof FabricConfigError ? { error: e.message } : { pending: true }, { status: e instanceof FabricConfigError ? 400 : 200 });
   }
 };
