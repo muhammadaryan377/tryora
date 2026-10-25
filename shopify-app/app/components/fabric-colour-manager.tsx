@@ -95,14 +95,18 @@ function RemoveButton({ label, onConfirm, disabled }: { label: string; onConfirm
   </span>;
 }
 
-export function FabricColourManager({ data, save, upload, error, busy = false }: {
+export function FabricColourManager({ data, save, upload, selectProduct, error, busy = false }: {
   data: FabricManagerData; save: (mode: "native" | "manual", draft: FabricDraft) => void;
-  upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>; error?: string; busy?: boolean;
+  upload: (file: File, purpose: "sample" | "reference") => Promise<Media | null>;
+  /** Production uses the authenticated React Router transition, not a full iframe reload. */
+  selectProduct?: (productId: string) => void;
+  error?: string; busy?: boolean;
 }) {
   const p = data.selected;
   const [mode, setMode] = useState<"native" | "manual">(p?.mode ?? "native"), [draft, setDraft] = useState<FabricDraft>(p?.draft ?? emptyFabricDraft());
   const [fabricId, setFabricId] = useState(p?.draft.fabrics[0]?.id ?? ""), [media, setMedia] = useState(p?.media ?? []);
   const [editingFabric, setEditingFabric] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState<string | null>(null);
   const [colourDraft, setColourDraft] = useState<(ManagedColour & { isNew: boolean }) | null>(null);
   const [mappingScope, setMappingScope] = useState<"fabric" | "all">("fabric"), [mappingPage, setMappingPage] = useState(0);
   // Ready mappings collapse to one summary line; anything incomplete, or opened by the merchant, shows its editor.
@@ -112,11 +116,22 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
   const saving = useRef(false);
   useEffect(() => {
     setMode(p?.mode ?? "native"); setDraft(p?.draft ?? emptyFabricDraft()); setMedia(p?.media ?? []); setFabricId(p?.draft.fabrics[0]?.id ?? "");
-    setColourDraft(null); setEditingFabric(false); saving.current = false;
+    setColourDraft(null); setEditingFabric(false); setPendingProduct(null); saving.current = false;
     initial.current = JSON.stringify({ mode: p?.mode ?? "native", draft: p?.draft ?? emptyFabricDraft() });
   }, [p?.productId, p?.revision]);
   useEffect(() => { setMappingPage(0); setColourDraft(null); }, [fabricId]);
   const dirty = JSON.stringify({ mode, draft }) !== initial.current;
+  const switchProduct = (next: string) => {
+    if (!next || next === p?.productId) return;
+    if (selectProduct && dirty) {
+      // SPA navigation has no beforeunload event; confirm in the page before
+      // discarding a merchant's unsaved fabric, colour or mapping edits.
+      setPendingProduct(next);
+      return;
+    }
+    if (selectProduct) selectProduct(next);
+    else window.location.assign(`/app/fabrics?product=${encodeURIComponent(next)}`);
+  };
   useEffect(() => {
     if (!dirty) return;
     const warn = (e: BeforeUnloadEvent) => { if (!saving.current) { e.preventDefault(); e.returnValue = ""; } };
@@ -201,7 +216,7 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
         <div className="fm-product">
           {p?.image ? <img className="fm-product-image" src={p.image} alt="" width={56} height={56} /> : <span className="fm-product-image fm-thumb is-empty"><span>No photo</span></span>}
           <label className="fm-field fm-grow"><span className="fm-label">Product</span>
-            <select aria-label="Shopify product" value={p?.productId ?? ""} onChange={(e) => { if (e.currentTarget.value) window.location.assign(`/app/fabrics?product=${encodeURIComponent(e.currentTarget.value)}`); }}>
+            <select aria-label="Shopify product" value={p?.productId ?? ""} onChange={(e) => switchProduct(e.currentTarget.value)}>
               <option value="">Select a Shopify product</option>{p && !data.products.nodes.some((x) => x.id === p.productId) && <option value={p.productId}>{p.title}</option>}
               {data.products.nodes.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
             </select>
@@ -222,6 +237,13 @@ export function FabricColourManager({ data, save, upload, error, busy = false }:
           {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} of {draft.bindings.length} mappings ready for AI preview</span>}
         </div>}
         {saveHint && <p className="fm-muted fm-save-hint" role="status">{saveHint}</p>}
+        {pendingProduct && <div className="fm-navigation-confirm" role="alert">
+          <p>You have unsaved fabric or colour changes. Switch products without saving them?</p>
+          <div className="fm-actions">
+            <button type="button" className="fm-btn fm-btn--primary" onClick={() => { const next = pendingProduct; setPendingProduct(null); selectProduct?.(next); }}>Discard changes and switch</button>
+            <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
+          </div>
+        </div>}
         {data.products.pageInfo.hasNextPage && <s-link href={`${link}${p ? "&" : "?"}after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
