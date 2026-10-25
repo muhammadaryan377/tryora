@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildAssistantLauncher, RoomAssistant } from "../../packages/storefront/src/assistant";
-import { IDLE_MS, sessionKey } from "../../packages/storefront/src/assistant/session";
+import { IDLE_MS, sessionKey, wasOpen } from "../../packages/storefront/src/assistant/session";
 
 const SHOP = "demo.myshopify.com";
 const config = {
@@ -51,7 +51,10 @@ function fakeProxy() {
       // By default the server confirms what the options model offered; a test can return a precise refusal instead.
       const variantId = new URL(url, "https://shop.example").searchParams.get("variant");
       const variant = proxy.options?.variants.find((v: any) => v.id === variantId);
-      return respond(proxy.check ?? { variantId, previewAvailable: true, previewStatus: "available", previewReason: null, optionValue: variant?.previewOption ?? null, referenceImage: null });
+      // A test can hold the check open to reproduce a shopper changing options while it is pending.
+      if (proxy.checkGate) await proxy.checkGate;
+      const answer = typeof proxy.check === "function" ? proxy.check(variantId) : proxy.check;
+      return respond(answer ?? { variantId, previewAvailable: true, previewStatus: "available", previewReason: null, optionValue: variant?.previewOption ?? null, referenceImage: null });
     }
     if (url === "/apps/tryora/lead") {
       const email = String((init.body as FormData).get("email") ?? "");
@@ -63,7 +66,7 @@ function fakeProxy() {
   const proxy = {
     suggestions: [] as string[],
     recommendation: null as any,
-    fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any,
+    fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any, checkGate: null as Promise<void> | null,
     script(...batches: any[][]) { turns.push(batches); },
     hold() { let release!: () => void; pollGate = new Promise((resolve) => { release = resolve; }); return () => { pollGate = null; release(); }; },
   };
@@ -377,8 +380,10 @@ describe("recommendation cards and previews", () => {
     const cards = $$(".tryora-assistant__card");
     expect(cards).toHaveLength(3);
     expect(cards[0]!.querySelector("[data-ta='preview']")).not.toBeNull();
-    expect(cards[1]!.querySelector("[data-ta='preview']")).toBeNull();
-    expect(cards[2]!.querySelector("[data-ta='preview']")).toBeNull();
+    // Every card has the same "Preview in my room" button; it is disabled, with the reason, when it cannot be used.
+    expect(cards.map((node) => node.querySelector("[data-ta='preview']")!.textContent)).toEqual(Array(3).fill("Preview in my room"));
+    expect(cards[1]!.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
+    expect(cards[2]!.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
     expect(cards.every((node) => !node.querySelector(".tryora-assistant__badge"))).toBe(true);
     expect(cards[1]!.querySelector<HTMLButtonElement>(".tryora-assistant__primary")!.disabled).toBe(true);
     expect(cards[2]!.textContent).toContain("sold out");
@@ -722,6 +727,32 @@ describe("product images in cards", () => {
     expect(stored.explored.map((entry: any) => entry.productRef)).toEqual(["1", "2", "3", "4", "5"]);
   });
 
+  it("View details goes to the product without reopening the assistant there, and the launcher still reopens it", async () => {
+    await showCards([card({ url: "/products/aria?variant=11" })]);
+    const stop = (event: Event) => event.preventDefault(); // jsdom cannot navigate; the real link would.
+    document.addEventListener("click", stop);
+    try {
+      const link = $(".tryora-assistant__card [data-ta='view-details']") as HTMLAnchorElement;
+      expect(link.getAttribute("href")).toBe("/products/aria?variant=11");
+      // Ctrl/Cmd-click opens a new tab; this tab keeps its open assistant.
+      link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }));
+      expect(JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!).ui.open).toBe(true);
+      link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    } finally { document.removeEventListener("click", stop); }
+    const stored = JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!);
+    // The next page reads this flag on load; the conversation itself is kept.
+    expect(stored.ui.open).toBe(false);
+    expect(stored.entries.some((entry: any) => entry.kind === "assistant" && entry.recommendations?.length)).toBe(true);
+    // The product page starts a fresh assistant: it does not open itself, and the launcher reopens the same conversation.
+    document.body.innerHTML = "";
+    expect(wasOpen(SHOP)).toBe(false);
+    const productPage = makeAssistant();
+    expect(document.querySelector(".tryora-assistant__panel:not([hidden])")).toBeNull();
+    productPage.open();
+    expect(JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!).ui.open).toBe(true);
+    expect($$(".tryora-assistant__card h4").map((h) => h.textContent)).toEqual(["Aria Bed"]);
+  });
+
   it("renders the real Shopify thumbnail with alt text, a loading state and a loaded state", async () => {
     await showCards([card({ image: "https://cdn.shopify.com/s/files/chelsea.jpg", imageAlt: "Chelsea Luxe Bed in grey", imageSource: "product", variantRef: null })]);
     const thumb = $(".tryora-assistant__card .tryora-assistant__thumb")!;
@@ -833,7 +864,7 @@ describe("in-card options and conversation memory", () => {
     proxy.options = egerieOptions();
     await showCards([{ ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32" }]);
     expect($(".tryora-assistant__card")!.textContent).toContain("Egerie Bed");
-    click("[data-ta='options']");
+    await settle(30);
     await settle(30);
     expect(proxy.calls.some((call) => call.url.startsWith("/apps/tryora/assistant/options?product=gid%3A%2F%2Fshopify%2FProduct%2F3&visitor="))).toBe(true);
     // Colours follow the fabric family; values with no variant are disabled; sold-out ones are marked.
@@ -872,59 +903,107 @@ describe("in-card options and conversation memory", () => {
 
   it("never invents an unselected hidden configuration", async () => {
     proxy.options = egerieOptions(); await showCards([egerieCard()]);
-    click("[data-ta='options']"); await settle(30);
+    await settle(30);
     choose("Fabric", "Boucle"); choose("Colour", "Beige");
     expect(opt("Size", "King")).toBeNull();
     expect($(".tryora-assistant__options [role='status']")!.textContent).toContain("No configuration has been chosen automatically");
-    expect($(".tryora-assistant__card [data-ta='preview']")).toBeNull();
+    expect($(".tryora-assistant__card [data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
     expect(proxy.calls.some((c) => c.url === "/apps/tryora/preview")).toBe(false);
   });
 
   it("retains the selected size on a fabric change and cannot preview the old variant while colour is incomplete", async () => {
     proxy.options = egerieOptions();
     const chosen = { ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32", options: { Fabric: "Boucle", Colour: "Beige", Size: "King" }, previewAvailable: true, previewStatus: "available", optionValue: "Beige" };
-    const assistant = await showCards([chosen]); click("[data-ta='options']"); await settle();
+    const assistant = await showCards([chosen]); await settle();
     choose("Fabric", "Velvet");
     expect(opt("Size", "King")).toBeNull();
     expect([...assistant.cardOptions.values()][0].selections.Size).toBe("King");
     expect(opt("Colour", "Emerald")!.getAttribute("aria-pressed")).toBe("false");
-    expect($(".tryora-assistant__card [data-ta='preview']")).toBeNull();
+    expect($(".tryora-assistant__card [data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
-    expect($(".tryora-assistant__card")!.textContent).toContain("Complete the fabric and colour selection");
+    expect($(".tryora-assistant__card")!.textContent).toContain("Select a colour to preview.");
   });
   it("shows the server's precise reason and never offers a preview the exact-variant check refuses", async () => {
     proxy.options = egerieOptions();
     proxy.check = { variantId: "gid://shopify/ProductVariant/32", previewAvailable: false, previewStatus: "unavailable", optionValue: null, referenceImage: null,
       previewReason: "The store hasn't approved a photo of this exact option for AI room preview yet." };
     await showCards([{ ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32" }]);
-    click("[data-ta='options']"); await settle(30);
+    await settle(30);
     choose("Fabric", "Boucle"); choose("Colour", "Beige"); await settle(30);
     const egerie = $(".tryora-assistant__card")!;
-    expect(egerie.querySelector("[data-ta='preview']")).toBeNull();
+    expect(egerie.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
     expect(egerie.textContent).toContain("The store hasn't approved a photo of this exact option for AI room preview yet.");
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+
+  it("never enables Preview for an earlier choice whose check finishes after the shopper changed fabric", async () => {
+    proxy.options = egerieOptions();
+    await showCards([{ ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32" }]);
+    await settle(30);
+    let release!: () => void; proxy.checkGate = new Promise<void>((resolve) => { release = resolve; });
+    choose("Colour", "Beige"); // Boucle / Beige / King: its eligibility check is now pending.
+    choose("Fabric", "Velvet"); // Colour cleared: the selection is incomplete while that check is still open.
+    release(); proxy.checkGate = null; await settle(30);
+    const card = $(".tryora-assistant__card")!;
+    expect(card.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
+    expect(card.textContent).toContain("Select a colour to preview.");
+    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+
+  it("applies only the newest check when the shopper switches between two variants", async () => {
+    const options = egerieOptions();
+    options.variants.push({ ...options.variants[1]!, ref: "35", id: "gid://shopify/ProductVariant/35", values: { Fabric: "Velvet", Colour: "Beige", Size: "King" }, options: { Fabric: "Velvet", Colour: "Beige", Size: "King" }, previewOption: "Beige" } as any);
+    proxy.options = options;
+    // The first variant would be previewable; the second is refused. The refusal must win, whatever order replies arrive in.
+    proxy.check = (variantId: string) => variantId.endsWith("/35")
+      ? { variantId, previewAvailable: false, previewStatus: "unavailable", optionValue: null, referenceImage: null, previewReason: "The store hasn't approved a photo of this exact option for AI room preview yet." }
+      : null;
+    await showCards([{ ...egerieCard(), variantRef: "32", variantId: "gid://shopify/ProductVariant/32" }]);
+    await settle(30);
+    let release!: () => void; proxy.checkGate = new Promise<void>((resolve) => { release = resolve; });
+    choose("Colour", "Beige");
+    choose("Fabric", "Velvet"); choose("Colour", "Beige");
+    release(); proxy.checkGate = null; await settle(40);
+    const card = $(".tryora-assistant__card")!;
+    expect(card.querySelector("a")!.getAttribute("href")).toBe("/products/egerie?variant=35");
+    expect(card.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
+    expect(card.textContent).toContain("The store hasn't approved a photo of this exact option");
+  });
+
+  it("checks and enables the only purchasable configuration without asking the shopper to choose", async () => {
+    const options = egerieOptions();
+    options.variants = options.variants.map((v: any) => ({ ...v, available: v.ref === "32" }));
+    proxy.options = options;
+    await showCards([egerieCard()]);
+    await settle(40);
+    const card = $(".tryora-assistant__card")!;
+    expect(card.querySelector("a")!.getAttribute("href")).toBe("/products/egerie?variant=32");
+    expect(card.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(false);
+    expect(proxy.calls.some((call) => call.url.includes("/assistant/preview-check?") && call.url.includes("ProductVariant%2F32"))).toBe(true);
+    // Nothing was chosen by the shopper, so nothing is recorded as their selection.
+    expect(JSON.parse(sessionStorage.getItem(sessionKey(SHOP))!).selected).toBeNull();
   });
 
   it("keeps preview disabled, with the reason, for an option that is not approved", async () => {
     proxy.options = egerieOptions();
     await showCards([{ ...egerieCard(), variantRef: "31", variantId: "gid://shopify/ProductVariant/31" }]);
-    click("[data-ta='options']");
+    await settle(30);
     await settle(30);
     choose("Fabric", "Boucle");
     choose("Colour", "Beige");
     expect(opt("Size", "Double")).toBeNull();
     const egerie = $(".tryora-assistant__card")!;
-    expect(egerie.querySelector("[data-ta='preview']")).toBeNull();
-    const alternative = egerie.querySelector<HTMLButtonElement>(".tryora-assistant__card-actions [data-ta=options]")!;
-    expect(alternative.textContent).toBe("Check other appearances");
-    expect(alternative.disabled).toBe(false); // Opens verified choices; it does not launch an unapproved preview.
+    expect(egerie.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
+    // Other verified appearances are already on the card; there is no second competing button.
+    expect(egerie.querySelector(".tryora-assistant__card-choices .tryora-assistant__options")).not.toBeNull();
+    expect([...egerie.querySelectorAll(".tryora-assistant__card-actions > *")].map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
     expect(egerie.textContent).toContain("This exact option isn't approved for AI room preview.");
   });
 
   it("disables previews with a clear reason when the store has no preview credits", async () => {
     await showCards([card()], { previewsAvailable: false });
     const item = $(".tryora-assistant__card")!;
-    expect(item.querySelector("[data-ta='preview']")).toBeNull();
+    expect(item.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
     expect(item.textContent).toContain("New AI previews are temporarily unavailable.");
   });
 
@@ -970,19 +1049,20 @@ describe("conversation state: selection, constraints and shown products", () => 
     await settle(80);
   }
 
-  it("Scenario A: selecting a card makes it the authoritative selection sent with the next message", async () => {
+  it("Scenario A: pressing Preview in my room makes that card the authoritative selection sent with the next message", async () => {
     makeAssistant().open();
-    await turn([{ type: "recommendations", items: [egerie, cloud] }]);
+    await turn([{ type: "recommendations", items: [cloud, egerie] }]);
     const cards = $$(".tryora-assistant__card");
     expect(cards.map((element) => element.querySelector(".tryora-assistant__eyebrow")!.textContent)).toEqual(["Recommended for your room \u00b7 Option 1", "Recommended for your room \u00b7 Option 2"]);
-    cards[1]!.querySelector<HTMLButtonElement>("[data-ta='select']")!.click();
+    // Two actions only: no separate "Select this look" or appearance link competing with them.
+    expect(cards.every((card) => [...card.querySelectorAll("button, a")].map((node) => node.textContent).join("|") === "View details|Preview in my room")).toBe(true);
+    cards[1]!.querySelector<HTMLButtonElement>("[data-ta='preview']")!.click();
     await settle(10);
     const selected = $$(".tryora-assistant__card")[1]!;
     expect(selected.classList.contains("is-selected")).toBe(true);
     expect(selected.querySelector(".tryora-assistant__eyebrow")!.textContent).toBe("Selected for your room \u00b7 Option 2");
-    expect(selected.querySelector("[data-ta='select']")).toBeNull();
     await turn([], {}, "select one");
-    expect(JSON.parse(String(proxy.forms.at(-1)!.get("selected")))).toEqual({ productRef: "2", variantRef: "21", source: "card" });
+    expect(JSON.parse(String(proxy.forms.at(-1)!.get("selected")))).toEqual({ productRef: "3", variantRef: "31", source: "card" });
   });
 
   it("Scenario D: 'show me Cloud Nine' renders that product's card with its photo even when it can't be previewed", async () => {
@@ -993,7 +1073,7 @@ describe("conversation state: selection, constraints and shown products", () => 
     expect(shown[0]!.querySelector(".tryora-assistant__eyebrow")!.textContent).toBe("Selected for your room \u00b7 Option 1");
     expect(shown[0]!.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/cloud.jpg");
     expect(shown[0]!.querySelector("a")!.getAttribute("href")).toBe("/products/cloud-nine?variant=21");
-    expect(shown[0]!.querySelector("[data-ta='preview']")).toBeNull();
+    expect(shown[0]!.querySelector("[data-ta='preview']")!.hasAttribute("disabled")).toBe(true);
   });
 
   it("persists the budget the server returns and sends it back on later turns, until a new chat", async () => {
