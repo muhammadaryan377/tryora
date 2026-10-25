@@ -132,6 +132,11 @@ describe("room assistant settings", () => {
     expect(roomAssistantVisible(parsed, { pageType: "index" })).toBe(true);
     expect(roomAssistantVisible(parsed, { pageType: "product", productHandle: "aria-bed" })).toBe(false);
     expect(roomAssistantVisible(parsed, { pageType: "collection", collectionId: "gid://shopify/Collection/4" })).toBe(false);
+    // The theme passes numeric IDs, even when merchants enter GIDs in exclusions.
+    expect(roomAssistantVisible(parsed, { pageType: "collection", collectionId: "4" })).toBe(false);
+    const withProductGid = { ...parsed, excludedProducts: ["gid://shopify/Product/42"] };
+    expect(roomAssistantVisible(withProductGid, { pageType: "product", productId: "42" })).toBe(false);
+    expect(roomAssistantVisible(withProductGid, { pageType: "product", productId: "43" })).toBe(true);
     expect(roomAssistantVisible(parsed, { pageType: "page" })).toBe(false);
   });
 
