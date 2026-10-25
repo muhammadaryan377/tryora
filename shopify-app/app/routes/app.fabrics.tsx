@@ -12,6 +12,7 @@ import { nativeSnapshot } from "../customization/reference-resolver.server";
 import { nativeSelections } from "../core/customization";
 import { discoverNativeOptions } from "../core/native-option-discovery";
 import { isSampleMedia } from "../customization/media-roles";
+import { sampleMediaIds, savedFabricSampleFiles } from "../customization/fabric-sample-files.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -52,6 +53,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   let draft = emptyFabricDraft(), diagnostics: Record<string, string> = {}, warning = "";
   try { draft = draftFromMapping(own?.mapping ?? effective.mapping, session.shop, productId); }
   catch { importBlocked = true; warning = "Existing integration cannot be imported safely. Its settings are preserved. Review existing integration settings before editing this profile."; }
+  // Add standalone Shopify Files ONLY for saved sample IDs; keep actual product photos
+  // in the original snapshot so fabric swatches never become gallery images.
+  try {
+    snapshot.media.push(...await savedFabricSampleFiles(admin, sampleMediaIds(draft), new Set(snapshot.media.map((m) => m.id))));
+  } catch {
+    warning = "Saved Shopify Files samples could not be loaded. Check the app's file permissions and reload before saving.";
+  }
   // Older mappings could bind a product photo as a texture or colour sample. Never show or re-save it as a sample.
   const notSamples: string[] = [];
   const keepSample = (id: string | null, label: string) => {
