@@ -1,3 +1,4 @@
+import { swatchAppearanceStyle } from "../swatch-appearance.js";
 import type { PopupPreviewDelivery, PopupPreviewHandoff } from "../preview-handoff.js";
 /**
  * Room Assistant 2.0: a right-side chat drawer (fullscreen on phones, optional fullscreen on desktop).
@@ -1568,6 +1569,7 @@ export class RoomAssistant {
     const groups = data.attributes.filter((attribute) => attribute.kind !== "size").map((attribute) => {
       const values = valuesFor(data, attribute, panel.selections);
       const colourKind = attribute.kind === "colour";
+      const appearanceStyle = colourKind ? swatchAppearanceStyle(data.swatchAppearance) : "";
       const swatches = colourKind || values.some((value) => value.colour || value.image);
       const buttons = values.map((value) => {
         const label = `${value.value}${value.soldOut ? " (sold out)" : ""}`;
@@ -1575,8 +1577,8 @@ export class RoomAssistant {
         if (!swatches) return `<button ${common} class="tryora-assistant__opt${value.soldOut ? " is-soldout" : ""}">${escapeHtml(label)}</button>`;
         const colour = value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour) ? value.colour : null;
         const dot = value.image ? `<img src="${escapeHtml(value.image)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
-        return `<button ${common} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
-          <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}">${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
+        return `<button ${common}${appearanceStyle ? ` style="min-width:${data.swatchAppearance!.size}px;width:auto"` : ""} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
+          <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
         <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}${colourKind ? " is-colour" : ""}${colourKind && values.some((value) => !value.image && !(value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour))) ? " has-plain" : ""}">${buttons}</div></fieldset>`;

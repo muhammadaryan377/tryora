@@ -37,6 +37,7 @@ export interface OptionVariant {
 }
 
 export interface ProductOptions {
+  swatchAppearance?: { shape: "circle" | "rectangle"; size: 25 | 50 | 75 | 100 };
   productRef: string;
   productId: string;
   title: string;
@@ -236,7 +237,7 @@ function managedOptions(product: CatalogueProduct, preview: any, sourceVariantId
     colour.samples ??= Object.create(null) as NonNullable<OptionValue["samples"]>; colour.samples[swatch.group] = { image: swatch.image, colour: swatch.colour };
   }
   return { productRef: product.ref, productId: product.id, title: product.title, url: product.url, image: product.image, imageAlt: product.imageAlt,
-    currencyCode: product.currencyCode, attributes, variants, singleVariant: product.variants.length === 1 && product.variantsComplete,
+    currencyCode: product.currencyCode, swatchAppearance: preview.swatchAppearance, attributes, variants, singleVariant: product.variants.length === 1 && product.variantsComplete,
     preview: { offered: preview.available && variants.some((v) => !!v.previewOption), reason: preview.available ? "This exact configuration needs an approved full-product reference." : REASONS.paused }, lead: preview.lead };
 }
 

@@ -143,6 +143,16 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await screenshot(page, `manager-manual-colours-${width}`);
       expect(await fits()).toBe(true);
 
+      // Appearance controls are persisted by the real save action and restored by the loader.
+      await page.getByRole("button", { name: "Rectangle", exact: true }).click();
+      await page.selectOption('[aria-label="Swatch size"]', "75");
+      expect(await page.locator('.fm-colour .fm-thumb').first().evaluate((el: HTMLElement) => el.style.width)).toBe("75px");
+      await savePage(page);
+      expect(state.rows[0].mapping.draft.swatchAppearance).toEqual({ shape: "rectangle", size: 75 });
+      expect(await page.getByRole("button", { name: "Rectangle", exact: true }).getAttribute("aria-pressed")).toBe("true");
+      expect(await page.locator('[aria-label="Swatch size"]').inputValue()).toBe("75");
+      expect(await fits()).toBe(true);
+
       // The texture picker offers uploaded samples only, never the full furniture photos (101-104).
       await page.locator('button:has-text("Edit fabric")').click();
       await page.locator('.fabric-editor .fm-choices summary').click();
@@ -192,6 +202,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect([await thumb("Cream"), await thumb("Grey"), await thumb("Ascot")]).toEqual(["https://cdn.shopify.com/201.jpg", "https://cdn.shopify.com/upload-2.jpg", "https://cdn.shopify.com/upload-1.jpg"]);
       expect(await page.locator('.fm-map-row').count()).toBe(4);
       expect(await page.locator('.fm-map-row .fm-map-status').allTextContents()).toEqual(Array(4).fill("Ready for AI preview"));
+      await page.locator("#fm-mapping > summary").click();
       await page.locator("#fm-mapping").scrollIntoViewIfNeeded();
       await screenshot(page, `manager-mapping-${width}`);
       expect(await fits()).toBe(true);
@@ -227,6 +238,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
 
       // An incomplete mapping says exactly what it still needs and never publishes.
       await page.locator('.fm-fabric-item', { hasText: 'Velvet' }).click();
+      await page.locator("#fm-mapping > summary").click();
       await page.locator('button:has-text("+ Add mapping")').click();
       const incomplete = page.locator('.fm-map-row').last();
       expect(await incomplete.locator(".fm-map-status").textContent()).toBe("Colour requires mapping");

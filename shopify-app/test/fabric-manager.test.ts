@@ -477,3 +477,22 @@ describe("SSR-safe fabric manager timestamp", () => {
     }
   });
 });
+
+describe("merchant swatch appearance", () => {
+  it.each([25, 50, 75, 100] as const)("saves and reloads %ipx rectangles without changing published bindings", async (size) => {
+    const f = snapshot();
+    f.draft.swatchAppearance = { shape: "rectangle", size };
+    await saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft: f.draft });
+    const saved = state.rows[0];
+    expect(draftFromMapping(saved.mapping, shopId, productId).swatchAppearance).toEqual({ shape: "rectangle", size });
+    expect(saved.mapping.published.entries).toHaveLength(4);
+    const storefront = await manualStorefrontData({ ...f.context, setting: { ...f.context.setting, active: true, mapping: saved.mapping } });
+    expect(storefront.swatchAppearance).toEqual({ shape: "rectangle", size });
+  });
+  it.each([{ shape: "triangle", size: 50 }, { shape: ["circle"], size: 50 }, { shape: "circle", size: "50" }, { shape: "circle", size: 101 }, { shape: "circle", size: 50, css: "bad" }])("rejects invalid appearance %j", (swatchAppearance) => {
+    expect(() => parseFabricDraft({ ...emptyFabricDraft(), swatchAppearance })).toThrow(/swatch size/);
+  });
+  it("keeps old documents valid and leaves their existing storefront sizing alone", () => {
+    expect(parseFabricDraft(emptyFabricDraft()).swatchAppearance).toBeUndefined();
+  });
+});

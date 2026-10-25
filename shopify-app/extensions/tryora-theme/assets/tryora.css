@@ -589,3 +589,9 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant[data-view=fullscreen] .tryora-assistant__card { grid-template-columns:140px minmax(0,1fr);padding:16px;gap:14px; }
 .tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb { width:140px;height:145px; }
 @media(max-width:480px){.tryora-assistant__card,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card{grid-template-columns:84px minmax(0,1fr);padding:12px;gap:10px}.tryora-assistant__card .tryora-assistant__thumb,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb{width:84px;height:100px}.tryora-assistant__card > .tryora-assistant__card-actions > *{font-size:12px;padding:10px 8px}}
+
+/* Merchant colour sizing: wrap large chips and inherit rectangle corners. */
+.tryora__swrow--custom{display:flex;flex-wrap:wrap;gap:12px;padding:4px}
+.tryora__swrow--custom.tryora__swrow--scroll{flex-wrap:nowrap}
+.tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot[style] > i,
+.tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot[style] > img{border-radius:inherit}
