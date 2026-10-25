@@ -1,26 +1,39 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useLocation } from "react-router";
+import { useEffect, useState } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
 
   // eslint-disable-next-line no-undef
-  return { apiKey: process.env.SHOPIFY_API_KEY || "" };
+  return { apiKey: process.env.SHOPIFY_API_KEY || "", shop: session.shop };
 };
 
 export default function App() {
-  const { apiKey } = useLoaderData<typeof loader>();
+  const { apiKey, shop } = useLoaderData<typeof loader>();
+  const location = useLocation();
+  const [lastFabricProduct, setLastFabricProduct] = useState<string | null>(null);
+  useEffect(() => {
+    const key = `tryora:last-fabric-product:${shop}`;
+    const selected = location.pathname === "/app/fabrics" ? new URLSearchParams(location.search).get("product") : null;
+    if (selected && /^gid:\/\/shopify\/Product\/\d{1,20}$/.test(selected)) {
+      sessionStorage.setItem(key, selected);
+      setLastFabricProduct(selected);
+    } else {
+      setLastFabricProduct(sessionStorage.getItem(key));
+    }
+  }, [location.pathname, location.search, shop]);
 
   return (
     <AppProvider apiKey={apiKey}>
       <s-app-nav>
         <s-link href="/app">Home</s-link>
         <s-link href="/app/products">Products</s-link>
-        <s-link href="/app/fabrics">Fabrics &amp; Colours</s-link>
+        <s-link href={lastFabricProduct ? `/app/fabrics?product=${encodeURIComponent(lastFabricProduct)}` : "/app/fabrics"}>Fabrics &amp; Colours</s-link>
         <s-link href="/app/appearance">Appearance</s-link>
         <s-link href="/app/assistant">Room assistant</s-link>
         <s-link href="/app/leads">Leads &amp; offers</s-link>
