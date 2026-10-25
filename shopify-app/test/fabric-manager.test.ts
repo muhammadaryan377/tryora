@@ -193,6 +193,16 @@ describe("shared storefront and server preview authority", () => {
 });
 
 describe("authenticated two-mode admin", () => {
+  it("honours the merchant workspace URL without switching the saved Shopify provider", async () => {
+    const view = await loader({ request: new Request(
+      `https://tryora.example/app/fabrics?product=${encodeURIComponent(productId)}&workspace=manual`,
+    ) } as any);
+    expect(view.startInManualMode).toBe(true);
+    expect(view.selected?.productId).toBe(productId);
+    expect(view.selected?.mode).toBe("native");
+    expect(state.rows).toEqual([]);
+  });
+
   it("supplies the first Shopify product for embedded-safe default selection", async () => {
     const page = await loader({ request: new Request("https://tryora.example/app/fabrics") } as any);
     expect(page.selected).toBeNull();
