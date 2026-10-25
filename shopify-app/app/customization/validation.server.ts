@@ -30,7 +30,19 @@ export async function manualStorefrontData(context: ProviderContext, prefetched?
   const variantChoice = (e: ManualEntry) => ({ id: e.variantId,
     image: snapshot.media.find((m) => m.id === e.referenceMediaIds[0])!.image!.url,
     options: { ...e.nativeOptions, [PRESERVATION_OPTION]: preservationKey(e), [MAPPED_FABRIC_OPTION]: e.fabric.label } });
-  let swatches = [...new Set(mapping.entries.map(combinationKey))].map((key) => {
+  // Both exact mapped references and preview-only source variants share this
+  // display shape. A preview-only source may have no variant-specific photo and
+  // must not pretend its virtual fabric label is a Shopify native option.
+  type ProjectedSwatch = {
+    value: string;
+    label: string;
+    group: string;
+    colour: string | null;
+    image: string | null;
+    available: boolean;
+    variants: { id: string; image: string | null; options: Record<string, string> }[];
+  };
+  let swatches: ProjectedSwatch[] = [...new Set(mapping.entries.map(combinationKey))].map((key) => {
     const entries = mapping.entries.filter((e) => combinationKey(e) === key);
     const e = entries[0]!;
     // Samples must be consistent across sizes/configurations for the same appearance.
