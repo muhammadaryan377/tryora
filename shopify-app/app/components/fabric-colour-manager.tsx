@@ -12,7 +12,7 @@ export interface FabricManagerData {
   products: { nodes: { id: string; title: string }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
   selected: null | {
     productId: string; title: string; image: string | null; mode: "native" | "manual"; providerId: string; revision: string;
-    draft: FabricDraft; importBlocked?: boolean; diagnostics: Record<string, string>; warning: string; sampleNotice?: string; explicitlyOff: boolean;
+    draft: FabricDraft; importBlocked?: boolean; diagnostics: Record<string, string>; warning: string; sampleNotice?: string; legacyGallerySamples?: number; explicitlyOff: boolean;
     options: { name: string; optionValues: { name: string; swatch?: { color?: string; image?: { image?: { url: string } } } }[] }[];
     variants: { id: string; availableForSale: boolean; image?: { url: string } | null; selectedOptions: { name: string; value: string }[] }[];
     media: Media[]; native: { issue: string | null; optionName: string | null; fabricOptionName: string | null; selections: { value: string; label?: string; group: string | null; image: string | null; colour: string | null; available?: boolean }[] };
@@ -57,7 +57,7 @@ function MediaField({ label, role, value, media, change, upload, disabled, kind,
     <Thumb url={selected?.url} label={`Selected ${role}`} empty={`No ${role}`} size={72} />
     <div className="fm-media-body">
       <strong>{selected ? `${role[0]!.toUpperCase()}${role.slice(1)}` : `No ${role} yet`}</strong>
-      {value && !selected && <p role="alert" className="fm-error">This image is no longer on the product. Choose it again.</p>}
+      {value && !selected && <p role="alert" className="fm-error">This image is no longer available in Shopify. Choose it again.</p>}
       <div className="fm-actions">
         <label className={`fm-btn${disabled || busy ? " is-disabled" : ""}`}>
           {busy ? "Uploading…" : selected ? "Replace image" : "Upload image"}
@@ -245,7 +245,8 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             <button type="button" className="fm-btn" onClick={() => setPendingProduct(null)}>Keep editing</button>
           </div>
         </div>}
-        {!p && data.products.pageInfo.hasNextPage && <s-link href={`${link}?after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
+        {p && <s-link href="/app/fabrics?browse=1">Browse more products</s-link>}
+        {!p && data.products.pageInfo.hasNextPage && <s-link href={`/app/fabrics?browse=1&after=${encodeURIComponent(data.products.pageInfo.endCursor ?? "")}`}>Next 25 products</s-link>}
       </header>
       {!p && <section className="fm-card fm-empty"><h2>Choose a product to start</h2><p className="fm-muted">Pick a Shopify product above to manage its fabrics, colours and AI preview references.</p></section>}
       {p && <>
@@ -255,6 +256,9 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
         {!data.installationReady && <s-banner heading="Manual setup is not enabled" tone="info"><p>{data.manualSetupReason || "Your app administrator needs to authorize merchant-managed customization for this installation. Shopify-native previews continue to work."}</p></s-banner>}
         {p.warning && <s-banner heading="Saved mapping needs attention" tone="warning"><p>{p.warning}</p></s-banner>}
         {p.sampleNotice && <s-banner heading="Some samples need real sample images" tone="warning"><p>{p.sampleNotice}</p></s-banner>}
+        {!!p.legacyGallerySamples && <s-banner heading="Older fabric samples are still in the product gallery" tone="warning">
+          <p>{p.legacyGallerySamples} previously uploaded sample image(s) are attached to this Shopify product. New sample uploads use Shopify Files and will not be added to the product gallery. Review existing samples and remove their product-media copies only after confirming any saved references are updated; Tryora does not delete product images automatically.</p>
+        </s-banner>}
         {p.providerId === "cloudlift" && <p className="fm-muted">Existing reviewed Cloudlift native-linked mapping is preserved under Manual Setup. Saving does not create an automatic third-party integration.</p>}
 
         {!manual ? <section className="fm-card" aria-labelledby="fm-native-title">
