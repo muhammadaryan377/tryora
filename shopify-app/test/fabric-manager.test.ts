@@ -323,6 +323,39 @@ describe("upload route answers JSON, never the HTML page", () => {
     expect([blocked.status, blocked.headers.get("content-type")]).toEqual([403, expect.stringContaining("application/json")]);
     expect(state.writes).toEqual([]);
   });
+  it("shows Shopify's own reason for each failed upload step and logs the step", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+    const original = state.admin.graphql;
+    const attempt = async (graphql: (query: string, variables: any) => Promise<Response>) => {
+      state.admin.graphql = async (query: string, variables: any) => (/TryoraStageFabricImage|TryoraAttachFabricImage|TryoraFabricUploadStatus/.test(query) || query.includes("TryoraPreviewProduct")) ? graphql(query, variables) : original(query, variables);
+      const form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+      const response = await post(form);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      return (await response.json()).error as string;
+    };
+    const staged = (q: string) => q.includes("TryoraStageFabricImage") ? Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } }) : null;
+    // 1. The Shopify library throws GraphqlQueryError (body attached) for a refused mutation.
+    const denied = Object.assign(new Error("GraphQL Client: An error occurred while fetching from the API"), { name: "GraphqlQueryError", body: { errors: [{ message: "Access denied for stagedUploadsCreate field. Required access: `write_products`." }] } });
+    expect(await attempt(async (q, v) => { if (q.includes("TryoraStageFabricImage")) throw denied; return original(q, v); }))
+      .toBe("Shopify could not prepare this upload: Access denied for stagedUploadsCreate field. Required access: `write_products`. No fabric configuration was changed.");
+    // 2. userErrors from attaching the image to the product.
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+    expect(await attempt(async (q, v) => staged(q) ?? (q.includes("TryoraAttachFabricImage") ? Response.json({ data: { productUpdate: { product: null, userErrors: [{ field: ["media"], message: "Media processing failed" }] } } }) : original(q, v))))
+      .toBe("Shopify could not attach the image to this product: Media processing failed No fabric configuration was changed.");
+    // 3. The transfer to Shopify's upload storage itself fails.
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("fetch failed"); }));
+    expect(await attempt(async (q, v) => staged(q) ?? original(q, v))).toContain("could not be sent to Shopify's upload storage");
+    // 4. The product itself cannot be read.
+    const unreadable = Object.assign(new Error("GraphQL Client: An error occurred while fetching from the API"), { name: "GraphqlQueryError", body: { errors: [{ message: "Throttled" }] } });
+    expect(await attempt(async (q, v) => { if (q.includes("TryoraPreviewProduct")) throw unreadable; return original(q, v); })).toBe("This product could not be read from Shopify: Throttled Refresh the page and try again.");
+    const steps = warn.mock.calls.map((call) => JSON.parse(String(call[0]))).filter((line) => line.component === "fabric-upload").map((line) => line.step);
+    expect(steps).toEqual(["stage", "attach", "transfer", "product"]);
+    expect(state.writes).toEqual([]);
+    warn.mockRestore();
+  });
+
   it("turns an HTML reply into a clear message instead of a JSON parse error", async () => {
     const file = new File(["x"], "velvet.jpg", { type: "image/jpeg" });
     const html = vi.fn(async () => new Response("<!DOCTYPE html><html></html>", { status: 200, headers: { "content-type": "text/html" } }));

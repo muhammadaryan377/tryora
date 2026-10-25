@@ -16,9 +16,30 @@ export const FABRIC_UPLOAD_STATUS = `#graphql
 query TryoraFabricUploadStatus($id: ID!) {
   product(id: $id) { id media(last: 20) { nodes { id alt ... on MediaImage { image { url } } } } }
 }`;
-async function result(admin: AdminGraphql, query: string, variables: Record<string, unknown>) {
-  const r = await admin.graphql(query, { variables }); const json = await r.json();
-  if (!r.ok || json.errors?.length || !json.data) throw new FabricConfigError("Shopify media is unavailable. No fabric configuration was changed.");
+/** Shopify's own error text from a GraphQL body, a thrown GraphqlQueryError, or a list of userErrors. */
+export function shopifyMessages(source: unknown): string[] {
+  const body = (source as any)?.body ?? (source as any)?.response?.body ?? source;
+  const list = Array.isArray(body) ? body : Array.isArray(body?.errors) ? body.errors : Array.isArray(body?.errors?.graphQLErrors) ? body.errors.graphQLErrors : [];
+  const messages: string[] = list.map((entry: any) => typeof entry === "string" ? entry : entry?.message).filter((m: unknown): m is string => typeof m === "string" && !!m.trim());
+  if (!messages.length && source instanceof Error && source.message && !/^[A-Z_]+$/.test(source.message)) messages.push(source.message);
+  return messages.map((m) => m.replace(/\s+/g, " ").trim().slice(0, 200)).slice(0, 3);
+}
+/** One server log line per failed upload step: never image bytes, tokens or shopper data. */
+export function logUploadFailure(step: string, error: unknown, extra: Record<string, unknown> = {}) {
+  console.warn(JSON.stringify({ component: "fabric-upload", event: "failed", step, errorClass: error instanceof Error ? error.name : typeof error, messages: shopifyMessages(error), ...extra }));
+}
+/** A Shopify refusal the merchant can act on, with Shopify's own words when it gave any. */
+function refused(step: string, what: string, source: unknown, extra: Record<string, unknown> = {}) {
+  logUploadFailure(step, source, extra);
+  const messages = shopifyMessages(source);
+  return new FabricConfigError(`Shopify could not ${what}${messages.length ? `: ${messages.join(" ")}` : "."} No fabric configuration was changed.`);
+}
+// The Shopify library throws GraphqlQueryError (body attached) instead of returning top-level errors.
+async function result(admin: AdminGraphql, query: string, variables: Record<string, unknown>, step: string, what: string) {
+  let r: Response, json: any;
+  try { r = await admin.graphql(query, { variables }); json = await r.json(); }
+  catch (error) { throw refused(step, what, error); }
+  if (!r.ok || json?.errors?.length || !json?.data) throw refused(step, what, json, { status: r.status });
   return json.data;
 }
 /** Bound before formData(), including chunked requests. Never write uploaded bytes to disk or Prisma. */
@@ -50,19 +71,21 @@ function stagedUrl(value: string) {
 /** Called only after admin authentication, product ownership, manual-mode and revision checks. */
 export async function uploadFabricMedia(admin: AdminGraphql, productId: string, file: Blob, purpose: "sample" | "reference" = "sample") {
   const bytes = await cleanFabricImage(file), marker = `Tryora ${purpose === "sample" ? "fabric sample" : "furniture reference"} ${randomUUID()}`;
-  const stage = (await result(admin, STAGE_FABRIC_IMAGE, { input: [{ filename: `${randomUUID()}.jpg`, mimeType: "image/jpeg", resource: "IMAGE", httpMethod: "POST", fileSize: String(bytes.length) }] })).stagedUploadsCreate;
-  if (stage?.userErrors?.length || stage?.stagedTargets?.length !== 1) throw new FabricConfigError("Shopify could not prepare this upload. Check your product-write permission and try again.");
+  const stage = (await result(admin, STAGE_FABRIC_IMAGE, { input: [{ filename: `${randomUUID()}.jpg`, mimeType: "image/jpeg", resource: "IMAGE", httpMethod: "POST", fileSize: String(bytes.length) }] }, "stage", "prepare this upload")).stagedUploadsCreate;
+  if (stage?.userErrors?.length || stage?.stagedTargets?.length !== 1) throw refused("stage", "prepare this upload", stage?.userErrors ?? []);
   const target = stage.stagedTargets[0];
   const destination = stagedUrl(target.url), resourceUrl = stagedUrl(target.resourceUrl);
   const form = new FormData();
   for (const p of target.parameters ?? []) form.append(p.name, p.value);
   form.append("file", new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }), "tryora-merchant-image.jpg");
-  const uploaded = await fetch(destination, { method: "POST", body: form, redirect: "error", signal: AbortSignal.timeout(30_000) });
-  if (!uploaded.ok) throw new FabricConfigError("The image upload did not complete. No fabric configuration was changed.");
-  const attached = (await result(admin, ATTACH_FABRIC_IMAGE, { product: { id: productId }, media: [{ mediaContentType: "IMAGE", originalSource: resourceUrl, alt: marker }] })).productUpdate;
-  if (attached?.userErrors?.length || attached?.product?.id !== productId) throw new FabricConfigError("Shopify could not attach the image to this product. No fabric configuration was changed.");
+  let uploaded: Response;
+  try { uploaded = await fetch(destination, { method: "POST", body: form, redirect: "error", signal: AbortSignal.timeout(30_000) }); }
+  catch (error) { logUploadFailure("transfer", error, { host: new URL(destination).hostname }); throw new FabricConfigError("The image could not be sent to Shopify's upload storage. Check the connection and try again; no fabric configuration was changed."); }
+  if (!uploaded.ok) { logUploadFailure("transfer", null, { status: uploaded.status, host: new URL(destination).hostname }); throw new FabricConfigError(`Shopify's upload storage refused the image (HTTP ${uploaded.status}). Try again; no fabric configuration was changed.`); }
+  const attached = (await result(admin, ATTACH_FABRIC_IMAGE, { product: { id: productId }, media: [{ mediaContentType: "IMAGE", originalSource: resourceUrl, alt: marker }] }, "attach", "attach the image to this product")).productUpdate;
+  if (attached?.userErrors?.length || attached?.product?.id !== productId) throw refused("attach", "attach the image to this product", attached?.userErrors ?? []);
   for (let attempt = 0; attempt < 4; attempt++) {
-    const data = await result(admin, FABRIC_UPLOAD_STATUS, { id: productId });
+    const data = await result(admin, FABRIC_UPLOAD_STATUS, { id: productId }, "status", "confirm the uploaded image");
     if (data.product?.id !== productId) throw new FabricConfigError("Product ownership could not be verified.");
     const image = data.product.media.nodes.find((m: any) => m.alt === marker && m.image?.url && safeShopifyMediaUrl(m.image.url));
     // The marker travels with the new image so the manager keeps samples and full-product photos in separate pickers.
