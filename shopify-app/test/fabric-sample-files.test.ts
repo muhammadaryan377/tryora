@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { sampleMediaIds, savedFabricSampleFiles } from "../app/customization/fabric-sample-files.server";
+import { findUploadedMedia } from "../app/customization/fabric-media.server";
 
 const fileId = "gid://shopify/MediaImage/767";
 const marker = "Tryora fabric sample 98765432-9876-4987-a987-987654321012";
@@ -26,6 +27,21 @@ describe("isolated Shopify Files for Tryora fabric samples", () => {
     ] } })) };
     expect(await savedFabricSampleFiles(admin, [fileId, "https://attacker.invalid/photo"], new Set())).toEqual([]);
     expect(await savedFabricSampleFiles(admin, [fileId], new Set([fileId]))).toEqual([]);
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+  });
+
+  it("polls a Shopify File by its verified ID and never queries product gallery media", async () => {
+    const admin = { graphql: vi.fn(async (query: string, init: any) => {
+      expect(query).toContain("TryoraFabricFileUploadStatus");
+      expect(query).not.toContain("product(id:");
+      expect(init.variables.id).toBe(fileId);
+      return Response.json({ data: { node: { id: fileId, alt: marker, fileStatus: "READY",
+        image: { url: "https://cdn.shopify.com/files/swatch.jpg" } } } });
+    }) };
+    await expect(findUploadedMedia(admin, "gid://shopify/Product/123", marker, fileId)).resolves.toEqual({
+      id: fileId, alt: marker, url: "https://cdn.shopify.com/files/swatch.jpg",
+    });
+    await expect(findUploadedMedia(admin, "gid://shopify/Product/123", "forged", fileId)).rejects.toThrow("Invalid isolated sample");
     expect(admin.graphql).toHaveBeenCalledTimes(1);
   });
 
