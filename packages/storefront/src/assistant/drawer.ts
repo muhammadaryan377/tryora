@@ -135,6 +135,8 @@ export class RoomAssistant {
   constructor(private readonly config: AssistantConfig, private readonly context: AssistantContext = {}) {
     this.shop = config.shop || (typeof location !== "undefined" ? location.hostname : "store");
     this.state = loadState(this.shop, config.defaultView ?? "side");
+    // Legacy chat sessions may still contain an old lead form. Never reopen it.
+    this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
   }
 
   get isOpen() { return this.visible; }
@@ -481,17 +483,36 @@ export class RoomAssistant {
 
   /** Starts an AI preview for one verified card. Needs a room photo; asks for one if missing. */
   async startPreview(item: Recommendation) {
-    if (!item.previewAvailable || this.config.previewsAvailable === false) return;
-    if (item.previewContext?.pageSourceVariantId && numeric(this.context.productId) === numeric(item.productId)) {
-      const current = this.context.currentVariantId?.();
-      if (current && numeric(current) !== numeric(item.previewContext.pageSourceVariantId)) {
-        this.state.entries.push({ id: uid(), kind: "notice", text: "The selected Shopify configuration changed. Reopen the product options before creating a preview.", at: Date.now() });
-        this.save(); this.renderAll(); return;
+    if (this.config.previewsAvailable === false) return;
+    let chosen = item;
+    // When the shopper is viewing this very product, the product form is the
+    // authoritative appearance selection; never generate an older chat variant.
+    const pageProduct = !!this.context.productId && numeric(this.context.productId) === numeric(item.productId);
+    const rawPageVariant = pageProduct ? this.context.currentVariantId?.() : null;
+    if (rawPageVariant && numeric(rawPageVariant) !== numeric(item.variantId)) {
+      const variantId = rawPageVariant.startsWith("gid://") ? rawPageVariant : `gid://shopify/ProductVariant/${rawPageVariant}`;
+      try {
+        const params = new URLSearchParams({
+          product: item.productId, variant: variantId, sourceVariant: variantId, visitor: storedVisitorId(),
+        });
+        const response = await fetch(`${PROXY}/assistant/preview-check?${params}`, { credentials: "same-origin" });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.variantId !== variantId || !body.previewAvailable || !body.optionValue) throw new Error("NOT_READY");
+        chosen = {
+          ...item, id: `${item.productRef}:${numeric(variantId)}`, variantRef: numeric(variantId), variantId,
+          optionValue: body.optionValue, previewAvailable: true, previewStatus: "available",
+          previewReason: null, referenceImage: body.referenceImage ?? item.referenceImage,
+          previewContext: { ...body.previewContext, pageSourceVariantId: variantId },
+        };
+      } catch {
+        this.addNotice("The current Shopify product selection is not ready for an AI room preview. No credit was used.");
+        return;
       }
     }
+    if (!chosen.previewAvailable || !chosen.variantId || !chosen.optionValue) return;
     // One job per card at a time: a double click never starts (or charges for) a second preview.
-    if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === item.id)) return;
-    this.state.selected = { productRef: item.productRef, variantRef: item.variantRef, source: "card" };
+    if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === chosen.id)) return;
+    this.state.selected = { productRef: chosen.productRef, variantRef: chosen.variantRef, source: "card" };
     if (this.attachment) {
       const previous = this.roomPhoto;
       this.roomPhoto = this.attachment; this.attachment = null;
@@ -502,14 +523,13 @@ export class RoomAssistant {
       this.renderComposer(); this.renderRoomChip();
     }
     if (!this.roomPhoto) {
-      this.pendingPreview = item;
+      this.pendingPreview = chosen;
       this.composerError = "";
       this.addNotice("Add a room photo to create the preview. Photos aren't kept after the page reloads.");
       this.openPicker("upload");
       return;
     }
-    if (this.leadNeeded()) return this.openLeadForm(item, false);
-    const entry: PreviewEntry = { id: uid(), kind: "preview", item, status: "generating", stage: "checking_photo", at: Date.now() };
+    const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
     this.state.entries.push(entry);
     this.save();
     this.renderAll();
@@ -518,12 +538,12 @@ export class RoomAssistant {
     this.previews.set(entry.id, controller);
     try {
       const { url, acknowledge } = await generatePreview({
-        item,
+        item: chosen,
         photo: this.roomPhoto.blob,
         visitor: storedVisitorId(),
         signal: controller.signal,
         onStage: (stage) => { entry.stage = stage; this.renderEntry(entry.id); },
-        leadDone: this.leadDoneFlag(),
+        leadDone: "1",
       });
       if (controller.signal.aborted || !this.state.entries.includes(entry)) { URL.revokeObjectURL(url); return; }
       this.previewUrls.set(entry.id, url);
@@ -532,22 +552,17 @@ export class RoomAssistant {
       this.renderEntry(entry.id);
       // The image is now on screen: acknowledge delivery and tag the basket, exactly as the product popup does.
       acknowledge();
-      void tagBasket(item.productId);
+      void tagBasket(chosen.productId);
       this.state.previewsDelivered += 1;
-      this.announce(`Your AI room preview of the ${item.title} is ready.`);
-      // "After" timing: the email is asked once, after the first preview, as on the product page.
-      const lead = this.config.lead;
-      if (lead && lead.mode !== "off" && lead.timing === "after" && !this.state.lead.done) this.openLeadForm(item, true);
+      this.announce(`Your AI room preview of the ${chosen.title} is ready.`);
     } catch (error) {
       if (controller.signal.aborted) return;
       const code = error instanceof PreviewError ? error.code : (error as any)?.code ?? "FAILED";
       entry.status = "failed";
       entry.stage = undefined;
       if (code === "LEAD_REQUIRED") {
-        // The store needs an email first: replace this attempt with the in-chat email step (never a repeated warning).
-        this.state.entries = this.state.entries.filter((candidate) => candidate !== entry);
-        this.state.lead.done = false;
-        this.openLeadForm(item, false);
+        entry.error = "Chat previews are not configured for direct generation yet. No credit was used.";
+        this.renderEntry(entry.id);
         return;
       }
       entry.error = previewErrorMessage(code);
@@ -677,9 +692,6 @@ export class RoomAssistant {
     this.renderAll();
     this.scrollToEnd(true);
     const displayed = !!this.visible && !!this.root?.querySelector(`[data-entry="${CSS.escape(id)}"] img`);
-    if (displayed && this.config.lead?.mode !== "off" && this.config.lead?.timing === "after" && !this.state.lead.done) {
-      this.openLeadForm(item, true);
-    }
     return displayed;
   }
 
