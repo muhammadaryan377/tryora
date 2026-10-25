@@ -6,6 +6,8 @@ import { referenceChoices, sampleChoices } from "../customization/media-roles";
 type Media = { id: string; url: string; alt?: string | null };
 export interface FabricManagerData {
   installationReady: boolean;
+  /** Keep legacy reviewed variant editor out of the simple merchant setup. */
+  advanced?: boolean;
   manualSetupReason?: string;
   products: { nodes: { id: string; title: string }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
   selected: null | {
@@ -205,7 +207,6 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
   const steps = [
     { label: "Fabric & texture", done: draft.fabrics.some((f) => f.name.trim() && f.textureMediaId) },
     { label: "Colours & samples", done: draft.fabrics.some((f) => f.colours.some((c) => c.swatchMediaId || c.hex)) },
-    { label: "Variants & references", done: ready > 0 },
     { label: "Saved", done: !dirty && !!p?.revision },
   ];
 
@@ -234,7 +235,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
         {p && <div className="fm-subhead">
           <span className="fm-muted">{p.title} · <s-link href={`/app/products/${p.productId.split("/").pop()}`}>Product preview settings</s-link></span>
           {manual && <ol className="fm-steps" aria-label="Setup progress">{steps.map((s) => <li key={s.label} className={s.done ? "is-done" : ""}><span aria-hidden="true">{s.done ? "✓" : ""}</span>{s.label}{s.done ? <span className="fm-sr"> (done)</span> : null}</li>)}</ol>}
-          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} of {draft.bindings.length} mappings ready for AI preview</span>}
+          {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} preview-ready colour configurations</span>}
         </div>}
         {saveHint && <p className="fm-muted fm-save-hint" role="status">{saveHint}</p>}
         {pendingProduct && <div className="fm-navigation-confirm" role="alert">
@@ -351,7 +352,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
             </section>
           </div>
 
-          <details className="fm-advanced-setup">
+          {data.advanced && <details open className="fm-advanced-setup">
             <summary>Advanced AI preview setup</summary>
           <section id="fm-mapping" className="fm-card fabric-mapping" aria-labelledby="fm-mapping-title">
             <div className="fm-section-head"><div><h2 id="fm-mapping-title">Variants & AI preview readiness</h2>
@@ -409,7 +410,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
               <select aria-label={`${role} option role`} value={draft.roles[role] ?? ""} onChange={(e) => { const value = e.currentTarget.value; setDraft((d) => { const roles = { ...d.roles }; if (value) roles[role] = value; else delete roles[role]; return { ...d, roles, bindings: d.bindings.map((b) => ({ ...b, reviewed: false })) }; }); }}>
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
-          </details>
+          </details>}
           <p className="fm-muted fm-footnote">Uploads are added to this product's Shopify media. Removing a fabric, colour or mapping from Tryora never deletes Shopify images or variants. <s-link href={link}>Refresh from Shopify</s-link></p>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>
