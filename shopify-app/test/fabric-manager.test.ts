@@ -23,6 +23,8 @@ import { nativeSelections } from "../app/core/customization";
 import { manualStorefrontData } from "../app/customization/validation.server";
 import { resolveConfiguredPreview } from "../app/customization/registry.server";
 import { action, loader } from "../app/routes/app.fabrics";
+import { action as uploadAction } from "../app/routes/app.fabrics.upload";
+import { requestFabricUpload } from "../app/customization/fabric-upload-request";
 import { formatSyncedAtUtc } from "../app/components/fabric-colour-manager";
 import { loadProviderSetting } from "../app/customization/provider-config.server";
 const snapshot = () => { const f = providerFixture(); return { ...f, product: { id: productId }, draft: draftFromMapping(f.mapping, shopId, productId) }; };
@@ -283,6 +285,56 @@ describe("authenticated two-mode admin", () => {
     state.rows = [{ shopId, productId, providerId: "shopify_native", revision: "r", active: true, mapping: null }];
     const result = await action({ request: request({ intent: "upload", revision: "r" }) } as any);
     expect(result).toHaveProperty("error"); expect(state.writes).toEqual([]);
+  });
+});
+
+describe("upload route answers JSON, never the HTML page", () => {
+  // Reported bug: selecting a fabric image showed "Unexpected token '<', "<!DOCTYPE "... is not valid JSON", because the
+  // upload POSTed to the Fabrics page, which React Router answers with the rendered HTML document.
+  const post = (form: FormData, product = productId) => uploadAction({ request: new Request(`https://tryora.example/app/fabrics/upload?product=${encodeURIComponent(product)}`, { method: "POST", body: form }) } as any);
+  const uploadForm = (fields: Record<string, string> = {}) => { const form = new FormData(); for (const [k, v] of Object.entries({ mode: "manual", purpose: "sample", revision: "", ...fields })) form.set(k, v); return form; };
+  it("returns the uploaded sample as JSON", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const image = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#dedede" } }).png().toBuffer();
+    const original = state.admin.graphql; let marker = "";
+    state.admin.graphql = async (query: string, variables: any) => {
+      if (query.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/s.jpg", parameters: [] }], userErrors: [] } } });
+      if (query.includes("TryoraAttachFabricImage")) { marker = variables.variables.media[0].alt; return Response.json({ data: { productUpdate: { product: { id: productId }, userErrors: [] } } }); }
+      if (query.includes("TryoraFabricUploadStatus")) return Response.json({ data: { product: { id: productId, media: { nodes: [{ id: "gid://shopify/MediaImage/991", alt: marker, image: { url: "https://cdn.shopify.com/s.jpg" } }] } } } });
+      return original(query, variables);
+    };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 201 })));
+    const form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
+    const response = await post(form);
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(await response.json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991", alt: expect.stringMatching(/^Tryora fabric sample /) } });
+    expect(state.writes).toEqual([]);
+  });
+  it("answers refusals and oversized bodies as JSON errors too", async () => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", shopId);
+    const native = await post(uploadForm({ mode: "native" }));
+    expect([native.status, native.headers.get("content-type")]).toEqual([400, expect.stringContaining("application/json")]);
+    expect((await native.json()).error).toContain("Manual Setup");
+    const big = new FormData(); big.set("mode", "manual"); big.set("image", new Blob([new Uint8Array(11 * 1024 * 1024)]), "huge.jpg");
+    const oversized = await post(big);
+    expect([oversized.status, (await oversized.json()).error]).toEqual([413, "Choose a JPG, PNG or WebP image under 8 MB."]);
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_SHOPS", "another.myshopify.com");
+    const blocked = await post(uploadForm());
+    expect([blocked.status, blocked.headers.get("content-type")]).toEqual([403, expect.stringContaining("application/json")]);
+    expect(state.writes).toEqual([]);
+  });
+  it("turns an HTML reply into a clear message instead of a JSON parse error", async () => {
+    const file = new File(["x"], "velvet.jpg", { type: "image/jpeg" });
+    const html = vi.fn(async () => new Response("<!DOCTYPE html><html></html>", { status: 200, headers: { "content-type": "text/html" } }));
+    await expect(requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, html as any)).rejects.toThrow("The upload didn't reach Tryora. Refresh the page and try again; nothing was changed.");
+    expect((html.mock.calls[0] as any[])[0]).toBe(`/app/fabrics/upload?product=${encodeURIComponent(productId)}`);
+    const expired = vi.fn(async () => new Response("", { status: 401 }));
+    await expect(requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, expired as any)).rejects.toThrow("Your Shopify session expired");
+    const pending = vi.fn(async () => Response.json({ pending: true, media: null }));
+    await expect(requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, pending as any)).rejects.toThrow("still processing");
+    const ok = vi.fn(async () => Response.json({ pending: false, media: { id: "gid://shopify/MediaImage/5", url: "https://cdn.shopify.com/5.jpg" } }));
+    expect(await requestFabricUpload({ productId, revision: "r1", file, purpose: "reference" }, ok as any)).toEqual({ id: "gid://shopify/MediaImage/5", url: "https://cdn.shopify.com/5.jpg" });
+    expect(((ok.mock.calls[0] as any[])[1].body as FormData).get("purpose")).toBe("reference");
   });
 });
 

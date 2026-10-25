@@ -20,6 +20,7 @@ vi.mock("../app/db.server", () => {
   return { default: { ...db, $transaction: async (fn: any) => fn(db) } };
 });
 import { loader, action } from "../app/routes/app.fabrics";
+import { action as uploadAction } from "../app/routes/app.fabrics.upload";
 import { compileFabricDocument, draftFromMapping } from "../app/customization/fabric-manager.server";
 const RUN = process.env.TRYORA_E2E === "1", SHOTS = process.env.TRYORA_E2E_SCREENSHOTS ?? "";
 const nativeId = "gid://shopify/Product/2";
@@ -65,10 +66,11 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
     polaris = existsSync(cached) ? readFileSync(cached, "utf8") : await (await originalFetch("https://cdn.shopify.com/shopifycloud/polaris.js")).text();
     jpeg = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#d0c3ae" } }).jpeg().toBuffer();
     vi.stubGlobal("fetch", async (input: any, init: any) => String(input).startsWith("https://shopify-staged-uploads.storage.googleapis.com/") ? new Response("", { status: 201 }) : originalFetch(input, init));
-    const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{FabricColourManager}from'./app/components/fabric-colour-manager';
+    // The real browser upload helper and the real JSON upload route, as in the Shopify admin.
+    const entry = `import React,{useState} from 'react';import{createRoot}from'react-dom/client';import{FabricColourManager}from'./app/components/fabric-colour-manager';import{requestFabricUpload}from'./app/customization/fabric-upload-request';
       const data=window.managerData;function App(){const[error,setError]=useState('');return <FabricColourManager data={data} error={error}
       save={async(mode,draft)=>{const r=await fetch(location.href,{method:'POST',body:new URLSearchParams({intent:'save',mode,revision:data.selected.revision,draft:JSON.stringify(draft)})});if(r.redirected){location.href=r.url;return}setError((await r.json()).error||'Save failed')}}
-      upload={async(file,purpose)=>{const form=new FormData();form.set('intent','upload');form.set('mode','manual');form.set('purpose',purpose);form.set('revision',data.selected.revision);form.set('image',file);const r=await fetch(location.href,{method:'POST',body:form});const json=await r.json();if(json.error)throw Error(json.error);return json.media}}/>}createRoot(document.getElementById('root')).render(<App/>);`;
+      upload={(file,purpose)=>requestFabricUpload({productId:data.selected.productId,revision:data.selected.revision,file,purpose})}/>}createRoot(document.getElementById('root')).render(<App/>);`;
     bundle = (await build({ stdin: { contents: entry, loader: "tsx", resolveDir: join(__dirname, "..") }, bundle: true, write: false, format: "iife", jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' } })).outputFiles[0]!.text;
     server = createServer(async (req, res) => {
       try {
@@ -77,7 +79,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
         const chunks: Buffer[] = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
         const request = new Request(url, { method: req.method, headers: { "content-type": String(req.headers["content-type"] ?? "") }, ...(req.method === "POST" ? { body: Buffer.concat(chunks) } : {}) });
         if (req.method === "POST") {
-          const result = await action({ request } as any);
+          const result = url.pathname === "/app/fabrics/upload" ? await uploadAction({ request } as any) : await action({ request } as any);
           if (result instanceof Response) { res.writeHead(result.status, Object.fromEntries(result.headers)); res.end(await result.text()); return; }
           res.setHeader("Content-Type", "application/json"); res.end(JSON.stringify(result)); return;
         }
