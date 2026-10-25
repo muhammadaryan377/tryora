@@ -13,14 +13,15 @@ export async function requestFabricUpload(input: { productId: string; revision: 
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error ?? "Upload failed. Please try again.");
   if (!result.pending) return result.media as { id: string; url: string; alt?: string | null };
-  // Uploaded and attached; Shopify is still processing it. Keep checking (about a minute) and use it when ready.
+  // Uploaded to Shopify Files (samples) or attached as product media (full furniture references); still processing. Keep checking (about a minute) and use it when ready.
   for (let check = 0; check < 24 && result.marker; check += 1) {
     await wait(2500);
-    const status = await send(`/app/fabrics/upload?product=${encodeURIComponent(input.productId)}&marker=${encodeURIComponent(result.marker)}`, { credentials: "same-origin" }).catch(() => null);
+    const fileId = result.fileId ? `&fileId=${encodeURIComponent(result.fileId)}` : "";
+    const status = await send(`/app/fabrics/upload?product=${encodeURIComponent(input.productId)}&marker=${encodeURIComponent(result.marker)}${fileId}`, { credentials: "same-origin" }).catch(() => null);
     if (!status || !(status.headers.get("content-type") ?? "").includes("application/json")) continue;
     const body = await status.json().catch(() => ({}));
     if (body.error) throw new Error(body.error);
     if (!body.pending && body.media) return body.media as { id: string; url: string; alt?: string | null };
   }
-  throw new Error("Shopify is still processing this image. It will appear under \"Choose an uploaded sample\" in a minute; select it there.");
+  throw new Error("Shopify is still processing this image. If it finishes, refresh the Fabrics & Colours editor to pick the new sample.");
 }
