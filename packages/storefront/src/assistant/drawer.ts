@@ -1213,14 +1213,16 @@ export class RoomAssistant {
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const reason = item.previewAvailable ? "" : item.previewReason ?? (item.previewStatus === "not_configured"
-      ? "AI room preview is not configured for this product."
-      : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
+    const canCheckCurrentPage = !!this.context.currentVariantId?.() && numeric(this.context.productId) === numeric(item.productId);
+    const reason = item.previewAvailable || canCheckCurrentPage ? "" : item.previewStatus === "choose_options"
+      ? "Choose an available product configuration on its product page before previewing."
+      : item.previewReason ?? (item.previewStatus === "not_configured"
+        ? "AI room preview is not configured for this product."
+        : !item.purchaseAvailable ? "This option is sold out, so it can't be previewed." : "This exact option isn't approved for AI room preview.");
     const selected = this.isSelected(raw);
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const generating = this.generating(item);
-    const canCheckCurrentPage = !!this.context.currentVariantId?.() && numeric(this.context.productId) === numeric(item.productId);
     const canStartPreview = item.previewAvailable || canCheckCurrentPage;
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(item.image, item.imageAlt || item.title, note)}
