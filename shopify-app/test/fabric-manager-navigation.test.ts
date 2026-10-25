@@ -48,7 +48,7 @@ afterEach(async () => {
 });
 
 describe("embedded Fabrics & Colours product navigation", () => {
-  it("shows round/square shape and 25-100px swatch size with a 50px default", async () => {
+  it("shows circle/square shape and 25-100px swatch size with a 50px default", async () => {
     const draft = emptyFabricDraft();
     draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: "#dad4c7",
       colours: [{ id: "cream", name: "Cream", enabled: true, hex: "#f5eee4", swatchMediaId: null }] });
@@ -72,13 +72,16 @@ describe("embedded Fabrics & Colours product navigation", () => {
     expect(sent.fabrics[0]?.hex).toBe("#dad4c7");
   });
 
-  it("blocks saving a name-only fabric or a colour without HEX/image", async () => {
+  it("saves a name-only fabric and colour without HEX or images", async () => {
     const draft = emptyFabricDraft();
     draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: null,
       colours: [{ id: "cream", name: "Cream", enabled: true, hex: null, swatchMediaId: null }] });
-    const host = await mount({ ...base, startInManualMode: true, selected: { ...selected!, mode: "manual", draft } }, vi.fn());
-    expect(host.querySelector<HTMLButtonElement>(".fm-save button")!.disabled).toBe(true);
-    expect(host.textContent).toContain("Each fabric and colour needs a name plus a HEX colour or sample image");
+    const save = vi.fn();
+    const host = await mount({ ...base, startInManualMode: true, selected: { ...selected!, mode: "manual", draft } }, vi.fn(), save);
+    expect(host.querySelector<HTMLButtonElement>(".fm-save button")!.disabled).toBe(false);
+    expect(host.textContent).not.toContain("Needs HEX or image");
+    await act(async () => { host.querySelector<HTMLButtonElement>(".fm-save button")!.click(); });
+    expect(save.mock.calls[0]?.[1].fabrics).toEqual(draft.fabrics);
   });
 
 
@@ -90,7 +93,7 @@ describe("embedded Fabrics & Colours product navigation", () => {
     expect(host.textContent).toContain("Aspen Bed");
     expect(host.textContent).toContain("Untitled fabric");
     expect(host.textContent).toContain("0 colours");
-    expect(host.textContent).toContain("Each fabric and colour needs a name plus a HEX colour or sample image before saving.");
+    expect(host.textContent).toContain("Each fabric and colour needs a name. HEX colours and images are optional; any entered HEX must use #RRGGBB.");
     expect(host.textContent).toContain("Unsaved changes");
     expect(save).not.toHaveBeenCalled();
     expect(host.querySelector<HTMLButtonElement>(".fm-save button")?.disabled).toBe(true);

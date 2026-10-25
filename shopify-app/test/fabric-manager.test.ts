@@ -53,17 +53,17 @@ describe("fabric and colour data boundary", () => {
     expect(() => parseFabricDraft({ ...old, presentation: { shape: "triangle", size: 50 } })).toThrow();
   });
 
-  it("requires a name and either HEX or a real sample ID for both fabric and colour", () => {
+  it("requires names while accepting optional HEX colours and sample images", () => {
     const draft = emptyFabricDraft();
     draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null, hex: "#e0ddcf",
       colours: [{ id: "stone", name: "Stone Grey", enabled: true, hex: "#888888", swatchMediaId: null }] });
     expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
     draft.fabrics[0]!.hex = null;
-    expect(() => validateFabricAppearance(parseFabricDraft(draft))).toThrow(/Each fabric needs/);
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
     draft.fabrics[0]!.textureMediaId = "gid://shopify/MediaImage/201";
     expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
     draft.fabrics[0]!.colours[0]!.hex = null;
-    expect(() => validateFabricAppearance(parseFabricDraft(draft))).toThrow(/Each colour needs/);
+    expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
     draft.fabrics[0]!.colours[0]!.swatchMediaId = "gid://shopify/MediaImage/201";
     expect(() => validateFabricAppearance(parseFabricDraft(draft))).not.toThrow();
     draft.fabrics[0]!.colours[0]!.name = "";
@@ -224,17 +224,29 @@ describe("shared storefront and server preview authority", () => {
 });
 
 describe("authenticated two-mode admin", () => {
-  it("rejects incomplete preview-only sample catalogues before any database writes", async () => {
+  it("saves and reloads names without HEX colours or images", async () => {
     const draft = emptyFabricDraft();
     draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, hex: null,
       textureMediaId: null, colours: [{ id: "beige", name: "Beige", enabled: true, hex: null, swatchMediaId: null }] });
-    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft }))
-      .rejects.toThrow(/Each fabric needs/);
+    await saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft });
+    const restored = draftFromMapping(state.rows[0].mapping, shopId, productId);
+    expect(restored).toEqual(draft);
+  });
+
+  it.each(["fabric", "colour"])("rejects a blank %s name before database writes", async (field) => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: field === "fabric" ? "   " : "Linen", description: "", enabled: true, hex: null,
+      textureMediaId: null, colours: [{ id: "beige", name: field === "colour" ? "   " : "Beige", enabled: true, hex: null, swatchMediaId: null }] });
+    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft })).rejects.toThrow();
     expect(state.writes).toEqual([]);
-    draft.fabrics[0]!.hex = "#dddddd";
-    await expect(saveFabricConfiguration(state.admin, shopId, productId, { mode: "manual", revision: "", draft }))
-      .rejects.toThrow(/Each colour needs/);
-    expect(state.writes).toEqual([]);
+  });
+
+  it.each(["fabric", "colour"])("rejects an invalid optional %s HEX even with an image", (field) => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true,
+      hex: field === "fabric" ? "#bad" : null, textureMediaId: "gid://shopify/MediaImage/201",
+      colours: [{ id: "beige", name: "Beige", enabled: true, hex: field === "colour" ? "#bad" : null, swatchMediaId: "gid://shopify/MediaImage/201" }] });
+    expect(() => parseFabricDraft(draft)).toThrow();
   });
 
 

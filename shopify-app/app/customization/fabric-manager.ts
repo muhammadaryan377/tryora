@@ -2,7 +2,7 @@
 import type { ManualMapping } from "./option-model";
 export class FabricConfigError extends Error {}
 export interface ManagedColour { id: string; name: string; enabled: boolean; swatchMediaId: string | null; hex: string | null }
-export interface ManagedFabric { id: string; name: string; description: string; enabled: boolean; textureMediaId: string | null; /** Optional on legacy records; required on new entries if no image is provided. */ hex?: string | null; colours: ManagedColour[] }
+export interface ManagedFabric { id: string; name: string; description: string; enabled: boolean; textureMediaId: string | null; /** Optional colour; texture images are also optional. */ hex?: string | null; colours: ManagedColour[] }
 export interface SwatchPresentation { shape: "round" | "square"; size: number }
 export const DEFAULT_SWATCH_PRESENTATION: SwatchPresentation = { shape: "round", size: 50 };
 export function validSwatchPresentation(value: unknown): value is SwatchPresentation {
@@ -50,7 +50,7 @@ export function parseFabricDraft(raw: unknown): FabricDraft {
     if (!record(fabric) || !keys(fabric, ["id", "name", "description", "enabled", "textureMediaId", "hex", "colours"]) || !id(fabric.id) || !text(fabric.name, 140) ||
         typeof fabric.description !== "string" || fabric.description.length > 1000 || typeof fabric.enabled !== "boolean" || !nullableMedia(fabric.textureMediaId) ||
         !(fabric.hex === undefined || fabric.hex === null || typeof fabric.hex === "string" && /^#[0-9a-fA-F]{6}$/.test(fabric.hex)) ||
-        !Array.isArray(fabric.colours) || fabric.colours.length > 100 || fabricIds.has(fabric.id) || names.has(fabric.name.trim().toLocaleLowerCase())) throw new FabricConfigError("Fabric names and IDs must be unique; use a valid HEX colour or uploaded sample image.");
+        !Array.isArray(fabric.colours) || fabric.colours.length > 100 || fabricIds.has(fabric.id) || names.has(fabric.name.trim().toLocaleLowerCase())) throw new FabricConfigError("Fabric names are required and must be unique; any supplied HEX colour must be #RRGGBB.");
     fabricIds.add(fabric.id); names.add(fabric.name.trim().toLocaleLowerCase());
     const colourNames = new Set<string>();
     for (const colour of fabric.colours) {
@@ -81,12 +81,12 @@ export function parseFabricDraft(raw: unknown): FabricDraft {
  */
 export function validateFabricAppearance(draft: FabricDraft): void {
   for (const fabric of draft.fabrics) {
-    if (!fabric.name.trim() || !(fabric.textureMediaId || fabric.hex)) {
-      throw new FabricConfigError("Each fabric needs a name and either a HEX colour or a texture image.");
+    if (!fabric.name.trim()) {
+      throw new FabricConfigError("Each fabric needs a name.");
     }
     for (const colour of fabric.colours) {
-      if (!colour.name.trim() || !(colour.hex || colour.swatchMediaId)) {
-        throw new FabricConfigError("Each colour needs a name and either a HEX colour or a sample image.");
+      if (!colour.name.trim()) {
+        throw new FabricConfigError("Each colour needs a name.");
       }
     }
   }

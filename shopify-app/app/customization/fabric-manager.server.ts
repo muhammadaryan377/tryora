@@ -83,7 +83,7 @@ export async function saveFabricConfiguration(admin: AdminGraphql, shopId: strin
   if (input.mode === "manual") {
     const draft = parseFabricDraft(input.draft);
     // Existing mapped products remain compatible. New merchant preview-only
-    // entries must have names and a HEX colour or isolated Shopify Files sample.
+    // entries must have names; HEX colours and isolated Shopify Files samples are optional.
     if (!draft.bindings.length) validateFabricAppearance(draft);
     try {
       snapshot.media.push(...await savedFabricSampleFiles(admin, sampleMediaIds(draft), new Set(snapshot.media.map((m) => m.id))));
