@@ -282,6 +282,8 @@ export async function startPreview(input: {
   visitorId: string;
   idempotencyKey: string;
   leadStepDone: boolean;
+  /** Server-authorized chat-only path. Product-page lead requirements stay intact. */
+  assistantPreview?: boolean;
   room: Uint8Array;
 }) {
   requireProvider();
@@ -309,7 +311,7 @@ export async function startPreview(input: {
     optionValue: product.optionValue,
     referenceVersion: product.referenceVersion,
     roomPhotoHash,
-    leadStepDone: input.leadStepDone,
+    leadStepDone: input.assistantPreview === true || input.leadStepDone,
   });
   if (deduplicated) return { jobId: job.id };
   const t: Transient = {
