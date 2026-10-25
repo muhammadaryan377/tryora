@@ -821,7 +821,7 @@ describe("product images in cards", () => {
     await settle(1500);
     const start = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!;
     // The server re-resolves the approved reference itself; the browser only names the exact product and variant.
-    expect([...start.body!.keys()].sort()).toEqual(["key", "leadDone", "mappingRevision", "option", "photo", "product", "sourceVariant", "variant", "visitor"]);
+    expect([...start.body!.keys()].sort()).toEqual(["channel", "key", "leadDone", "mappingRevision", "option", "photo", "product", "sourceVariant", "variant", "visitor"]);
     expect(JSON.stringify([...start.body!.entries()].filter(([, value]) => typeof value === "string"))).not.toContain("cdn.shopify.com");
   });
 });
@@ -1148,7 +1148,7 @@ describe("managed preview transport", () => {
   it("does not start a managed preview after its captured Shopify page configuration changes", async () => {
     const assistant = makeAssistant({ currentVariantId: () => "12" }); assistant.open();
     await assistant.startPreview(card({ previewContext: { mappingRevision: "r", sourceVariantId: "gid://shopify/ProductVariant/11", pageSourceVariantId: "gid://shopify/ProductVariant/11" } }));
-    expect($(".tryora-assistant__notice")!.textContent).toContain("Shopify configuration changed");
+    expect($(".tryora-assistant__notice")!.textContent).toContain("not ready for an AI room preview");
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
   });
 });
