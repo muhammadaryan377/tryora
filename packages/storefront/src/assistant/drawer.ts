@@ -746,10 +746,31 @@ export class RoomAssistant {
 
   // ---------- welcome actions ----------
 
+  /** Opens the product popup and returns its generated result to this conversation. */
+  private openPopupPreview() {
+    if (!this.context.productId) return;
+    if (!this.context.openAssistantPreview) {
+      this.context.openCurrentPreview?.();
+      return;
+    }
+    const epoch = this.conversationEpoch;
+    // Hide without clearing the conversation, upload screen or selected photo.
+    this.minimise();
+    this.context.openAssistantPreview({
+      deliver: (result) => this.receivePopupPreview(result, epoch),
+      closed: () => { if (epoch === this.conversationEpoch) this.open(); },
+      leadDone: () => epoch === this.conversationEpoch && this.state.lead.done,
+    });
+  }
+
   private receivePopupPreview(result: PopupPreviewDelivery, epoch: number): boolean {
     if (epoch !== this.conversationEpoch || result.productId !== gid(this.context.productId)) return false;
     const id = `popup-${result.jobId}`;
     if (this.previewUrls.has(id)) return true;
+    // A late chat photo upload must not replace the room delivered by the popup.
+    this.photoEpoch++;
+    this.preparing = false;
+    this.pendingPreview = null;
     const item: Recommendation = {
       id: `${numeric(result.productId)}:${numeric(result.variantId)}`,
       productRef: numeric(result.productId), variantRef: numeric(result.variantId) || null,
@@ -788,9 +809,13 @@ export class RoomAssistant {
   }
 
   private welcomeAction(action: string) {
+    if (action === "visualise" && this.context.productId && this.context.openAssistantPreview) {
+      this.openPopupPreview();
+      return;
+    }
     if (action === "visualise" || action === "recommend") {
       this.pendingIntent = action;
-      // On every page both cards open the camera/upload screen, without starting a charged preview.
+      // Recommendations, and previews without an eligible popup, stay photo-first in chat.
       this.photoScreen = action;
       this.cameraNotice = "";
       this.menu = "none";
@@ -850,7 +875,7 @@ export class RoomAssistant {
       case "stop": return this.stop();
       case "retry": return void this.retry(id);
       case "welcome": return this.welcomeAction(element.dataset.action ?? "");
-      case "product-preview": if (this.context.productId) this.context.openCurrentPreview?.(); return;
+      case "product-preview": return this.openPopupPreview();
       case "preview": {
         const item = this.findItem(id);
         if (item) this.prepareCardPreview(item);
@@ -1209,7 +1234,7 @@ export class RoomAssistant {
     // Exactly two home cards on product and non-product pages. Product pages must
     // not bypass these cards to reveal an extra upload form on the home screen.
     const actionIcon = (icon: string) => `<span class="tryora-assistant__action-icon">${icon}<i>${ICONS.camera}</i></span>`;
-    const previewLink = this.context.productId && this.context.openCurrentPreview
+    const previewLink = this.context.productId && (this.context.openAssistantPreview || this.context.openCurrentPreview)
       ? `<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>` : "";
     return `<div class="tryora-assistant__welcome">
       <span class="tryora-assistant__welcome-icon">${ICONS.spark}</span>

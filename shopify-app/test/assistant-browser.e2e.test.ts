@@ -311,12 +311,10 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(await page.locator("[data-ta-recommend-description]").textContent()).toBe("Find the best bed and colour for your room.");
       await shot(page, `approved-${width}-welcome`);
       await page.locator("[data-action='visualise']").click();
-      await page.locator(".tryora-assistant__photo-screen").waitFor();
-      expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo to preview this bed");
-      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(true);
-      expect(await page.locator(".tryora__dialog").count()).toBe(0);
-      await shot(page, `approved-${width}-preview-in-chat`);
-      await page.locator("[data-ta='photo-back']").click();
+      await page.locator(".tryora__dialog").waitFor();
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(false);
+      await shot(page, `approved-${width}-preview-popup`);
+      await page.locator(".tryora__dialog [data-act=close]").click();
       await page.locator(".tryora-assistant__welcome").waitFor();
       await page.locator("[data-action='recommend']").click();
       expect(await page.locator(".tryora-assistant__photo-screen h3").textContent()).toBe("Add a photo of your room");
@@ -399,6 +397,49 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     } finally { await context.close(); }
   }, 30_000);
 
+  it.each([1280, 390])("first welcome card opens the popup and delivers into chat at %ipx", async (width) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
+    await routeImages(context);
+    const page = await context.newPage();
+    try {
+      await page.goto(origin);
+      await page.locator(".tryora-assistant-launch").click();
+      expect(await page.locator(".tryora-assistant__actions-grid [data-ta=welcome]").count()).toBe(2);
+      const before = seen.previewStarts.length, acksBefore = seen.acks;
+      await page.locator("[data-action=recommend]").click();
+      await page.locator(".tryora-assistant__photo-screen").waitFor();
+      expect(await page.locator(".tryora__dialog").count()).toBe(0);
+      await page.locator("[data-ta=photo-back]").click();
+      await page.locator("[data-action=visualise]").click();
+      await page.locator(".tryora__dialog").waitFor();
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(false);
+      expect(seen.previewStarts).toHaveLength(before);
+      // Cancelling only reopens the conversation; it does not start a job.
+      await page.locator(".tryora__dialog [data-act=close]").click();
+      expect(await page.locator(".tryora-assistant__actions-grid [data-ta=welcome]").count()).toBe(2);
+      await page.locator("[data-action=visualise]").click();
+      await page.locator("[data-file=upload]").setInputFiles({ name: "popup-room.jpg", mimeType: "image/jpeg", buffer: previewImage });
+      await page.locator("[data-act=generate]:not(:disabled)").waitFor();
+      expect(seen.previewStarts).toHaveLength(before);
+      await page.locator("[data-act=generate]").click();
+      await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15000 });
+      expect(await page.locator(".tryora__dialog").count()).toBe(0);
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(true);
+      expect(await page.locator(".tryora-assistant__preview [download]").count()).toBe(1);
+      expect(seen.previewStarts).toHaveLength(before + 1);
+      await expect.poll(() => seen.acks).toBe(acksBefore + 1);
+      // Minimise/reopen must retain the delivered result and its original photo.
+      const image = await page.locator(".tryora-assistant__preview img").getAttribute("src");
+      await page.locator("[data-ta=minimise]").click();
+      await page.locator(".tryora-assistant-launch").click();
+      expect(await page.locator(".tryora-assistant__preview img").getAttribute("src")).toBe(image);
+      await page.locator("[data-ta=compare][data-source=original]").click();
+      expect(await page.locator(".tryora-assistant__preview img").getAttribute("src")).not.toBe(image);
+      expect(seen.previewStarts).toHaveLength(before + 1);
+      await shot(page, `popup-to-chat-${width}`);
+    } finally { await context.close(); }
+  }, 30000);
+
   it.each([1280, 390])("chat preview stays in the assistant and the standalone popup remains independent at %ipx", async (width) => {
     const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
     await routeImages(context);
@@ -406,16 +447,22 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     try {
       await page.goto(origin);
       await page.locator(".tryora-assistant-launch").click();
-      await page.locator("[data-action='visualise']").click();
+      await page.locator("[data-action='recommend']").click();
       await page.locator(".tryora-assistant__photo-screen").waitFor();
       const before = seen.previewStarts.length, acksBefore = seen.acks;
       await page.locator("[data-ta-file=upload]").setInputFiles({ name: "room.jpg", mimeType: "image/jpeg", buffer: previewImage });
-      await page.locator("[data-ta-attachment] img").waitFor();
+      // The photo-first flow submits the photo for analysis immediately, never for paid generation.
+      await page.locator(".tryora-assistant__user-photo").waitFor();
+      await page.locator("[data-ta=send]:not(:disabled)").waitFor();
+      expect(seen.previewStarts).toHaveLength(before);
       await page.fill("textarea", "Show Aria Upholstered Bed in my room.");
       await page.locator("[data-ta=send]").click();
       await page.locator(".tryora-assistant__visualise [data-ta=preview]").waitFor({ timeout: 15000 });
       expect(await page.locator(".tryora__dialog").count()).toBe(0);
       await page.locator(".tryora-assistant__visualise [data-ta=preview]").click();
+      await page.locator("[data-ta=confirm-preview]").waitFor();
+      expect(seen.previewStarts).toHaveLength(before);
+      await page.locator("[data-ta=confirm-preview]").click();
       await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
       expect(await page.locator(".tryora__dialog").count()).toBe(0);
       expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(true);

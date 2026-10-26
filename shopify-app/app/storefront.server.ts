@@ -331,6 +331,8 @@ export async function startPreview(input: {
     urls: product.urls,
     description: product.description,
     appearance: product.previewOnlyAppearance,
+    swatchUrl: product.swatchUrl,
+    fabricTextureUrl: product.fabricTextureUrl,
     analysisCost: analysis.costMicros,
   });
   return { jobId: job.id };
@@ -338,12 +340,27 @@ export async function startPreview(input: {
 async function run(
   jobId: string,
   t: Transient,
-  req: { room: Uint8Array; optionValue: string; itemNoun: string; placement: PlacementType; urls: string[]; description: string; appearance?: GenerateRequest["previewOnlyAppearance"]; analysisCost: number },
+  req: { room: Uint8Array; optionValue: string; itemNoun: string; placement: PlacementType; urls: string[]; description: string; appearance?: GenerateRequest["previewOnlyAppearance"]; swatchUrl?: string; fabricTextureUrl?: string; analysisCost: number },
 ) {
   const signal = t.controller.signal;
   try {
     if ((await tryora.transition(jobId, "QUEUED")).ignored) { drop(jobId); return; }
     const references = await abortable(signal, () => Promise.all(req.urls.map((url) => downloadReference(url, signal))));
+    const optionalSample = async (url?: string) => {
+      if (!url) return undefined;
+      const sampleSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
+      try { return await abortable(sampleSignal, () => downloadReference(url, sampleSignal, "sample")); }
+      catch {
+        // Missing, invalid or slow samples fall back independently to names/HEX.
+        // A cancelled preview must still stop instead of starting generation.
+        signal.throwIfAborted();
+        return undefined;
+      }
+    };
+    const [swatch, fabricTexture] = await abortable(signal, () => Promise.all([
+      optionalSample(req.swatchUrl),
+      optionalSample(req.fabricTextureUrl),
+    ]));
     t.stage = "generating";
     if ((await tryora.transition(jobId, "GENERATING", { attempts: 1, costMicros: req.analysisCost })).ignored) { drop(jobId); return; }
     const request: GenerateRequest = {
@@ -351,6 +368,8 @@ async function run(
       productReferences: references,
       productDescription: req.description,
       previewOnlyAppearance: req.appearance,
+      swatch,
+      fabricTexture,
       itemNoun: req.itemNoun,
       optionValue: req.optionValue,
       placement: req.placement,
