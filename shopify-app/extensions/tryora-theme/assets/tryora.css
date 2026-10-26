@@ -613,6 +613,32 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb { width:140px;height:145px; }
 @media(max-width:480px){.tryora-assistant__card,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card{grid-template-columns:84px minmax(0,1fr);padding:12px;gap:10px}.tryora-assistant__card .tryora-assistant__thumb,.tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb{width:84px;height:100px}.tryora-assistant__card > .tryora-assistant__card-actions > *{font-size:12px;padding:10px 8px}}
 
+/* Screenshot-matched Room Assistant welcome: exactly two large action cards.
+   These rules only style the home view; product recommendation cards retain their design. */
+.tryora-assistant__heading h2 { font-family: Georgia, "Times New Roman", serif; font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
+.tryora-assistant__welcome { gap: 16px; padding: 14px 2px 20px; }
+.tryora-assistant__welcome-icon { width: 48px; height: 48px; border-radius: 14px; }
+.tryora-assistant__welcome h3 { font-size: clamp(25px, 6vw, 30px); line-height: 1.15; letter-spacing: -.035em; }
+.tryora-assistant__welcome > p { color: var(--ta-muted); line-height: 1.55; font-size: 16px; }
+.tryora-assistant__actions-grid { gap: 12px; margin-top: 8px; }
+.tryora-assistant__action { min-height: 106px; padding: 17px 15px; gap: 14px; border-radius: 17px; border: 1px solid var(--ta-line); align-items: center; }
+.tryora-assistant__action-icon { width: 48px; height: 48px; color: var(--ta-ink); }
+.tryora-assistant__action-icon > svg { width: 43px; height: 43px; }
+.tryora-assistant__action strong { font-size: 18px; font-weight: 700; line-height: 1.3; }
+.tryora-assistant__action small { margin-top: 5px; color: var(--ta-muted); font-size: 13.5px; line-height: 1.45; }
+.tryora-assistant__action > b { color: var(--ta-ink); }
+.tryora-assistant__action:focus-visible { outline: 2px solid var(--ta-accent); outline-offset: 2px; }
+.tryora-assistant__welcome-link { align-self: flex-start; padding: 0; margin-top: 2px; text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 380px) {
+  .tryora-assistant__welcome { gap: 13px; }
+  .tryora-assistant__action { padding: 13px 11px; gap: 10px; min-height: 96px; }
+  .tryora-assistant__action strong { font-size: 16px; }
+  .tryora-assistant__action small { font-size: 12.5px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tryora-assistant__action { transition: none; transform: none; }
+}
+
 /* Product-scoped merchant swatch preferences, used only when a valid saved
    presentation is returned. Existing native/legacy product selectors unchanged. */
 .tryora[data-tryora-swatch-shape] .tryora__sw--colour .tryora__swrow:not(.tryora__swrow--scroll) {
