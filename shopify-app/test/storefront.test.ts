@@ -66,6 +66,52 @@ afterEach(async () => {
 });
 
 describe("preview lifecycle", () => {
+  it.each(["ready", "missing", "lookup-failed", "download-failed", "colour-failed", "invalid-image"])("uses available samples and falls back to names for unavailable samples (%s)", async (mode) => {
+    vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
+    const synthetic = providerFixture();
+    const swatchId = "gid://shopify/MediaImage/901", textureId = "gid://shopify/MediaImage/902";
+    fixture.config.visualOptionName = "2. Choose Your Fabric";
+    fixture.config.referenceMediaId = "gid://shopify/MediaImage/101";
+    fixture.providerSettings = [{ shopId, productId, providerId: "manual_mapping", active: true, revision: "samples-1", mapping: {
+      kind: "fabric_colour_manager", schemaVersion: 1, shopId, productId, published: null,
+      draft: { roles: {}, bindings: [], fabrics: [{ id: "plush", name: "Plush", description: "", enabled: true, textureMediaId: textureId,
+        colours: [{ id: "cream", name: "Cream", enabled: true, hex: "#eeeeee", swatchMediaId: swatchId }] }] },
+    } }];
+    admin.graphql.mockImplementation(async (query, opts) => {
+      if (!query.includes("TryoraSavedFabricSamples")) return synthetic.graphql(query);
+      expect(opts?.variables?.ids).toEqual([swatchId, textureId]);
+      if (mode === "lookup-failed") throw new Error("Files unavailable");
+      return Response.json({ data: { nodes: mode === "missing" ? [] : [swatchId, textureId].map((id, i) => ({
+        id, alt: "Tryora fabric sample test", fileStatus: "READY", image: { url: `https://cdn.shopify.com/sample-${i}.png` },
+      })) } });
+    });
+    const colourBytes = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#ddcbaa" } }).png().toBuffer();
+    const textureBytes = await sharp({ create: { width: 80, height: 80, channels: 3, background: "#888888" } }).png().toBuffer();
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      if (String(url).includes("sample-") && mode === "download-failed") return new Response(null, { status: 404 });
+      if (String(url).includes("sample-0") && mode === "colour-failed") return new Response(null, { status: 404 });
+      if (String(url).includes("sample-") && mode === "invalid-image") return new Response("invalid image bytes");
+      return new Response(Buffer.from(String(url).includes("sample-0") ? colourBytes : String(url).includes("sample-1") ? textureBytes : photo));
+    });
+    const generate = vi.spyOn(provider, "generate");
+    const input = { optionValue: '["plush","cream"]', variantId: synthetic.variants[0]!.id, sourceVariantId: synthetic.variants[0]!.id, mappingRevision: "samples-1" };
+    const { jobId } = await start(input);
+    const result = await finished(jobId);
+    expect(result.stage).toBe("ready");
+    const request = generate.mock.calls[0]![0];
+    expect(request.previewOnlyAppearance).toEqual({ fabric: "Plush", colour: "Cream", hex: "#eeeeee" });
+    expect(request.productReferences).toHaveLength(1);
+    if (mode === "ready") expect((await sharp(request.swatch).metadata()).width).toBe(64);
+    else expect(request.swatch).toBeUndefined();
+    if (mode === "ready" || mode === "colour-failed") expect((await sharp(request.fabricTexture).metadata()).width).toBe(80);
+    else expect(request.fabricTexture).toBeUndefined();
+    expect(vi.mocked(fetch).mock.calls.map(([url]) => String(url))).toEqual([
+      "https://cdn.shopify.com/101.jpg", ...(mode === "missing" || mode === "lookup-failed" ? [] : ["https://cdn.shopify.com/sample-0.png", "https://cdn.shopify.com/sample-1.png"]),
+    ]);
+    expect((await fixture.service.balance(shopId)).consumed).toBe(0);
+    await acknowledge(shopId, jobId, result.token);
+    expect((await fixture.service.balance(shopId)).consumed).toBe(1);
+  });
   it("bounds customization identities before native lookups or provider work", async () => {
     const analyse = vi.spyOn(provider, "analyseRoom");
     for (const over of [{ optionValue: "x".repeat(4097) }, { sourceVariantId: "x".repeat(129) }, { mappingRevision: "x".repeat(129) }]) {

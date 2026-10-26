@@ -14,6 +14,9 @@ export interface ProviderContext {
 export type PreviewProduct = Awaited<ReturnType<typeof resolvePreviewProduct>> & {
   /** Never treat a virtual AI recolour as a Shopify sale variant. */
   previewOnlyAppearance?: { fabric: string; colour: string; hex: string | null };
+  /** Server-resolved samples for the selected preview-only fabric/colour. */
+  swatchUrl?: string;
+  fabricTextureUrl?: string;
 };
 /** issue explains a rejection precisely; it never changes whether the request is approved. */
 export type ProviderValidation = CustomizationValidation & { product?: PreviewProduct; issue?: PreviewIssue };

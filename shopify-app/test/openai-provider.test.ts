@@ -17,6 +17,36 @@ async function setup(reply?: unknown, status = 200) {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("OpenAI Images Edit adapter (no real API calls)", () => {
+  it.each(["both", "colour", "texture"])("sends selected %s sample pixels after the room and product", async (kind) => {
+    const { provider, fetcher, req } = await setup();
+    const sample = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#d7cab8" } }).png().toBuffer();
+    req.previewOnlyAppearance = { fabric: "Plush", colour: "Cream", hex: "#ffffff" };
+    if (kind !== "texture") req.swatch = sample;
+    if (kind !== "colour") req.fabricTexture = sample;
+    await provider.generate(req);
+    const form = fetcher.mock.calls.find(([url]) => String(url).includes("/images/edits"))![1]!.body as FormData;
+    const files = form.getAll("image[]") as File[];
+    expect(files.map((file) => file.name)).toEqual(["room.jpg", "selected-product.jpg",
+      ...(req.swatch ? ["selected-colour-sample.jpg"] : []), ...(req.fabricTexture ? ["selected-fabric-texture.jpg"] : [])]);
+    const { normaliseImage } = await import("../app/preview-images.server");
+    for (const file of files.slice(2)) expect(Buffer.from(await file.arrayBuffer())).toEqual(Buffer.from(await normaliseImage(sample, "sample")));
+    const prompt = String(form.get("prompt"));
+    expect(prompt).toContain('"fabric":"Plush","colour":"Cream"');
+    if (req.swatch) expect(prompt).toContain("IMAGE 3 is the merchant-selected COLOUR SAMPLE");
+    if (req.fabricTexture) expect(prompt).toContain(`IMAGE ${req.swatch ? 4 : 3} is the selected FABRIC TEXTURE SAMPLE`);
+    if (req.swatch) expect(prompt).toContain("match the sample photograph");
+  });
+  it("does not allow a sample to replace a product reference or bypass photo validation", async () => {
+    const { provider, fetcher, req } = await setup();
+    const sample = await sharp({ create: { width: 64, height: 64, channels: 3, background: "red" } }).png().toBuffer();
+    for (const invalid of [
+      { ...req, swatch: sample },
+      { ...req, fabricTexture: sample },
+      { ...req, productReferences: [sample] },
+      { ...req, swatch: new Uint8Array([1]), previewOnlyAppearance: { fabric: "Plush", colour: "Cream", hex: null } },
+    ]) await expect(provider.generate(invalid)).rejects.toHaveProperty("code");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it("sends the room first and exact product second through the official SDK", async () => {
     const { provider, fetcher, req, room, product } = await setup();
     const result = await provider.generate(req);

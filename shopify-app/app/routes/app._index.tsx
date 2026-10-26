@@ -6,6 +6,7 @@ import prisma from "../db.server";
 import { tryora } from "../tryora.server";
 import { salesReport } from "../attribution.server";
 import { TRIAL_CREDITS } from "../core/index";
+import { HomeDashboard } from "../components/home-dashboard";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
@@ -53,154 +54,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
-function money(amount: number, currency: string) {
-  return new Intl.NumberFormat("en-GB", { style: "currency", currency, maximumFractionDigits: 0 }).format(amount);
-}
-
-function daysLeft(iso: string | null) {
-  if (!iso) return 0;
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
-}
-
 export default function Dashboard() {
-  const d = useLoaderData<typeof loader>();
-  const themeEditor = `https://${d.shop}/admin/themes/current/editor?context=apps`;
-  const steps = [
-    {
-      done: d.checklist.products > 0,
-      title: "Choose your products",
-      body: "Pick which products shoppers can preview, and which option (like colour) they can switch between.",
-      href: "/app/products",
-      cta: d.checklist.products > 0 ? `${d.checklist.products} set up` : "Choose products",
-    },
-    {
-      done: d.checklist.style,
-      title: "Pick a style",
-      body: "Choose one of five popup styles and how shoppers open it.",
-      href: "/app/appearance",
-      cta: "Choose style",
-    },
-    {
-      done: d.checklist.storefront,
-      title: "Turn Tryora on in your theme",
-      body: "Switch on the Tryora app embed in your theme editor so the button appears on product pages.",
-      href: themeEditor,
-      cta: "Open theme editor",
-      external: true,
-    },
-  ];
-  const doneCount = steps.filter((s) => s.done).length;
-
-  return (
-    <s-page heading="Tryora">
-      {d.abuseAlert && (
-        <s-banner tone="warning" heading="Unusual activity paused some previews">
-          <s-paragraph>
-            On {new Date(d.abuseAlert).toLocaleString("en-GB")} we saw far more previews than usual in a short time and
-            paused new ones for a few minutes to protect your credits. If this keeps happening, lower your limits in
-            Shopper limits or contact us.
-          </s-paragraph>
-        </s-banner>
-      )}
-      {d.trial.active && !d.paid && (
-        <s-banner tone="info" heading={`Free trial: ${d.trial.total - d.trial.used} of ${d.trial.total} previews left`}>
-          <s-paragraph>
-            Your trial ends in {daysLeft(d.trial.endsAt)} days. Trial previews are free and don't renew automatically.
-          </s-paragraph>
-        </s-banner>
-      )}
-      {!d.trial.active && !d.paid && (
-        <s-banner tone="warning" heading="Your free trial has ended">
-          <s-paragraph>Choose a plan to keep showing previews to your shoppers.</s-paragraph>
-          <s-button slot="primary-action" href="/app/billing">
-            See plans
-          </s-button>
-        </s-banner>
-      )}
-
-      {d.sales && (
-        <s-section heading="Sales from Tryora – last 30 days">
-          <s-grid gridTemplateColumns="repeat(auto-fit, minmax(160px, 1fr))" gap="base">
-            <s-box padding="base" background="subdued" borderRadius="base">
-              <s-text color="subdued">Sales</s-text>
-              <s-heading>{money(d.sales.sales, d.sales.currency)}</s-heading>
-            </s-box>
-            <s-box padding="base" background="subdued" borderRadius="base">
-              <s-text color="subdued">Orders</s-text>
-              <s-heading>{d.sales.orders}</s-heading>
-            </s-box>
-            <s-box padding="base" background="subdued" borderRadius="base">
-              <s-text color="subdued">Return on Tryora</s-text>
-              <s-heading>{d.sales.roas}×</s-heading>
-            </s-box>
-          </s-grid>
-          <s-paragraph>
-            <s-text color="subdued">
-              Orders where the shopper saw the product in their own room before buying, counting only those products.
-              Compared with what you paid for Tryora over the same 30 days.
-            </s-text>
-          </s-paragraph>
-        </s-section>
-      )}
-
-      <s-section heading={`Get set up (${doneCount} of ${steps.length})`}>
-        <s-progress value={doneCount} max={steps.length} accessibilityLabel="Setup progress" />
-        <s-stack gap="base">
-          {steps.map((s, i) => (
-            <s-box key={s.title} padding="base" border="base" borderRadius="base" background={s.done ? "subdued" : "base"}>
-              <s-stack direction="inline" justifyContent="space-between" alignItems="center" gap="base">
-                <s-stack gap="small-200">
-                  <s-stack direction="inline" gap="small" alignItems="center">
-                    <s-badge tone={s.done ? "success" : "neutral"}>{s.done ? "Done" : `Step ${i + 1}`}</s-badge>
-                    <s-heading>{s.title}</s-heading>
-                  </s-stack>
-                  <s-text color="subdued">{s.body}</s-text>
-                </s-stack>
-                <s-button variant={s.done ? "tertiary" : "primary"} href={s.href} target={s.external ? "_blank" : "auto"}>
-                  {s.cta}
-                </s-button>
-              </s-stack>
-            </s-box>
-          ))}
-        </s-stack>
-      </s-section>
-
-      <s-section heading="This month">
-        <s-grid gridTemplateColumns="1fr 1fr 1fr" gap="base">
-          <s-box padding="base" border="base" borderRadius="base">
-            <s-text color="subdued">Previews shown</s-text>
-            <s-heading>{d.month.previews}</s-heading>
-          </s-box>
-          <s-box padding="base" border="base" borderRadius="base">
-            <s-text color="subdued">Emails captured</s-text>
-            <s-heading>{d.month.leads}</s-heading>
-          </s-box>
-          <s-box padding="base" border="base" borderRadius="base">
-            <s-text color="subdued">Credits left</s-text>
-            <s-heading>{d.credits.available}</s-heading>
-          </s-box>
-        </s-grid>
-      </s-section>
-
-      <s-section slot="aside" heading="How credits work">
-        <s-paragraph>
-          One credit is used only when a shopper actually receives their preview. Rejected photos, failed images and
-          confirmed problems don't cost you anything.
-        </s-paragraph>
-      </s-section>
-      <s-section slot="aside" heading="Lead capture">
-        <s-paragraph>
-          Shoppers' email:{" "}
-          <s-text type="strong">
-            {d.leadCapture === "off"
-              ? "Not asked"
-              : `${d.leadCapture === "required" ? "Required" : "Optional"}, ${d.leadTiming === "after" ? "after" : "before"} the first image`}
-          </s-text>
-        </s-paragraph>
-        <s-link href="/app/leads">Change</s-link>
-      </s-section>
-    </s-page>
-  );
+  const data = useLoaderData<typeof loader>();
+  return <HomeDashboard data={data} />;
 }
 
 export const headers: HeadersFunction = (headersArgs) => boundary.headers(headersArgs);

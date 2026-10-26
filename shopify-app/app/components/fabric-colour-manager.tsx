@@ -280,7 +280,6 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
           {manual && <span className="fm-muted fm-tabular fm-ready-count">{ready} {draft.bindings.length ? "preview-ready colour configurations" : "configured colour choices"}</span>}
         </div>}
         <div className="fm-header-foot">
-          {p && <a className="fm-browse" href={`/app/fabrics?browse=1${workspaceQuery}`}>Browse more products <FabricIcon name="forward" /></a>}
           <p className="fm-muted fm-save-hint" role="status">{saveHint || "Names are required. HEX colours and sample images are optional."}</p>
         </div>
         {pendingProduct && <div className="fm-navigation-confirm" role="alert">

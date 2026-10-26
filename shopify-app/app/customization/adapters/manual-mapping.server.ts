@@ -7,6 +7,7 @@ import { matchesProviderScope } from "./types.server";
 import { isFabricDocument, parseFabricDocument } from "../fabric-manager";
 import { isSampleMedia } from "../media-roles";
 import { safeShopifyMediaUrl } from "../option-model";
+import { savedFabricSampleFiles } from "../fabric-sample-files.server";
 
 export function combinationKey(entry: ManualMapping["entries"][number]) { return JSON.stringify([entry.fabric.id, entry.colour.id]); }
 export const manualMappingAdapter: ProviderAdapter = {
@@ -64,6 +65,16 @@ export const manualMappingAdapter: ProviderAdapter = {
         ? approvedPhoto.image.url
         : source.image?.url && safeShopifyMediaUrl(source.image.url) ? source.image.url : null;
       if (!reference) return { status: "rejected", reason: "missing_reference", issue: "missing_reference" };
+      const sampleIds = [colour.swatchMediaId, fabric.textureMediaId].filter((id): id is string => !!id);
+      // Sample lookup is optional: keep using the saved names/HEX if Files are unavailable.
+      const savedSamples = await savedFabricSampleFiles(context.admin, sampleIds, new Set(media.map((m) => m.id))).catch(() => []);
+      const samples = [...media, ...savedSamples];
+      const sampleUrl = (id: string | null) => {
+        const url = id ? samples.find((sample) => sample.id === id)?.image?.url : undefined;
+        return url && safeShopifyMediaUrl(url) ? url : undefined;
+      };
+      const swatchUrl = sampleUrl(colour.swatchMediaId);
+      const fabricTextureUrl = sampleUrl(fabric.textureMediaId);
       const appearance = { fabric: fabric.name, colour: colour.name, hex: colour.hex };
       const preview = {
         urls: [reference], variantId: source.id, selectedOptions: sourceOptions,
@@ -73,6 +84,8 @@ export const manualMappingAdapter: ProviderAdapter = {
         itemNoun: config.itemNoun || defaultNoun(product.productType, product.title),
         description: `${product.title}\nReference model design only; Tryora visual colour override is not a verified Shopify purchasable option.\n${product.description ?? ""}`.slice(0, 8000),
         previewOnlyAppearance: appearance,
+        swatchUrl,
+        fabricTextureUrl,
       };
       return { status: "approved", scope: request.scope, nativeVariantId: source.id, options: sourceOptions,
         referenceUrls: [reference], referenceVersion: preview.referenceVersion, product: preview };

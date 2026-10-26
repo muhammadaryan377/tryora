@@ -49,18 +49,22 @@ export class OpenAIImageProvider implements ImageProvider {
     const combined = signal ? AbortSignal.any([signal, deadline]) : deadline;
     try {
       return await abortable(combined, async () => {
-        if (req.placement !== "replace" || !req.productReferences.length || req.productReferences.length > 4 || req.swatch) {
+        if (req.placement !== "replace" || !req.productReferences.length || req.productReferences.length > 4 ||
+            ((req.swatch || req.fabricTexture) && !req.previewOnlyAppearance)) {
           throw new TryoraError("BAD_REQUEST");
         }
         const room = await normaliseImage(req.roomImage);
         // Only the first, selection-specific reference supplies product identity. Generic additional
         // product references can show a different colour and are deliberately excluded.
         const product = await normaliseImage(req.productReferences[0]!);
+        const images = [await toFile(room, "room.jpg", { type: "image/jpeg" }),
+          await toFile(product, "selected-product.jpg", { type: "image/jpeg" })];
+        if (req.swatch) images.push(await toFile(await normaliseImage(req.swatch, "sample"), "selected-colour-sample.jpg", { type: "image/jpeg" }));
+        if (req.fabricTexture) images.push(await toFile(await normaliseImage(req.fabricTexture, "sample"), "selected-fabric-texture.jpg", { type: "image/jpeg" }));
         combined.throwIfAborted();
         const response = await this.client.images.edit({
           model: this.model,
-          image: [await toFile(room, "room.jpg", { type: "image/jpeg" }),
-            await toFile(product, "selected-product.jpg", { type: "image/jpeg" })],
+          image: images,
           prompt: buildFurnitureReplacementPrompt(req),
           n: 1,
           size: "auto",

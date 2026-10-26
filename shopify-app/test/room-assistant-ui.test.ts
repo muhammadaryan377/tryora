@@ -1208,17 +1208,16 @@ describe("chat card popup handoff", () => {
     optionValue: "Cream", selectionLabel: "Velvet / Cream", selectedOptions: { Fabric: "Velvet", Colour: "Cream", Size: "King" },
     image: new Blob(["image"], { type: "image/jpeg" }), room: new Blob(["room"], { type: "image/jpeg" }), leadDone: true,
   });
-  it("keeps the welcome preview in chat and retains guarded legacy delivery compatibility", () => {
+  it("opens the popup from the first card and delivers its generated result into chat", () => {
     const launch = vi.fn();
     const assistant = makeAssistant({ openAssistantPreview: launch });
     assistant.open(); click("[data-action='visualise']");
-    expect(assistant.isOpen).toBe(true);
-    expect(launch).not.toHaveBeenCalled();
-    expect($(".tryora-assistant__photo-screen")).not.toBeNull();
+    expect(assistant.isOpen).toBe(false);
+    expect(launch).toHaveBeenCalledOnce();
+    expect($(".tryora-assistant__photo-screen")).toBeNull();
     expect(openPreview).not.toHaveBeenCalled();
-    const epoch = assistant.conversationEpoch;
-    const hooks = { deliver: (value: any) => assistant.receivePopupPreview(value, epoch) };
-    expect(assistant.isOpen).toBe(true);
+    const hooks = launch.mock.calls[0]![0];
+    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
     assistant.state.room = { colours: ["old red"], style: "old room" };
     assistant.attachment = photo("old-draft.jpg");
     expect(hooks.deliver(result())).toBe(true);
@@ -1236,6 +1235,75 @@ describe("chat card popup handoff", () => {
     expect($("[data-ta='product-preview']")).not.toBeNull();
     expect(openPreview).not.toHaveBeenCalled(); // Legacy incoming results remain supported without an extra home action.
   });
+  it.each([undefined, "1", "99"])("keeps two cards and photo-first recommendations with popup hooks on page %s", async (productId) => {
+    const launch = vi.fn();
+    const assistant = makeAssistant({ productId, openAssistantPreview: launch });
+    assistant.open();
+    expect($$(".tryora-assistant__actions-grid [data-ta='welcome']").map(el => el.dataset.action)).toEqual(["visualise", "recommend"]);
+    for (const action of ["visualise", "recommend"]) {
+      click(`[data-action='${action}']`);
+      if (action === "visualise" && productId) {
+        expect(launch).toHaveBeenCalledOnce();
+        expect(assistant.isOpen).toBe(false);
+        launch.mock.calls[0]![0].closed();
+        expect(assistant.isOpen).toBe(true);
+        continue;
+      }
+      expect($(".tryora-assistant__photo-screen")).not.toBeNull();
+      expect($("[data-ta='upload']")).not.toBeNull();
+      expect($("[data-ta='camera']")).not.toBeNull();
+      click("[data-ta='photo-back']");
+    }
+    expect(launch).toHaveBeenCalledTimes(productId ? 1 : 0);
+    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.forms).toHaveLength(0);
+  });
+
+  it("opens the popup alternative and preserves state on cancel, then appends its result", () => {
+    const launch = vi.fn();
+    const assistant = makeAssistant({ openAssistantPreview: launch, openCurrentPreview: undefined });
+    assistant.open();
+    assistant.state.entries.push({ id: "history", kind: "user", text: "Keep my conversation", at: Date.now() });
+    assistant.roomPhoto = photo("previous-room.jpg");
+    assistant.attachment = photo("draft-room.jpg");
+    assistant.state.room = { style: "previous room", colours: [] };
+    assistant.previewUrls.set("previous-preview", "blob:previous-preview");
+    assistant.originals.set("previous-preview", "blob:previous-room.jpg");
+    const previousState = JSON.stringify(assistant.state.entries);
+    const previousRoom = assistant.roomPhoto;
+    const previousAttachment = assistant.attachment;
+    click("[data-ta='product-preview']");
+    const hooks = launch.mock.calls[0]![0];
+    expect(assistant.isOpen).toBe(false);
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(hooks.leadDone()).toBe(false);
+    hooks.closed();
+    expect(assistant.isOpen).toBe(true);
+    expect(JSON.stringify(assistant.state.entries)).toBe(previousState);
+    expect(assistant.roomPhoto).toBe(previousRoom);
+    expect(assistant.attachment).toBe(previousAttachment);
+    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    const photoEpoch = assistant.photoEpoch;
+    expect(hooks.deliver(result())).toBe(true);
+    expect(assistant.photoEpoch).toBeGreaterThan(photoEpoch);
+    expect(assistant.state.entries[0].text).toBe("Keep my conversation");
+    expect(assistant.previewUrls.get("previous-preview")).toBe("blob:previous-preview");
+    expect(assistant.originals.get("previous-preview")).toBe("blob:previous-room.jpg");
+    expect(assistant.roomPhoto.blob).toEqual(result().room);
+    expect(assistant.attachment).toBeNull();
+    expect(assistant.state.room).toBeNull();
+    expect($(".tryora-assistant__preview img")).not.toBeNull();
+    expect(hooks.leadDone()).toBe(true);
+    expect(hooks.deliver(result())).toBe(true);
+    expect(assistant.state.entries.filter((entry: any) => entry.kind === "preview")).toHaveLength(1);
+    expect(assistant.state.previewsDelivered).toBe(1);
+    assistant.newChat(); assistant.minimise();
+    hooks.closed();
+    expect(assistant.isOpen).toBe(false);
+    expect(hooks.deliver({ ...result(), jobId: "late" })).toBe(false);
+    expect(hooks.leadDone()).toBe(false);
+  });
+
   it("rejects wrong-product and forgotten-room deliveries without displaying an image", () => {
     const launch = vi.fn(); const assistant = makeAssistant({ openAssistantPreview: launch });
     assistant.open(); click("[data-action='visualise']");
