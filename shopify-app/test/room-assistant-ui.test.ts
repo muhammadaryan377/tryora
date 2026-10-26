@@ -1465,3 +1465,15 @@ it("keeps a verified conversational colour choice instead of replacing it with t
   click("[data-ta='confirm-preview']"); await settle(1500);
   expect(proxy.calls.find(c => c.url === "/apps/tryora/preview")!.body!.get("variant")).toBe("gid://shopify/ProductVariant/12");
 });
+
+
+it("remembers a selected product card in later show-more requests", async () => {
+  const assistant = makeAssistant(); assistant.open();
+  proxy.script([{ type: "selected", item: card(), source: "conversation" }, { type: "final", reply: { message: "Here is Aria.", recommendations: [] } }, { type: "done" }]);
+  await type("Show me Aria"); click("[data-ta='send']"); await settle(90);
+  expect(assistant.state.explored).toContainEqual({ productRef: "1", variantRef: "11" });
+  proxy.script([{ type: "done" }]);
+  await type("show me moes"); click("[data-ta='send']"); await settle(90);
+  expect(JSON.parse(String(proxy.forms.at(-1)!.get("explored")))).toContainEqual({ productRef: "1", variantRef: "11" });
+  expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+});

@@ -868,3 +868,50 @@ describe("requested catalogue quantities", () => {
     expect(requests[0].input.find((x: any) => x.role === "developer").content).toContain("requested 10 products");
   });
 });
+
+
+describe("live shopping follow-up regressions", () => {
+  const beds = () => Array.from({ length: 16 }, (_, i) => fixtureProduct({ id: 700 + i, title: `Upholstered Bed ${i + 1}`, productType: "Bed", options: { Colour: ["Cream"] }, price: 300 + i }));
+  it("completes ten new beds even when the model only recommends three", async () => {
+    const products = beds();
+    const shown = products.slice(0, 3).map(p => ({ productRef: ref(p.id), variantRef: null }));
+    const model = scriptedModel([
+      search({ query: "cream plush bed", colour: "Cream", style: "classic", limit: 3 }),
+      recommend(products.slice(3, 6).map((p, i) => ({ productRef: ref(p.id), variantRef: null, reason: `Design ${i + 1} is an upholstered option for your room.` }))),
+      finalAnswer("Here are three beds."),
+    ]);
+    const reply = await ask(fixtureAdmin(products), model.client, "i want you to show me 10 beds", { shown, explored: shown });
+    expect(reply.recommendations).toHaveLength(10);
+    expect(new Set(reply.recommendations.map(p => p.productRef)).size).toBe(10);
+    expect(reply.recommendations.every(p => !shown.some(old => old.productRef === p.productRef))).toBe(true);
+    expect(reply.message).toBe("Here are 10 options to compare.");
+  });
+  it("understands show me moes and finds new beds when the model falsely gives up", async () => {
+    const products = beds();
+    const shown = products.slice(0, 2).map(p => ({ productRef: ref(p.id), variantRef: null }));
+    const model = scriptedModel([search({ query: "nonexistent style", limit: 3 }), finalAnswer("I could not find more beds beyond those shown.")]);
+    const reply = await ask(fixtureAdmin(products), model.client, "show me moes", { shown, explored: shown });
+    expect(wantsMoreOptions("show me moes")).toBe(true);
+    expect(reply.recommendations).toHaveLength(3);
+    expect(reply.recommendations.every(p => !shown.some(old => old.productRef === p.productRef))).toBe(true);
+    expect(reply.message).toBe("Here are 3 options to compare.");
+  });
+  it("answers why only two without showing or selecting another card", async () => {
+    const products = beds();
+    const shown = products.slice(0, 2).map(p => ({ productRef: ref(p.id), variantRef: null }));
+    const model = scriptedModel([toolCall("select_product", { productRef: ref(products[2]!.id), variantRef: null }), finalAnswer("I started with two suggestions. There are more beds to browse.")]);
+    const reply = await ask(fixtureAdmin(products), model.client, "why you show e 2", { shown, explored: shown });
+    expect(reply.recommendations).toEqual([]);
+    expect(reply.selected).toBeNull();
+    expect(reply.visualise).toBeNull();
+  });
+  it("keeps budget and audience checks when completing the requested list", async () => {
+    const products = beds();
+    const shown = [{ productRef: ref(products[0]!.id), variantRef: null }];
+    const model = scriptedModel([search({ query: "bed", limit: 3 }), finalAnswer("Here are some options.")]);
+    const reply = await ask(fixtureAdmin(products), model.client, "show me 10 beds under 305 pounds", { shown, explored: shown });
+    expect(reply.recommendations.length).toBeGreaterThan(0);
+    expect(reply.recommendations.length).toBeLessThan(10);
+    expect(reply.recommendations.every(p => Number(p.price) <= 305)).toBe(true);
+  });
+});
