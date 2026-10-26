@@ -856,9 +856,6 @@ export class RoomAssistant {
       case "stop": return this.stop();
       case "retry": return void this.retry(id);
       case "welcome": return this.welcomeAction(element.dataset.action ?? "");
-      case "product-preview":
-        this.minimise();
-        return this.context.openCurrentPreview?.();
       case "preview": {
         const item = this.findItem(id);
         if (item) this.prepareCardPreview(item);
@@ -1231,8 +1228,6 @@ export class RoomAssistant {
     const noun = this.productNoun();
     const beds = (this.recommendation?.noun ?? noun) === "bed";
     const currentPreview = !!this.context.productId;
-    const productPreview = this.context.openCurrentPreview
-      ? `<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>` : "";
     const actionIcon = (icon: string) => `<span class="tryora-assistant__action-icon">${icon}<i>${ICONS.camera}</i></span>`;
     return `<div class="tryora-assistant__welcome">
       <span class="tryora-assistant__welcome-icon">${ICONS.spark}</span>
@@ -1252,7 +1247,6 @@ export class RoomAssistant {
           <b aria-hidden="true">&rsaquo;</b>
         </button>
       </div>
-      ${productPreview}
     </div>`;
   }
 
