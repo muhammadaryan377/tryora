@@ -455,14 +455,26 @@ export async function captureLead(
   admin: AdminGraphql,
   input: { shopId: string; email: string; firstName?: string; marketing: boolean; wording: string; productId: string; optionValue?: string },
 ) {
-  if (!EMAIL.test(input.email)) throw new TryoraError("BAD_EMAIL");
+  const email = input.email.trim();
+  if (email.length > 254 || !EMAIL.test(email)) throw new TryoraError("BAD_EMAIL");
   const shop = await prisma.shop.findUnique({ where: { id: input.shopId } });
-  const tag = ((shop?.leadSettings as { customerTag?: string }) ?? {}).customerTag || "tryora-lead";
+  // Re-check the merchant setting on the server: a stale popup must not collect
+  // a new lead after the merchant has turned capture off.
+  if (shop?.leadCapture === "off") return { ok: true };
+  const leadSettings = (shop?.leadSettings as { customerTag?: string; showOptIn?: boolean; optInWording?: string }) ?? {};
+  const tag = leadSettings.customerTag || "tryora-lead";
+  const firstName = input.firstName?.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80) || null;
+  const marketing = input.marketing && leadSettings.showOptIn !== false;
+  // Save the merchant's lead independently of optional Shopify customer sync.
+  // Contact data stays in this shop's authenticated dashboard, never in browser storage or logs.
   const lead = await prisma.leadDelivery.create({
-    data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue, status: "queued" },
+    data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue,
+      email, firstName, marketingOptIn: marketing,
+      marketingWording: marketing ? (leadSettings.optInWording || input.wording).slice(0, 1000) : null,
+      status: "queued" },
   });
+  await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
   let customerRef: string | null = null;
-  let saved = false;
   try {
     const res = await admin.graphql(
       `#graphql
@@ -471,8 +483,8 @@ export async function captureLead(
       }`,
       {
         variables: {
-          identifier: { email: input.email },
-          input: { email: input.email, firstName: input.firstName || undefined, tags: [tag] },
+          identifier: { email },
+          input: { email, firstName: firstName || undefined, tags: [tag] },
         },
       },
     );
@@ -480,7 +492,7 @@ export async function captureLead(
     customerRef = json.data?.customerSet?.customer?.id ?? null;
     const err = json.errors?.[0]?.message ?? json.data?.customerSet?.userErrors?.[0]?.message;
     if (!res.ok || err || !customerRef) throw new Error("CUSTOMER_SAVE_FAILED");
-    if (input.marketing) {
+    if (marketing) {
       const consentRes = await admin.graphql(
         `#graphql
         mutation TryoraConsent($input: CustomerEmailMarketingConsentUpdateInput!) {
@@ -504,17 +516,14 @@ export async function captureLead(
       where: { id: lead.id },
       data: { status: "accepted", customerRef },
     });
-    saved = true;
   } catch (e) {
     await prisma.leadDelivery.update({ where: { id: lead.id }, data: {
       status: "failed", customerRef,
       lastError: e instanceof Error && e.message === "CONSENT_SAVE_FAILED" ? "CONSENT_SAVE_FAILED" : "CUSTOMER_SAVE_FAILED",
     } });
   }
-  // Email/name are sent to Shopify, not stored here. Checkbox wording is not retained here.
-  // Delivery metadata and the customer reference are retained; consent state is recorded by Shopify.
-  if (saved) await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
-  // The shopper's preview never waits on Shopify: a failed customer save is logged for the merchant, not shown to them.
+  // The lead is already saved locally. Customer/consent sync failure is visible
+  // to the merchant without blocking the shopper's preview or leaking email in logs.
   return { ok: true };
 }
 export async function reportIssue(shopId: string, jobId: string, category: string) {
