@@ -68,7 +68,7 @@ const MAX_SHOWN = 6;
 /** Cards per recommendation batch. */
 export const MAX_CARDS = 4;
 /** Products already shown in this recommendation exploration, excluded when the shopper asks for more. */
-const MAX_EXPLORED = 24;
+const MAX_EXPLORED = 100;
 const REQUEST_BUDGET_MS = 60_000;
 const MODEL_CALL_TIMEOUT_MS = 30_000;
 const CATALOGUE_WAIT_MS = 6_000;
@@ -995,6 +995,7 @@ export function orderPriceComparison<T extends { price: string | null; productRe
 }
 
 async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendation[] }) {
+  if (cardActionNotRequested(ctx)) return { error: "no_new_cards_requested", instruction: "Respond naturally in English to the shopper's latest message using the previous answer. For a product question, check get_product_details or store knowledge and answer it directly. Do not repeat cards or offer a new preview." };
   const requested = Array.isArray(args.items) ? args.items : [];
   const excluded: { title: string; reason: string }[] = [];
   const alreadyShown = ctx.exploring ? requested.filter((entry) => ctx.explored.has(entry?.productRef)).length : 0;
@@ -1059,6 +1060,7 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
 }
 
 async function runSelect(ctx: RequestContext, args: { productRef: string; variantRef: string | null }) {
+  if (cardActionNotRequested(ctx)) return { selected: false, instruction: "The shopper has not requested a new selection. Answer the follow-up using verified product details without showing the same card again." };
   const refused = referenceGuard(ctx, args.productRef, "select_product");
   if (refused) return refused;
   // Keep the exact variant the shopper chose on the card unless they named a different one.
@@ -1099,6 +1101,7 @@ async function previewableAlternatives(ctx: RequestContext, exclude: string) {
 }
 
 async function runVisualise(ctx: RequestContext, args: { productRef: string; variantRef: string | null }) {
+  if (cardActionNotRequested(ctx)) return { offered: false, instruction: "No new preview was requested. Acknowledge the reaction or answer the product question directly without repeating the preview or product cards." };
   const refused = referenceGuard(ctx, args.productRef, "request_visualisation");
   if (refused) return { offered: false, ...refused };
   // Preview the exact variant the shopper chose on the card unless the model was given another explicitly.
@@ -1269,7 +1272,21 @@ export function wantsRoomPreview(message: string): boolean {
 
 /** "Show more", "other options", "something different" and similar: the next batch must not repeat earlier cards. */
 export function wantsMoreOptions(message: string): boolean {
-  return /\b(show|see|give|any|got)\s+(me\s+)?(some\s+)?more\b|\bmore\s+(options|choices|ideas|products|like (this|these))\b|\b(other|different|another few|alternative)\s+(options|choices|ones|products|ideas|styles)\b|\bsomething\s+(else|different)\b|\banything\s+else\b|\baur\s+(dikhao|dikhaen|dikhayein)\b/i.test(message);
+  return /\b(show|see|give|any|got)\s+(me\s+)?(some\s+)?more\b|\bmore\s+(options|choices|ideas|products|like (this|these))\b|\b(other|different|another few|alternative)\s+(options|choices|ones|products|ideas|styles)\b|\b(another|different)\s+(one|bed|sofa|chair|table|product|option)\b|\b(any|show|have|got)\s+(me\s+)?(any\s+)?alternatives?\b|\bwhat\s+else\s+(do|can)\s+you\b|\bsomething\s+(else|different|new)\b|\banything\s+else\b|\baur\s+(dikhao|dikhaen|dikhayein)\b/i.test(message);
+}
+
+/** A reaction to an answer is not a request for another product card or preview. */
+export function isConversationAcknowledgement(message: string): boolean {
+  return /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|good|thanks|thank you|alright|got it)|(?:(?:that|this|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)|i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that))(?:\s+(?:thanks|thank you|a lot|so much))?[.! ,]*$/i.test(message.trim());
+}
+
+function cardActionNotRequested(ctx: RequestContext): boolean {
+  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  if (isConversationAcknowledgement(ctx.latestMessage)) return true;
+  const reference = ["named", "ordinal", "selected"].includes(ctx.resolution.kind);
+  return reference && !wantsRoomPreview(ctx.latestMessage) && !wantsMoreOptions(ctx.latestMessage) &&
+    /\b(price|cost|dimensions?|measurements?|height|width|depth|delivery|returns?|warranty|materials?|fabrics?|colou?rs?|sizes?|made of|in stock|how much)\b/i.test(ctx.latestMessage) &&
+    !/\b(recommend|suggest|compare|show|alternative|another)\b/i.test(ctx.latestMessage);
 }
 
 const reasonKey = (reason: unknown) => String(reason ?? "").toLowerCase().replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
@@ -1339,7 +1356,9 @@ async function verifiedRecommendations(ctx: RequestContext, requested: ModelReco
     });
     if (config?.enabled && config.readiness === "ready" && config.shopId === ctx.shopId) ctx.previewProducts.add(product.id);
   }));
-  const ids = [...new Set(picks.map((pick) => ctx.fresh.get(pick.productRef)?.id).filter((id): id is string => !!id && ctx.previewProducts.has(id)))];
+  // The initial eligibility list is bounded and can be stale. Read the actual recommended products' current
+  // configs, then keep the same exact-variant validation used by generation; never infer authorization from a card.
+  const ids = [...new Set(picks.map((pick) => ctx.fresh.get(pick.productRef)?.id).filter((id): id is string => !!id))];
   const configs = ids.length ? await prisma.productPreviewConfig.findMany({
     where: { shopId: ctx.shopId, productId: { in: ids }, enabled: true, readiness: "ready" },
     include: { choices: true },
@@ -1462,6 +1481,8 @@ function openAIClient(env: NodeJS.ProcessEnv = process.env) {
 }
 
 const INSTRUCTIONS = `You are Room Assistant, a conversational AI furniture previewer for exactly one Shopify store. You can see only this store's data, through the tools.
+Respond in natural, concise English. Read the latest shopper message together with previous answers, previously shown product cards and completed previews before choosing a tool.
+For questions about an earlier product, answer the question using verified details instead of redisplaying that product's card. For a simple positive reaction, acknowledge it without restarting recommendations or offering the same preview. For more/different options, exclude products already shown; if none remain, say so honestly.
 Purpose:
 - You are the store’s room advisor and preview guide. For unrelated general-chat requests, briefly redirect to room styling, real store furniture or a room preview.
 - Help shoppers find real furniture for their room, understand their space and preview a specific verified product as pictured. Never ask them to choose a size, fabric, colour or configuration. Lead with room recommendations and previews rather than product-information answers.

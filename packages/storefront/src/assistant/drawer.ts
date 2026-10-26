@@ -73,7 +73,7 @@ const ICONS = {
   camera: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`,
 };
 
-const RECOMMEND_ROOM_REQUEST = "Analyse my room photo and identify its visible style, wall and floor colours, lighting and existing furniture. Find two or three suitable furniture products that this store actually sells. Show their verified photos and prices, explain why each suits my room, and recommend complementary styles and colours grounded in the image and real catalogue. Do not invent products or start a paid preview.";
+const RECOMMEND_ROOM_REQUEST = "Analyse my room photo and identify its visible style, wall and floor colours, lighting and existing furniture. Find two or three suitable furniture products that this store actually sells. Show their verified photos and prices, explain why each suits my room, and recommend complementary styles and colours grounded in the image and real catalogue. Do not invent products. Do not generate an image.";
 const DISCOVER_PREVIEW_REQUEST = "Analyse my room photo and find suitable real furniture from this store with verified AI preview availability. Show me product cards so I can choose which exact product to preview. Do not generate a preview yet.";
 
 const BED_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 26V14h22v12M8 14V8h16v6M5 23h22M9 18h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M23 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="currentColor"/></svg>`;
@@ -295,8 +295,7 @@ export class RoomAssistant {
     // A new question cancels any old pending preview confirmation.
     if (!photo) this.pendingPreview = null;
     // Use a guided card prompt when the composer is empty; keep an explicitly typed question authoritative.
-    if (photo && this.pendingIntent === "recommend" && !text) text = RECOMMEND_ROOM_REQUEST;
-    else if (photo && this.pendingIntent === "visualise" && !text) text = this.context.productId ? "Analyse my uploaded room and offer this verified product for preview; do not generate until I press Generate preview." : DISCOVER_PREVIEW_REQUEST;
+    if (photo && !text) text = this.pendingIntent === "visualise" && !this.context.productId ? DISCOVER_PREVIEW_REQUEST : RECOMMEND_ROOM_REQUEST;
     else if (!text) text = "Describe this room and help me with furniture choices.";
     text = text.slice(0, 800);
     const user: Entry = { id: uid(), kind: "user", text, photo: !!photo, at: Date.now() };
@@ -368,7 +367,7 @@ export class RoomAssistant {
     form.set("hasPhoto", this.roomPhoto ? "1" : "0");
     if (this.state.room) form.set("room", JSON.stringify(this.state.room));
     if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 6)));
-    if (this.state.explored?.length) form.set("explored", JSON.stringify(this.state.explored.slice(-24)));
+    if (this.state.explored?.length) form.set("explored", JSON.stringify(this.state.explored.slice(-100)));
     if (this.state.selected) form.set("selected", JSON.stringify(this.state.selected));
     if (this.state.preferences) form.set("preferences", JSON.stringify(this.state.preferences));
     if (this.state.constraints) form.set("constraints", JSON.stringify(this.state.constraints));
@@ -432,7 +431,7 @@ export class RoomAssistant {
         reply.focus = false;
         this.state.shown = reply.recommendations.map(({ productRef, variantRef }) => ({ productRef, variantRef }));
         // Earlier batches stay in the chat history; the explored list keeps "show more" from repeating them.
-        this.state.explored = [...(this.state.explored ?? []).filter((ref) => !this.state.shown.some((s) => s.productRef === ref.productRef)), ...this.state.shown].slice(-24);
+        this.state.explored = [...(this.state.explored ?? []).filter((ref) => !this.state.shown.some((s) => s.productRef === ref.productRef)), ...this.state.shown].slice(-100);
         this.syncCards(reply.recommendations, reply.id);
         this.save();
         this.renderAll();
@@ -733,8 +732,9 @@ export class RoomAssistant {
       this.announce("Room photo ready. Choose Generate preview when you are ready.");
       return;
     }
-    // Upload advances analysis/selection, never paid image generation.
-    void this.send();
+    // Let the shopper add an optional message; only Send submits the photo for analysis.
+    this.textarea()?.focus();
+    this.announce("Photo ready. Add a message if you like, then press Send for recommendations.");
   }
 
   removeAttachment() {
@@ -878,6 +878,7 @@ export class RoomAssistant {
       case "product-preview": return this.openPopupPreview();
       case "preview": {
         const item = this.findItem(id);
+        if (item && !item.previewAvailable && this.canPreviewFromPopup(item)) return this.openPopupPreview();
         if (item) this.prepareCardPreview(item);
         return;
       }
@@ -1121,6 +1122,10 @@ export class RoomAssistant {
     error.hidden = !this.composerError;
     error.textContent = this.composerError;
     const send = this.root.querySelector<HTMLButtonElement>(".tryora-assistant__send")!;
+    const textarea = this.textarea();
+    if (textarea) textarea.placeholder = this.attachment
+      ? "Add a message (optional), or send for recommendations…"
+      : "Describe your room or ask for a preview…";
     const busy = !!this.active;
     send.dataset.ta = busy ? "stop" : "send";
     send.innerHTML = busy ? ICONS.stop : ICONS.send;
@@ -1139,7 +1144,7 @@ export class RoomAssistant {
     const selection = selected ? `<p class="tryora-assistant__selection" role="status">Selected: ${escapeHtml(item ? `${item.title}${Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value)).map(([name, value]) => " · " + name + ": " + value).join("")}` : this.context.productTitle || "this product")}</p>` : "";
     if (!room && !this.roomPhoto) { box.innerHTML = selection; return; }
     const summary = room ? [room.style, ...room.colours.slice(0, 2)].filter(Boolean).join(", ") : "photo added";
-    box.innerHTML = `${selection}<p class="tryora-assistant__room-chip">${this.roomPhoto ? `<img src="${escapeHtml(this.roomPhoto.url)}" alt="Your selected room" width="40" height="40" style="object-fit:cover;border-radius:6px">` : ICONS.room}<span>Using your room: ${escapeHtml(summary || "photo notes")}</span>
+    box.innerHTML = `${selection}<p class="tryora-assistant__room-chip">${this.roomPhoto ? `<img src="${escapeHtml(this.roomPhoto.url)}" alt="Your selected room" width="40" height="40" style="width:40px;height:40px;min-width:40px;max-width:40px;min-height:40px;max-height:40px;flex:0 0 40px;object-fit:cover;border-radius:6px">` : ICONS.room}<span>Using your room: ${escapeHtml(summary || "photo notes")}</span>
       <button type="button" class="tryora-assistant__link" data-ta="edit-room">Edit</button><button type="button" class="tryora-assistant__link" data-ta="forget-room">Forget room</button></p>`;
   }
 
@@ -1314,6 +1319,13 @@ export class RoomAssistant {
     return !!selected && selected.productRef === item.productRef && (selected.variantRef ?? null) === (item.variantRef ?? null);
   }
 
+  private canPreviewFromPopup(item: Recommendation): boolean {
+    // This hook exists only after the page product's server-verified popup config loaded.
+    // Never open the current product's popup for an unrelated recommendation.
+    return item.productId === gid(this.context.productId) && !!this.context.openAssistantPreview &&
+      item.purchaseAvailable && this.config.previewsAvailable !== false;
+  }
+
   /** The assistant entry holding the newest recommendation cards; only its cards load options without a tap. */
   private latestCardsEntry(): string | null {
     for (let i = this.state.entries.length - 1; i >= 0; i -= 1) {
@@ -1341,7 +1353,7 @@ export class RoomAssistant {
     // A single-variant product's photo shows its only configuration; label it only where options exist (or are unknown).
     const generalPhoto = item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false;
     const note = item.previewAvailable && item.referenceImage ? "Preview reference" : generalPhoto ? "Product photo" : item.imageSource === "reference" ? "Preview reference" : "";
-    const canCheckCurrentPage = false;
+    const canCheckCurrentPage = this.canPreviewFromPopup(item);
     const canChooseOptions = false; // Chat cards never ask shoppers to choose fabric, colour or size.
     const reason = item.previewAvailable || canCheckCurrentPage || canChooseOptions ? "" : item.previewStatus === "choose_options"
       ? "An exact approved preview image is not available for this product. View details for more information."
@@ -1352,6 +1364,7 @@ export class RoomAssistant {
     const focus = this.state.entries.some((entry) => entry.kind === "assistant" && entry.id === entryId && entry.focus);
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const canStartPreview = item.previewAvailable && !!item.variantId && !!item.optionValue && this.config.previewsAvailable !== false;
+    const canOpenPreview = canStartPreview || canCheckCurrentPage;
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(canStartPreview && item.referenceImage ? item.referenceImage : item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
@@ -1364,7 +1377,7 @@ export class RoomAssistant {
       </div>
         <div class="tryora-assistant__card-actions">
           <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(item.url)}">View details</a>
-          <button type="button" class="tryora-assistant__primary" data-ta="preview" data-card="${escapeHtml(key)}" data-id="${id}" ${!canStartPreview ? "disabled" : ""}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>Preview in my room</button>
+          <button type="button" class="tryora-assistant__primary" data-ta="preview" data-card="${escapeHtml(key)}" data-id="${id}" ${!canOpenPreview ? "disabled" : ""}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>Preview in my room</button>
         </div>
         ${reason ? `<p class="tryora-assistant__image-note tryora-assistant__preview-note" id="ta-why-${id}" role="status">${escapeHtml(reason)}</p>` : ""}
     </article>`;

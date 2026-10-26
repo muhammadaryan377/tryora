@@ -204,8 +204,17 @@ export function historyFor(state: ChatState, upTo?: string): { role: "user" | "a
   const messages: { role: "user" | "assistant"; content: string }[] = [];
   for (const entry of entries) {
     if (entry.kind === "user") messages.push({ role: "user", content: entry.text.slice(0, 800) });
-    else if (entry.kind === "assistant" && entry.status === "done" && entry.text.trim()) {
-      messages.push({ role: "assistant", content: entry.text.slice(0, 2000) });
+    else if (entry.kind === "assistant" && entry.status === "done") {
+      // Cards are part of the answer too, including replies whose text is empty.
+      const items = entry.recommendations.length ? entry.recommendations : entry.visualise ? [entry.visualise] : [];
+      const cards = items.slice(0, 3).map((item, index) => ({
+        option: index + 1, title: item.title.slice(0, 100), productRef: item.productRef,
+        variantRef: item.variantRef, options: Object.fromEntries(Object.entries(item.options ?? {}).filter(([key]) => !key.startsWith("__tryora_")).slice(0, 4)),
+      }));
+      const content = cards.length
+        ? `${entry.text.slice(0, 1000)}\nPreviously shown product cards (data): ${JSON.stringify(cards)}`.slice(0, 2000)
+        : entry.text.slice(0, 2000);
+      if (content.trim()) messages.push({ role: "assistant", content });
     }
     else if (entry.kind === "preview" && entry.status === "ready") {
       // The model must know when a preview was really displayed, not merely suggested.
@@ -218,7 +227,12 @@ export function historyFor(state: ChatState, upTo?: string): { role: "user" | "a
   // The server requires alternating context ending with the shopper; drop unanswered earlier questions.
   const cleaned: typeof messages = [];
   for (const message of messages) {
-    if (cleaned.at(-1)?.role === message.role) cleaned[cleaned.length - 1] = message;
+    if (cleaned.at(-1)?.role === message.role) {
+      const previous = cleaned.at(-1)!;
+      cleaned[cleaned.length - 1] = message.role === "assistant"
+        ? { role: message.role, content: `${previous.content}\n${message.content}`.slice(-2000) }
+        : message; // Keep the newest shopper question within the server's 800-character bound.
+    }
     else cleaned.push(message);
   }
   return cleaned.slice(-12);

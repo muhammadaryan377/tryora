@@ -241,7 +241,7 @@ describe("welcome screen", () => {
     expect(pick).toHaveBeenCalledTimes(1);
     await attachFile();
     expect(($("textarea") as HTMLTextAreaElement).value).toBe("");
-    expect($(".tryora-assistant__room-chip img")!.getAttribute("src")).toBe("blob:room.jpg");
+    expect($("[data-ta-attachment] img")!.getAttribute("src")).toBe("blob:room.jpg");
   });
 
   it("matches the approved two-card home design on product pages without exposing appearance selectors", () => {
@@ -296,7 +296,8 @@ describe("welcome screen", () => {
     }
     proxy.script([{ type: "done" }]);
     click("[data-action='recommend']");
-    await attachFile(); await settle(60);
+    await attachFile();
+    click("[data-ta='send']"); await settle(60);
     expect(proxy.forms).toHaveLength(1);
     expect(proxy.forms[0]!.get("photo")).toBeInstanceOf(Blob);
     const history = String(proxy.forms[0]!.get("history"));
@@ -306,6 +307,30 @@ describe("welcome screen", () => {
   });
 
 describe("chat image upload", () => {
+  it.each(["", "Find a compact blue sofa under GBP800"])("waits for Send and uses optional shopper text: %s", async (message) => {
+    const assistant = makeAssistant(); assistant.open();
+    click("[data-action='recommend']");
+    await attachFile();
+    expect(proxy.forms).toHaveLength(0);
+    expect(assistant.state.entries).toHaveLength(0);
+    expect($("[data-ta-attachment] img")).not.toBeNull();
+    expect($("textarea")!.getAttribute("placeholder")).toContain("optional");
+    if (message) await type(message);
+    proxy.script([{ type: "room", room: { colours: ["white"], style: "modern", notes: "" } }, { type: "recommendations", items: [card()] }, { type: "done" }]);
+    click("[data-ta='send']"); await settle(90);
+    expect(proxy.forms).toHaveLength(1);
+    const form = proxy.forms[0]!;
+    expect(form.get("photo")).toBeInstanceOf(Blob);
+    const history = JSON.parse(String(form.get("history")));
+    if (message) expect(history.at(-1).content).toBe(message);
+    else {
+      expect(history.at(-1).content).toContain("Analyse my room photo");
+      expect(history.at(-1).content).toContain("this store actually sells");
+    }
+    expect($(".tryora-assistant__card")).not.toBeNull();
+    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+
   it("previews, replaces and removes an attachment, and rejects unsupported files", async () => {
     const assistant = makeAssistant({ preparePhoto: async (file: File) => {
       if (!file.type.startsWith("image/")) throw Object.assign(new (await import("../../packages/storefront/src/assistant/photo")).PhotoError("Please choose a JPG, PNG, WEBP or HEIC room photo."));
@@ -316,11 +341,12 @@ describe("chat image upload", () => {
     expect($(".tryora-assistant__menu--attach")!.hidden).toBe(false);
     expect($("[data-ta='upload']")).not.toBeNull();
     await attachFile("first.jpg");
-    expect($(".tryora-assistant__room-chip img")!.getAttribute("src")).toBe("blob:first.jpg");
+    expect($("[data-ta-attachment] img")!.getAttribute("src")).toBe("blob:first.jpg");
     await attachFile("second.jpg");
-    expect($(".tryora-assistant__room-chip img")!.getAttribute("src")).toBe("blob:second.jpg");
-    expect(assistant.roomPhoto.url).toBe("blob:second.jpg");
-    click("[data-ta='forget-room']");
+    expect($("[data-ta-attachment] img")!.getAttribute("src")).toBe("blob:second.jpg");
+    expect(assistant.attachment.url).toBe("blob:second.jpg");
+    expect(assistant.roomPhoto).toBeNull();
+    click("[data-ta='remove-photo']");
     expect($("[data-ta-attachment]")!.hidden).toBe(true);
     await attachFile("notes.pdf", "application/pdf");
     expect($("[data-ta-error]")!.textContent).toMatch(/JPG, PNG, WEBP or HEIC/);
@@ -341,6 +367,7 @@ describe("chat image upload", () => {
     await type("Which bed would look best in this room?");
     const release = proxy.hold();
     await attachFile();
+    click("[data-ta='send']");
     await settle(30);
     expect($(".tryora-assistant__send")!.dataset.ta).toBe("stop");
     expect($(".tryora-assistant__status")!.textContent).toMatch(/Uploading photo… 50%|Analysing/);
@@ -365,7 +392,7 @@ describe("chat image upload", () => {
     expect(JSON.parse(String(followUp.get("shown")))).toEqual([{ productRef: "1", variantRef: "11" }, { productRef: "2", variantRef: "21" }]);
     expect(JSON.parse(String(followUp.get("history")))).toEqual([
       { role: "user", content: "Which bed would look best in this room?" },
-      { role: "assistant", content: "Option 1 suits your bright room." },
+      { role: "assistant", content: expect.stringContaining("Option 1 suits your bright room.\nPreviously shown product cards (data):") },
       { role: "user", content: "What about grey?" },
     ]);
   });
@@ -380,11 +407,13 @@ describe("chat image upload", () => {
     assistant.open();
     await type("Help with the first room");
     await attachFile("first.jpg");
+    click("[data-ta='send']");
     await settle(90);
     expect(assistant.state.room).toMatchObject({ style: "first room" });
 
     await type("Now help with this different room");
     await attachFile("second.jpg");
+    click("[data-ta='send']");
     await settle(90);
     expect(proxy.forms).toHaveLength(2);
     expect(proxy.forms[1]!.get("room")).toBeNull();
@@ -399,12 +428,14 @@ describe("chat image upload", () => {
     assistant.open();
     await type("Check the first room");
     await attachFile("first.jpg");
+    click("[data-ta='send']");
     await settle(90);
     const failed = assistant.state.entries.find((entry: any) => entry.kind === "assistant" && entry.status === "error");
     expect(failed).toBeDefined();
 
     await type("Check my second room");
     await attachFile("second.jpg");
+    click("[data-ta='send']");
     await settle(90);
     await assistant.retry(failed.id);
     expect(proxy.forms).toHaveLength(2);
@@ -488,7 +519,7 @@ describe("recommendation cards and previews", () => {
     proxy.script([{ type: "visualise", item: card() }], [{ type: "final", reply: { message: "Confirm to preview.", recommendations: [] } }, { type: "done" }]);
     assistant.open();
     await type("Show it in my room");
-    await attachFile();
+    await attachFile(); click("[data-ta='send']");
     await settle(60);
     click(".tryora-assistant__visualise [data-ta='preview']");
     click("[data-ta='confirm-preview']");
@@ -630,6 +661,7 @@ describe("conversation controls and errors", () => {
     assistant.open();
     await type("Thoughts?");
     await attachFile();
+    click("[data-ta='send']");
     await settle(60);
     click("[data-ta='more']");
     click("[data-ta='new-chat']");
@@ -658,6 +690,7 @@ describe("conversation history", () => {
     first.open();
     await type("Beds for this room?");
     await attachFile();
+    click("[data-ta='send']");
     await settle(60);
     const stored = sessionStorage.getItem(sessionKey(SHOP))!;
     expect(stored).not.toContain("blob:");
@@ -866,6 +899,7 @@ describe("product images in cards", () => {
     assistant.open();
     await type("Show it in my room");
     await attachFile();
+    click("[data-ta='send']");
     await settle(60);
     const visual = $(".tryora-assistant__visualise")!;
     expect(visual.querySelector("img")!.getAttribute("src")).toBe("https://cdn.shopify.com/approved-reference.jpg");
@@ -1079,7 +1113,7 @@ describe("approved photo entry points", () => {
     expect(assistant.attachment).toBeNull(); expect(proxy.forms).toHaveLength(0);
     await attachFile();
     expect($(".tryora-assistant__photo-screen")).toBeNull();
-    expect($(".tryora-assistant__room-chip img")).not.toBeNull();
+    expect($("[data-ta-attachment] img")).not.toBeNull();
   });
   it("sends a composer photo with text without forcing preview generation", async () => {
     const assistant = makeAssistant(); assistant.open();
@@ -1088,7 +1122,7 @@ describe("approved photo entry points", () => {
     expect(document.activeElement).toBe($("[data-ta='photo-sheet-close']"));
     proxy.script([{ type: "final", reply: { message: "Cream could suit the room.", recommendations: [] } }, { type: "done" }]);
     await type("This is my room. What colour would suit it?");
-    await attachFile();
+    await attachFile(); click("[data-ta='send']");
     expect(assistant.pendingIntent).toBeNull();
     expect($(".tryora-assistant__menu--attach")!.hidden).toBe(true);
     await settle(60);
@@ -1122,6 +1156,8 @@ describe("approved photo entry points", () => {
     expect($$(".tryora-assistant__photo-actions button").map((b) => b.dataset.ta)).toEqual(["camera", "upload"]);
     expect(proxy.forms).toHaveLength(0);
     await attachFile(); await settle(60);
+    expect(proxy.forms).toHaveLength(0);
+    click("[data-ta='send']"); await settle(60);
     expect(proxy.forms).toHaveLength(1);
     expect(String(proxy.forms[0]!.get("history"))).toContain("find suitable real furniture");
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
@@ -1185,7 +1221,7 @@ describe("managed preview transport", () => {
     const item = card({ previewContext: { mappingRevision: "reviewed-revision", sourceVariantId: "gid://shopify/ProductVariant/11" } });
     const assistant = makeAssistant(); assistant.open();
     proxy.script([{ type: "visualise", item }], [{ type: "final", reply: { message: "Confirm this exact reference.", recommendations: [] } }, { type: "done" }]);
-    await type("Show this in my room"); await attachFile(); await settle(60);
+    await type("Show this in my room"); await attachFile(); click("[data-ta='send']"); await settle(60);
     click(".tryora-assistant__visualise [data-ta='preview']");
     click("[data-ta='confirm-preview']"); await settle(1500);
     const posted = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!.body!;
@@ -1203,6 +1239,36 @@ describe("managed preview transport", () => {
 });
 
 describe("chat card popup handoff", () => {
+  it("opens the verified current-product popup from a stale disabled card, without generating", async () => {
+    const launch = vi.fn();
+    const assistant = makeAssistant({ openAssistantPreview: launch }); assistant.open();
+    proxy.script([{ type: "recommendations", items: [card({ previewAvailable: false, previewStatus: "not_configured", optionValue: null })] }, { type: "done" }]);
+    await type("Tell me about Aria"); click("[data-ta='send']"); await settle(90);
+    const preview = $(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement;
+    expect(preview.disabled).toBe(false);
+    preview.click();
+    expect(launch).toHaveBeenCalledOnce();
+    expect(assistant.isOpen).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+  });
+  it("does not open the current product's popup for an unrelated unverified recommendation", async () => {
+    const launch = vi.fn();
+    const assistant = makeAssistant({ openAssistantPreview: launch }); assistant.open();
+    proxy.script([{ type: "recommendations", items: [card({ id: "2:22", productRef: "2", productId: "gid://shopify/Product/2", variantRef: "22", variantId: "gid://shopify/ProductVariant/22", previewAvailable: false, previewStatus: "not_configured", optionValue: null })] }, { type: "done" }]);
+    await type("Show another bed"); click("[data-ta='send']"); await settle(90);
+    const preview = $(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement;
+    expect(preview.disabled).toBe(true);
+    preview.click(); expect(launch).not.toHaveBeenCalled();
+  });
+  it("keeps earlier recommendation batches beyond 24 products in the next request", async () => {
+    const assistant = makeAssistant(); assistant.open();
+    assistant.state.explored = Array.from({ length: 40 }, (_, i) => ({ productRef: String(i + 1), variantRef: null }));
+    proxy.script([{ type: "done" }]);
+    await type("Show me another bed"); click("[data-ta='send']"); await settle(90);
+    const explored = JSON.parse(String(proxy.forms[0]!.get("explored")));
+    expect(explored).toHaveLength(40);
+    expect(explored[0].productRef).toBe("1");
+  });
   const result = () => ({
     jobId: "popup-job", productId: "gid://shopify/Product/1", title: "Aria Bed", variantId: "gid://shopify/ProductVariant/11",
     optionValue: "Cream", selectionLabel: "Velvet / Cream", selectedOptions: { Fabric: "Velvet", Colour: "Cream", Size: "King" },
@@ -1340,6 +1406,8 @@ describe("preview entry requires an eligible page product", () => {
     expect($(".tryora-assistant__photo-screen")).not.toBeNull();
     expect(proxy.forms).toHaveLength(0);
     await attachFile(); await settle(60);
+    expect(proxy.forms).toHaveLength(0);
+    click("[data-ta='send']"); await settle(60);
     expect(proxy.forms).toHaveLength(1);
     expect(String(proxy.forms[0]!.get("history"))).toContain("find suitable real furniture");
     expect(assistant.pendingIntent).toBeNull();
