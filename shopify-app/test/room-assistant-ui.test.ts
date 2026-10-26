@@ -1269,8 +1269,11 @@ describe("preview entry requires an eligible page product", () => {
     assistant.open(); click("[data-action='visualise']");
     expect(popup).not.toHaveBeenCalled();
     await settle(60);
+    expect($(".tryora-assistant__photo-screen")).not.toBeNull();
+    expect(proxy.forms).toHaveLength(0);
+    await attachFile(); await settle(60);
     expect(proxy.forms).toHaveLength(1);
-    expect(String(proxy.forms[0]!.get("history"))).toContain("Show me products");
+    expect(String(proxy.forms[0]!.get("history"))).toContain("find suitable real furniture");
     expect(assistant.pendingIntent).toBeNull();
   });
 });

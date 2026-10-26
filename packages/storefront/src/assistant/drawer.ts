@@ -294,9 +294,9 @@ export class RoomAssistant {
     if (!text && !photo) return;
     // A new question cancels any old pending preview confirmation.
     if (!photo) this.pendingPreview = null;
-    // A chosen welcome card is authoritative even if an older composer draft exists.
-    if (photo && this.pendingIntent === "recommend") text = RECOMMEND_ROOM_REQUEST;
-    else if (photo && this.pendingIntent === "visualise") text = this.context.productId ? "Analyse my uploaded room and offer this verified product for preview; do not generate until I press Generate preview." : DISCOVER_PREVIEW_REQUEST;
+    // Use a guided card prompt when the composer is empty; keep an explicitly typed question authoritative.
+    if (photo && this.pendingIntent === "recommend" && !text) text = RECOMMEND_ROOM_REQUEST;
+    else if (photo && this.pendingIntent === "visualise" && !text) text = this.context.productId ? "Analyse my uploaded room and offer this verified product for preview; do not generate until I press Generate preview." : DISCOVER_PREVIEW_REQUEST;
     else if (!text) text = "Describe this room and help me with furniture choices.";
     text = text.slice(0, 800);
     const user: Entry = { id: uid(), kind: "user", text, photo: !!photo, at: Date.now() };
