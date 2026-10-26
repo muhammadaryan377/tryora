@@ -1227,7 +1227,6 @@ export class RoomAssistant {
     // not bypass these cards to reveal an extra upload form on the home screen.
     const noun = this.productNoun();
     const beds = (this.recommendation?.noun ?? noun) === "bed";
-    const currentPreview = !!this.context.productId;
     const actionIcon = (icon: string) => `<span class="tryora-assistant__action-icon">${icon}<i>${ICONS.camera}</i></span>`;
     return `<div class="tryora-assistant__welcome">
       <span class="tryora-assistant__welcome-icon">${ICONS.spark}</span>
@@ -1236,8 +1235,8 @@ export class RoomAssistant {
       <div class="tryora-assistant__actions-grid">
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
           ${actionIcon(ICONS.photo)}
-          <span><strong>${currentPreview ? `Preview this ${escapeHtml(noun)} in my room` : "Choose a product"}</strong>
-            <small>${currentPreview ? `See how this ${escapeHtml(noun)} looks in your own space.` : "Choose a product with an approved room preview."}</small></span>
+          <span><strong>Preview this product in my room</strong>
+            <small>See how this product looks in your own space.</small></span>
           <b aria-hidden="true">&rsaquo;</b>
         </button>
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="recommend">
