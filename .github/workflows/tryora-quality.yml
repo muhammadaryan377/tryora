@@ -31,10 +31,5 @@ jobs:
         run: npm run typecheck
       - name: Build
         run: npm run build
-      - name: Temporary diagnostic for synchronising public compiled JS
-        run: |
-          echo TRYORA_BUNDLE_BASE64_START
-          base64 -w 2048 shopify-app/extensions/tryora-theme/assets/tryora.js
-          echo TRYORA_BUNDLE_BASE64_END
       - name: Check generated storefront bundle
         run: git diff --exit-code -- shopify-app/extensions/tryora-theme/assets/tryora.js
