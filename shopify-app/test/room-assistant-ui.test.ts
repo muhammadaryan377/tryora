@@ -1229,7 +1229,7 @@ describe("preview entry requires an eligible page product", () => {
   it("keeps the current product selected while its preview eligibility is unresolved", async () => {
     const assistant = makeAssistant({ productId: "99", productNoun: undefined, openCurrentPreview: undefined, openAssistantPreview: undefined });
     assistant.open();
-    expect($("[data-action='visualise']")!.textContent).toContain("Preview this bed in my room");
+    expect($("[data-action='visualise']")!.textContent).toContain("Preview this product in my room");
     const picker = vi.spyOn($("[data-ta-file='upload']")!, "click");
     click("[data-action='visualise']"); await settle();
     expect($(".tryora-assistant__photo-screen")).not.toBeNull();
