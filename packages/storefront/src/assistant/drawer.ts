@@ -451,6 +451,8 @@ export class RoomAssistant {
           reply.recommendations = [...(reply.focus || !reply.recommendations.length ? [] : reply.recommendations), item];
           reply.focus = reply.recommendations.length === 1;
         }
+        this.state.shown = reply.recommendations.map(({ productRef, variantRef }) => ({ productRef, variantRef }));
+        this.state.explored = [...(this.state.explored ?? []).filter(ref => ref.productRef !== item.productRef), { productRef: item.productRef, variantRef: item.variantRef }].slice(-100);
         this.syncCards([item], reply.id);
         this.save();
         this.renderAll();

@@ -13,6 +13,7 @@ export type AssistantLogEvent =
   | "timeout"
   | "rate_limited"
   | "catalogue_loaded"
+  | "recommendation_completion_unavailable"
   | "recommendation_dropped"
   | "auto_config_failure"
   | "preview_unavailable";
