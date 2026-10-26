@@ -256,13 +256,13 @@ describe("welcome screen", () => {
     expect(actions[0]!.querySelector("small")!.textContent).toBe("See how this bed looks in your own space.");
     expect(actions[1]!.querySelector("strong")!.textContent).toBe("Recommend a bed for my room");
     expect(actions[1]!.querySelector("small")!.textContent).toBe("Find the best bed for your room.");
-    expect(welcome.querySelector("[data-ta='product-preview']")!.textContent).toBe("Use product preview instead");
+    expect(welcome.querySelector("[data-ta='product-preview']")).toBeNull();
     expect(welcome.querySelectorAll("[data-ta='upload'], [data-ta='camera'], [data-ta='opt'], .tryora-assistant__swatch")).toHaveLength(0);
     expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview…");
     expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
   });
 
-  it("starts the visualise flow on a product page and can hand off to the product's own preview", async () => {
+  it("starts the visualise flow on a product page without showing a product preview handoff link", async () => {
     const assistant = makeAssistant();
     assistant.open();
     const pick = vi.spyOn($('[data-ta-file="upload"]') as HTMLInputElement, "click");
@@ -279,9 +279,9 @@ describe("welcome screen", () => {
     await settle(60);
     expect(JSON.parse(String(proxy.forms[0]!.get("selected")))).toEqual({ productRef: "1", variantRef: "11", source: "options" });
     assistant.newChat();
-    click("[data-ta='product-preview']");
-    expect(openPreview).toHaveBeenCalled();
-    expect(assistant.isOpen).toBe(false);
+    expect($("[data-ta='product-preview']")).toBeNull();
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(assistant.isOpen).toBe(true);
   });
 });
 
@@ -1005,7 +1005,7 @@ describe("approved photo entry points", () => {
     expect($("[data-action='recommend']")!.textContent).toContain("Recommend a bed for my room");
     expect($(".tryora-assistant__welcome [data-ta='welcome']")).toHaveLength(2);
     expect($(".tryora-assistant__welcome [data-ta='upload']")).toBeNull();
-    expect($("[data-ta='product-preview']")!.textContent).toBe("Use product preview instead");
+    expect($("[data-ta='product-preview']")).toBeNull();
     expect($(".tryora-assistant__actions-grid [data-ta='upload']")).toBeNull();
     expect($(".tryora-assistant__actions-grid [data-ta='camera']")).toBeNull();
     expect($("[data-ta='attach'] svg")).not.toBeNull();
@@ -1209,8 +1209,8 @@ describe("chat card popup handoff", () => {
     assistant.newChat();
     expect(hooks.deliver({ ...result(), jobId: "stale-job" })).toBe(false);
     expect($(".tryora-assistant__preview img")).toBeNull();
-    click("[data-ta='product-preview']");
-    expect(openPreview).toHaveBeenCalledOnce(); // Explicit fallback link keeps the original local-result flow.
+    expect($("[data-ta='product-preview']")).toBeNull();
+    expect(openPreview).not.toHaveBeenCalled(); // Legacy incoming results remain supported without an extra home action.
   });
   it("rejects wrong-product and forgotten-room deliveries without displaying an image", () => {
     const launch = vi.fn(); const assistant = makeAssistant({ openAssistantPreview: launch });
