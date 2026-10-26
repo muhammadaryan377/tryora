@@ -128,7 +128,7 @@ describe("preview eligibility matches the product page", () => {
     expect(card).toMatchObject({ previewAvailable: true, previewStatus: "available" });
   });
 
-  it("asks for options only when the product really has them", async () => {
+  it("marks ambiguous multi-variant products as not preview-ready without asking for options", async () => {
     state.configs = [readyConfig(egerie.id, { visualOptionName: "Colour" })];
     const { client } = scriptedModel([
       toolCall("search_products", { query: "egerie", colour: null, size: null, material: null, style: null, minPrice: null, maxPrice: null, availableOnly: false, limit: 5 }),
@@ -136,7 +136,7 @@ describe("preview eligibility matches the product page", () => {
       finalAnswer("Option 1."),
     ]);
     const [card] = (await ask(fixtureAdmin([egerie]), client, [{ role: "user", content: "Egerie?" }])).recommendations;
-    expect(card).toMatchObject({ variantRef: null, hasOptions: true, variantCount: 8, previewStatus: "choose_options", previewReason: "Choose a fabric or colour to check AI room preview." });
+    expect(card).toMatchObject({ variantRef: null, hasOptions: true, variantCount: 8, previewStatus: "choose_options", previewReason: "An exact approved product appearance could not be verified for room preview." });
   });
 });
 
@@ -159,12 +159,12 @@ describe("conversation memory", () => {
     expect(offer.visualise).toMatchObject({ productId: thames.id, previewAvailable: true, optionValue: "__single__" });
   });
 
-  it("explains, once, why a multi-option product needs choices before a preview", async () => {
+  it("refuses a multi-option preview without requesting fabric or colour from the shopper", async () => {
     state.configs = [readyConfig(egerie.id, { visualOptionName: "Colour" })];
     const { client, requests } = scriptedModel([toolCall("request_visualisation", { productRef: ref(egerie.id), variantRef: null }), finalAnswer("Pick a fabric first.")]);
     const reply = await ask(fixtureAdmin([egerie]), client, [{ role: "user", content: "Show it in my room" }], { selected: { productRef: ref(egerie.id), variantRef: null } });
     expect(reply.visualise).toBeNull();
-    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "Choose a fabric or colour to check AI room preview." });
+    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "An exact approved product appearance could not be verified for room preview." });
   });
 
   it("keeps shopper-stated room facts and earlier preferences in later turns", async () => {
