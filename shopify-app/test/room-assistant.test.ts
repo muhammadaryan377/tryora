@@ -29,6 +29,8 @@ import {
   normalisePreferences,
   normaliseRoomContext,
   parseToolArguments,
+  orderPriceComparison,
+  removeAppearanceChoiceRequests,
   runAssistantTurn,
   sanitiseMessage,
   wantsMoreOptions,
@@ -211,6 +213,29 @@ describe("input validation", () => {
     // A budget the shopper typed may be repeated back.
     expect(sanitiseMessage("Here are beds under £500.", allowed, "grey bed under £500").message).toBe("Here are beds under £500.");
     expect(sanitiseMessage("It costs 450 GBP.", allowed, "").removed).toBe(1);
+  });
+
+  it("orders different-price requests by verified Shopify prices, not model card order", () => {
+    const picks = [
+      { productRef: "3", price: "379.99", title: "Opulence Bed" },
+      { productRef: "2", price: "299.99", title: "Madison Bed" },
+      { productRef: "4", price: "319.99", title: "Aspen Bed" },
+      { productRef: "1", price: "599.99", title: "Premium Bed" },
+    ];
+    expect(orderPriceComparison(picks, "show me beds with different prices").map(p => p.price))
+      .toEqual(["299.99", "319.99", "599.99"]);
+    expect(orderPriceComparison(picks, "show me some beds")).toEqual(picks);
+  });
+
+  it("does not let model-generated option questions override the fixed photo-preview flow", () => {
+    expect(removeAppearanceChoiceRequests("Here are three beds. Which size would you like?"))
+      .toBe("Here are three beds.");
+    expect(removeAppearanceChoiceRequests("Please choose a fabric before we begin. Your room photo is ready."))
+      .toBe("Your room photo is ready.");
+    expect(removeAppearanceChoiceRequests("What colour do you prefer?"))
+      .toContain("Preview in my room");
+    expect(removeAppearanceChoiceRequests("The upholstered bed has a grey fabric finish."))
+      .toBe("The upholstered bed has a grey fabric finish.");
   });
 });
 
@@ -407,7 +432,7 @@ describe("visualisation in the conversation", () => {
     vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true");
     state.providerRows = [{ shopId: SHOP, productId: aria.id, providerId: "cloudlift", revision: "r1", active: true, mapping: null }];
     const cloudlift = await run(ref(aria.id), ref(variantOf(aria, { Colour: "Cream", Size: "King" }).id));
-    expect(cloudlift.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not verified for an in-chat preview/) });
+    expect(cloudlift.output).toMatchObject({ offered: false, reason: expect.stringMatching(/not verified for this exact product image/) });
   });
 
   it("explains a missing exact reference precisely instead of a generic refusal, and logs the merchant action", async () => {
