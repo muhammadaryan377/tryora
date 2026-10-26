@@ -532,13 +532,14 @@ function productHas(product: CatalogueProduct, wanted: string) {
  * Hybrid ranking over a shop's catalogue: synonym-normalised BM25 relevance, a required furniture kind when the
  * shopper names one, soft colour/size/material constraints and hard price and availability filters.
  */
-export function searchCatalogue(snapshot: Pick<CatalogueSnapshot, "index">, query: ProductQuery, currentProductId?: string): ProductMatch[] {
+export function searchCatalogue(snapshot: Pick<CatalogueSnapshot, "index">, query: ProductQuery, currentProductId?: string, excluded?: ReadonlySet<string>): ProductMatch[] {
   const text = [query.query, query.style, query.colour, query.material, query.size].filter(Boolean).join(" ");
   const terms = expandQuery(text);
   const kinds = terms.filter((term) => term.weight === 1 && CATEGORY_TERMS.has(term.term)).map((term) => term.term);
   const constraints = [query.colour, query.size, query.material].filter((value): value is string => !!value?.trim());
   const limit = Math.min(10, Math.max(1, Math.floor(query.limit || 6)));
   return scoreIndex(snapshot.index, terms)
+    .filter(({ item }) => !excluded?.has(item.ref))
     .filter(({ item, score }) => !terms.length || score > 0)
     .filter(({ item }) => !kinds.length || kinds.some((kind) => item.kinds.has(kind)))
     .filter(({ item }) => (query.maxPrice === null || item.minPrice <= query.maxPrice) && (query.minPrice === null || item.maxPrice >= query.minPrice))

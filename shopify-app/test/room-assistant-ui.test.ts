@@ -302,7 +302,7 @@ describe("welcome screen", () => {
     expect(proxy.forms[0]!.get("photo")).toBeInstanceOf(Blob);
     const history = String(proxy.forms[0]!.get("history"));
     expect(history).toContain("Analyse my room photo");
-    expect(history).toContain("furniture products that this store actually sells");
+    expect(history).toContain("suitable furniture from this store");
     expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
   });
 
@@ -325,7 +325,7 @@ describe("chat image upload", () => {
     if (message) expect(history.at(-1).content).toBe(message);
     else {
       expect(history.at(-1).content).toContain("Analyse my room photo");
-      expect(history.at(-1).content).toContain("this store actually sells");
+      expect(history.at(-1).content).toContain("from this store");
     }
     expect($(".tryora-assistant__card")).not.toBeNull();
     expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
@@ -1159,7 +1159,7 @@ describe("approved photo entry points", () => {
     expect(proxy.forms).toHaveLength(0);
     click("[data-ta='send']"); await settle(60);
     expect(proxy.forms).toHaveLength(1);
-    expect(String(proxy.forms[0]!.get("history"))).toContain("find suitable real furniture");
+    expect(String(proxy.forms[0]!.get("history"))).toContain("furniture from this store that I can preview");
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
   });
 });
@@ -1409,7 +1409,7 @@ describe("preview entry requires an eligible page product", () => {
     expect(proxy.forms).toHaveLength(0);
     click("[data-ta='send']"); await settle(60);
     expect(proxy.forms).toHaveLength(1);
-    expect(String(proxy.forms[0]!.get("history"))).toContain("find suitable real furniture");
+    expect(String(proxy.forms[0]!.get("history"))).toContain("furniture from this store that I can preview");
     expect(assistant.pendingIntent).toBeNull();
   });
 });

@@ -34,6 +34,8 @@ import {
   runAssistantTurn,
   sanitiseMessage,
   wantsMoreOptions,
+  requestedProductCount,
+  conciseAssistantReply,
   isConversationAcknowledgement,
   wantsRoomPreview,
   type AssistantEvent,
@@ -464,7 +466,7 @@ describe("visualisation in the conversation", () => {
 });
 
 describe("streaming", () => {
-  it("forwards genuine model text deltas as they arrive and finishes with the sanitised message", async () => {
+  it("only delivers concise verified text, never raw model prose", async () => {
     const events: AssistantEvent[] = [];
     const final = finalAnswer("Option 1 is £999. Option 2 is £1,111.");
     const { client } = scriptedModel([
@@ -475,14 +477,14 @@ describe("streaming", () => {
     await runAssistantTurn({ admin: fixtureAdmin([aria]), shopId: SHOP, history: [{ role: "user", content: "beds?" }], client, env: {} as any, settings }, (event) => events.push(event));
     const types = events.map((event) => event.type);
     expect(types[0]).toBe("status");
-    expect(events.filter((event) => event.type === "delta").map((event: any) => event.text)).toEqual(["Option 1 is ", "£999. ", "Option 2 is £1,111."]);
+    expect(events.filter((event) => event.type === "delta").map((event: any) => event.text)).toEqual(["Here is one option to consider."]);
     // Cards are verified and shown before the prose that refers to them.
     expect(types.indexOf("recommendations")).toBeLessThan(types.indexOf("delta"));
     expect(events.filter((event) => event.type === "status").map((event: any) => event.stage))
       .toEqual(["understanding", "searching_products", "preparing_recommendations", "writing"]);
     const last = events.at(-1) as Extract<AssistantEvent, { type: "final" }>;
     expect(last.type).toBe("final");
-    expect(last.reply.message).toBe("Option 1 is £999. Option 2 is the price shown on the product.");
+    expect(last.reply.message).toBe("Here is one option to consider.");
   });
 
   it("resets streamed text when the same response turns into a tool call", async () => {
@@ -496,7 +498,8 @@ describe("streaming", () => {
     const { client } = scriptedModel([search({ query: "bed" }), mixed, finalAnswer("Done.")]);
     await runAssistantTurn({ admin: fixtureAdmin([aria]), shopId: SHOP, history: [{ role: "user", content: "beds?" }], client, env: {} as any, settings }, (event) => events.push(event));
     const types = events.map((event) => event.type);
-    expect(types.indexOf("reset_text")).toBeGreaterThan(types.indexOf("delta"));
+    expect(types.indexOf("reset_text")).toBeLessThan(types.indexOf("delta"));
+    expect(events.filter((event) => event.type === "delta").map((event: any) => event.text)).toEqual(["Done."]);
     expect((events.at(-1) as any).reply.message).toBe("Done.");
   });
 
@@ -550,7 +553,7 @@ describe("visual-first recommendations and show more", () => {
     expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain("warm beige");
     expect(requests[0].instructions).toContain("Room-based discovery");
     expect(requests[0].instructions).toContain("never assume beds");
-    expect(requests[0].tools.find((tool: any) => tool.name === "recommend_products").parameters.properties.items.maxItems).toBe(4);
+    expect(requests[0].tools.find((tool: any) => tool.name === "recommend_products").parameters.properties.items.maxItems).toBe(10);
   });
 
   it("asks once for distinct reasons instead of showing the same description on two cards", async () => {
@@ -828,5 +831,40 @@ describe("reliability and safety", () => {
     await ask(admin, turn().client, "boucle sofa?");
     // Warm cache: only the fresh detail read for the recommendation reaches Shopify.
     expect(admin.totalCalls() - afterFirst).toBe(1);
+  });
+});
+
+
+describe("short contextual shopping replies", () => {
+  it("recognises a quantity follow-up and keeps the verified count honest", () => {
+    expect(requestedProductCount("then show me 10 beds")).toBe(10);
+    expect(requestedProductCount("show me five sofas")).toBe(5);
+    expect(requestedProductCount("how many beds are there?")).toBeNull();
+    expect(conciseAssistantReply("Long duplicate description", 4, "then show me 10 beds")).toBe("Here are 4 verified options I could find for this request.");
+  });
+  it("does not repeat card details or leak internal references", () => {
+    expect(conciseAssistantReply("The Aspen Bed (productRef 8074381426731) has plush velvet.", 0)).toBe("The Aspen Bed has plush velvet.");
+    expect(conciseAssistantReply("Aurora costs lots. Would you like a preview?", 3)).toBe("Here are 3 options to compare.");
+    expect(conciseAssistantReply("A useful short answer. " + "More detail. ".repeat(100)).split(/\s+/).length).toBeLessThanOrEqual(60);
+  });
+});
+
+
+describe("requested catalogue quantities", () => {
+  it("returns ten new beds after earlier recommendations, searching beyond the old top ten", async () => {
+    const products = Array.from({ length: 15 }, (_, i) => fixtureProduct({ id: 500 + i, title: `Bed Model ${i + 1}`, productType: "Bed", options: { Colour: ["Cream"] }, price: 200 + i }));
+    const shown = products.slice(0, 5).map(p => ({ productRef: ref(p.id), variantRef: null }));
+    const next = products.slice(5);
+    const { client, requests } = scriptedModel([
+      search({ query: "bed", limit: 10 }),
+      recommend(next.map((p, i) => ({ productRef: ref(p.id), variantRef: null, reason: `Option ${i + 1} has a distinct upholstered design for your bedroom.` }))),
+      finalAnswer("Here are some beds, including ones you saw earlier."),
+    ]);
+    const reply = await ask(fixtureAdmin(products), client, "then show me 10 beds", { shown, explored: shown });
+    expect(reply.recommendations).toHaveLength(10);
+    expect(reply.recommendations.map(p => p.productRef)).toEqual(next.map(p => ref(p.id)));
+    expect(reply.message).toBe("Here are 10 options to compare.");
+    expect(toolOutputs(requests, "call-search_products")[0].results).toHaveLength(10);
+    expect(requests[0].input.find((x: any) => x.role === "developer").content).toContain("requested 10 products");
   });
 });

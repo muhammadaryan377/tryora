@@ -346,7 +346,7 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__visualise > .tryora-assistant__thumb { width: 88px; }
 .tryora-assistant__visualise > div { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .tryora-assistant__preview { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px solid var(--ta-line); border-radius: 14px; background: var(--ta-bg); }
-.tryora-assistant__preview > img { width: 100%; border-radius: 10px; background: var(--ta-surface); }
+.tryora-assistant .tryora-assistant__preview > img { display: block; align-self: center; width: auto; height: auto; min-width: 0; min-height: 0; max-width: min(100%, 360px); max-height: min(320px, 40dvh); object-fit: contain; border-radius: 10px; background: var(--ta-surface); }
 .tryora-assistant__preview figcaption { display: grid; gap: 2px; padding: 0 4px; }
 .tryora-assistant__preview figcaption span { color: var(--ta-muted); font-size: 11.5px; }
 .tryora-assistant__preview.is-loading { flex-direction: row; align-items: center; gap: 12px; padding: 14px; }
