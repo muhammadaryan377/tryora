@@ -34,6 +34,7 @@ import {
   runAssistantTurn,
   sanitiseMessage,
   wantsMoreOptions,
+  isConversationAcknowledgement,
   wantsRoomPreview,
   type AssistantEvent,
 } from "../app/room-assistant.server";
@@ -612,10 +613,53 @@ describe("visual-first recommendations and show more", () => {
   it("recognises show-more requests without treating ordinary questions as one", () => {
     for (const text of ["Show more", "show me more please", "Any other options?", "something different", "more options like these", "aur dikhao"]) expect(wantsMoreOptions(text)).toBe(true);
     for (const text of ["Show me the oak table in my room", "Is this one more comfortable?", "What colours does it come in?"]) expect(wantsMoreOptions(text)).toBe(false);
+    for (const text of ["Show me another bed", "Any alternatives?", "What else do you have?", "A different one please", "Something new"]) expect(wantsMoreOptions(text)).toBe(true);
   });
 });
 
 describe("multi-turn conversations", () => {
+  it("checks a recommendation's saved preview config even when it was missing from the initial eligibility list", async () => {
+    vi.mocked(prisma.productPreviewConfig.findMany).mockResolvedValueOnce([]);
+    const variantRef = ref(aria.variants[0]!.id);
+    const { client } = scriptedModel([
+      search({ query: "Aria" }),
+      recommend([{ productRef: "1", variantRef, reason: "Its upholstered frame suits the room." }]),
+      finalAnswer("Here is the Aria Bed."),
+    ]);
+    const reply = await ask(fixtureAdmin([aria]), client, "Show me Aria");
+    expect(reply.recommendations[0]).toMatchObject({ productRef: "1", variantRef, previewAvailable: true, previewStatus: "available", optionValue: "Cream" });
+  });
+  it.each(["That looks good", "Thanks!", "I like it"])("does not repeat cards or previews after a reaction: %s", async (message) => {
+    const variantRef = ref(aria.variants[0]!.id);
+    const { client, requests } = scriptedModel([
+      recommend([{ productRef: "1", variantRef, reason: "Repeated suggestion." }]),
+      toolCall("select_product", { productRef: "1", variantRef }),
+      toolCall("request_visualisation", { productRef: "1", variantRef }),
+      finalAnswer("Glad you like it."),
+    ]);
+    const reply = await ask(fixtureAdmin([aria]), client, message, {
+      shown: [{ productRef: "1", variantRef }], selected: { productRef: "1", variantRef, source: "card" },
+      history: [{ role: "user", content: "Show me beds" }, { role: "assistant", content: "Here is the Aria Bed. Its room preview was shown." }, { role: "user", content: message }],
+    });
+    expect(isConversationAcknowledgement(message)).toBe(true);
+    expect(reply.recommendations).toHaveLength(0);
+    expect(reply.visualise).toBeNull();
+    expect(toolOutputs(requests, "call-recommend_products")[0]).toMatchObject({ error: "no_new_cards_requested" });
+    expect(requests[0].instructions).toContain("Respond in natural, concise English");
+  });
+
+  it("answers a price follow-up from verified details without redisplaying the product", async () => {
+    const variantRef = ref(aria.variants[0]!.id);
+    const { client, requests } = scriptedModel([
+      toolCall("get_product_details", { productRefs: ["1"], colour: null, size: null, material: null }),
+      recommend([{ productRef: "1", variantRef, reason: "Repeated card." }]),
+      finalAnswer("The Aria Bed costs £999."),
+    ]);
+    const reply = await ask(fixtureAdmin([aria]), client, "How much does the Aria cost?", { shown: [{ productRef: "1", variantRef }], selected: { productRef: "1", variantRef, source: "card" } });
+    expect(reply.recommendations).toHaveLength(0);
+    expect(reply.message).toContain("999");
+    expect(toolOutputs(requests, "call-get_product_details")[0].products[0].title).toBe("Aria Bed");
+  });
   it("resolves 'the second one' from verified chat context and answers from real variants", async () => {
     const admin = fixtureAdmin([aria, aspen, oslo]);
     const kingAspen = variantOf(aspen, { Colour: "Grey", Size: "King" });
@@ -639,7 +683,8 @@ describe("multi-turn conversations", () => {
     expect(developer.content).not.toContain("bad");
     const [details] = toolOutputs(requests, "call-get_product_details");
     expect(details.products[0].variants).toEqual([expect.objectContaining({ variantRef: ref(kingAspen.id), options: { Colour: "Grey", Size: "King" }, available: true })]);
-    expect(reply.recommendations[0]).toMatchObject({ variantId: kingAspen.id, options: { Colour: "Grey", Size: "King" } });
+    expect(reply.recommendations).toHaveLength(0);
+    expect(reply.message).toContain("king size");
   });
 
   it("keeps room analysis across follow-up questions without re-uploading the photo", async () => {

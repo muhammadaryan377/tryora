@@ -13,6 +13,7 @@ import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { emptyState, sessionKey } from "../../packages/storefront/src/assistant/session";
 
 const state = vi.hoisted(() => ({ configs: [] as any[], copy: { assistant: { enabled: true, pages: { product: true, home: true } } } as any }));
 vi.mock("../app/db.server", () => ({
@@ -397,6 +398,35 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     } finally { await context.close(); }
   }, 30_000);
 
+  it.each([1280, 390])("stale product card opens its verified page popup without generating at %ipx", async (width) => {
+    const context = await browser.newContext({ viewport: { width, height: 900 } });
+    await routeImages(context);
+    const saved = emptyState(SHOP);
+    const variantId = aria.variants[0]!.id;
+    saved.entries = [
+      { id: "previous-question", kind: "user", text: "Recommend a bed", photo: false, at: Date.now() },
+      { id: "previous-answer", kind: "assistant", replyTo: "previous-question", text: "The Aria Bed suits your room.", status: "done", visualise: null, at: Date.now(), recommendations: [{
+        id: `1:${variantId.split("/").pop()}`, productRef: "1", variantRef: variantId.split("/").pop()!, productId: aria.id, variantId,
+        title: aria.title, url: `/products/${aria.handle}`, image: null, price: "999", maxPrice: null, currencyCode: "GBP",
+        options: { Colour: "Cream" }, purchaseAvailable: true, previewAvailable: false, previewStatus: "not_configured", optionValue: null, reason: "Suits the room.",
+      }] },
+    ];
+    await context.addInitScript(({ key, value }: { key: string; value: string }) => sessionStorage.setItem(key, value), { key: sessionKey(SHOP), value: JSON.stringify(saved) });
+    const page = await context.newPage();
+    try {
+      await page.goto(origin);
+      await page.locator(".tryora-assistant-launch").click();
+      const button = page.locator(".tryora-assistant__card [data-ta=preview]");
+      expect(await button.isEnabled()).toBe(true);
+      await button.click();
+      await page.locator(".tryora__dialog").waitFor();
+      expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(false);
+      expect(seen.previewStarts).toHaveLength(0);
+      await page.locator(".tryora__dialog [data-act=close]").click();
+      expect(await page.locator(".tryora-assistant__card h4").textContent()).toBe(aria.title);
+    } finally { await context.close(); }
+  });
+
   it.each([1280, 390])("first welcome card opens the popup and delivers into chat at %ipx", async (width) => {
     const context = await browser.newContext({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
     await routeImages(context);
@@ -426,6 +456,14 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(await page.locator(".tryora__dialog").count()).toBe(0);
       expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(true);
       expect(await page.locator(".tryora-assistant__preview [download]").count()).toBe(1);
+      // Store themes often make every image full-width; the persistent room chip must stay compact.
+      await page.addStyleTag({ content: ".tryora-assistant img { width: 100%; height: auto; min-width: 100%; max-width: 100%; }" });
+      const roomThumb = await page.locator(".tryora-assistant__room-chip > img").boundingBox();
+      expect(roomThumb?.width).toBe(40);
+      expect(roomThumb?.height).toBe(40);
+      const roomChip = await page.locator(".tryora-assistant__room-chip").boundingBox();
+      expect(roomChip!.height).toBeLessThan(110);
+      expect(await page.locator(".tryora-assistant__scroll").evaluate((el: HTMLElement) => el.clientHeight)).toBeGreaterThan(150);
       expect(seen.previewStarts).toHaveLength(before + 1);
       await expect.poll(() => seen.acks).toBe(acksBefore + 1);
       // Minimise/reopen must retain the delivered result and its original photo.
@@ -451,7 +489,10 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       await page.locator(".tryora-assistant__photo-screen").waitFor();
       const before = seen.previewStarts.length, acksBefore = seen.acks;
       await page.locator("[data-ta-file=upload]").setInputFiles({ name: "room.jpg", mimeType: "image/jpeg", buffer: previewImage });
-      // The photo-first flow submits the photo for analysis immediately, never for paid generation.
+      // Upload is a draft so the shopper can add a message before sending.
+      await page.locator("[data-ta-attachment] img").waitFor();
+      expect(seen.previewStarts).toHaveLength(before);
+      await page.locator("[data-ta=send]").click();
       await page.locator(".tryora-assistant__user-photo").waitFor();
       await page.locator("[data-ta=send]:not(:disabled)").waitFor();
       expect(seen.previewStarts).toHaveLength(before);
@@ -571,7 +612,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await context.close();
   }, 90_000);
 
-  it.each([1280, 390])("room photo, three grounded recommendations and a conversational preview at %ipx", async (width) => {
+  it.each([1280, 390])("room photo, optional text, grounded recommendations and a conversational preview at %ipx", async (width) => {
     const context = await browser.newContext({ viewport: { width, height: width === 390 ? 844 : 800 }, isMobile: width === 390, hasTouch: width === 390 }); await routeImages(context);
     const page = await context.newPage();
     await page.goto(origin);
@@ -581,7 +622,10 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await page.setInputFiles("[data-ta-file='upload']", { name: "bedroom.jpg", mimeType: "image/jpeg", buffer: room });
     await page.locator("[data-ta-attachment] img").waitFor();
     await shot(page, `live-${width}-attachment`);
-    await page.fill("textarea", "Recommend three beds for my room");
+    expect(seen.turnsWithPhoto).toBe(0);
+    expect(seen.previewStarts).toHaveLength(0);
+    expect(await page.locator("textarea").getAttribute("placeholder")).toContain("optional");
+    if (width === 1280) await page.fill("textarea", "Recommend three beds for my room");
     await page.click("[data-ta='send']");
     await page.locator(".tryora-assistant__room-chip").waitFor({ timeout: 15_000 });
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
@@ -589,7 +633,10 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     expect(await page.locator(".tryora-assistant__room-chip").textContent()).toContain("Scandinavian");
     expect(await page.locator(".tryora-assistant__user-photo").count()).toBe(1);
 
-    expect(await page.locator(".tryora-assistant__card").count()).toBe(3);
+    const recommendedTitles = await page.locator(".tryora-assistant__card h4").allTextContents();
+    expect(recommendedTitles.length).toBeGreaterThan(0);
+    expect(recommendedTitles.length).toBeLessThanOrEqual(3);
+    for (const title of recommendedTitles) expect(products.some(product => product.title === title)).toBe(true);
     await shot(page, `live-${width}-room-recommendations`);
     // Ask for a visualisation of the verified Aria variant and confirm the card.
     await page.fill("textarea", "Show the Aria in cream in my room");
@@ -600,6 +647,9 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
     await shot(page, `live-${width}-conversational-preview-offer`);
     await offer.click();
+    await page.locator("[data-ta=confirm-preview]").waitFor();
+    expect(seen.previewStarts).toHaveLength(0);
+    await page.locator("[data-ta=confirm-preview]").click();
     await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
     const start = seen.previewStarts.at(-1)!;
     expect(start).toMatchObject({ product: aria.id, option: "Cream", variant: aria.variants.find((variant) => variant.selectedOptions[0]!.value === "Cream")!.id });

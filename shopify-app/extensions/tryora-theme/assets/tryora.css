@@ -666,5 +666,5 @@ html.tryora-assistant-locked { overflow: hidden; }
 
 /* Guided preview context and comparison controls; recommendation card styling is unchanged. */
 .tryora-assistant__selection { margin: 4px 0; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.tryora-assistant__room-chip > img { flex: 0 0 40px; }
+.tryora-assistant .tryora-assistant__room-chip > img { display: block; flex: 0 0 40px; width: 40px; height: 40px; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; object-fit: cover; border-radius: 6px; }
 .tryora-assistant__preview button[aria-pressed="true"] { background: var(--ta-text); color: var(--ta-bg); }
