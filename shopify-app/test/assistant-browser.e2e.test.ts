@@ -505,6 +505,12 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       expect(seen.previewStarts).toHaveLength(before);
       await page.locator("[data-ta=confirm-preview]").click();
       await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
+      await page.locator(".tryora-assistant__preview img").evaluate((img: HTMLImageElement) => img.decode());
+      const previewBounds = await page.locator(".tryora-assistant__preview img").boundingBox();
+      expect(previewBounds!.height).toBeLessThanOrEqual(320);
+      expect(previewBounds!.width).toBeLessThanOrEqual(360);
+      expect(await page.locator(".tryora-assistant__preview img").evaluate((img: HTMLImageElement) => getComputedStyle(img).objectFit)).toBe("contain");
+
       expect(await page.locator(".tryora__dialog").count()).toBe(0);
       expect(await page.locator(".tryora-assistant__panel").isVisible()).toBe(true);
       expect(seen.previewStarts).toHaveLength(before + 1);

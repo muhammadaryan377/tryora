@@ -207,7 +207,7 @@ export function historyFor(state: ChatState, upTo?: string): { role: "user" | "a
     else if (entry.kind === "assistant" && entry.status === "done") {
       // Cards are part of the answer too, including replies whose text is empty.
       const items = entry.recommendations.length ? entry.recommendations : entry.visualise ? [entry.visualise] : [];
-      const cards = items.slice(0, 3).map((item, index) => ({
+      const cards = items.slice(0, 10).map((item, index) => ({
         option: index + 1, title: item.title.slice(0, 100), productRef: item.productRef,
         variantRef: item.variantRef, options: Object.fromEntries(Object.entries(item.options ?? {}).filter(([key]) => !key.startsWith("__tryora_")).slice(0, 4)),
       }));

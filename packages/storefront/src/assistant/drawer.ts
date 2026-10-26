@@ -73,8 +73,8 @@ const ICONS = {
   camera: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`,
 };
 
-const RECOMMEND_ROOM_REQUEST = "Analyse my room photo and identify its visible style, wall and floor colours, lighting and existing furniture. Find two or three suitable furniture products that this store actually sells. Show their verified photos and prices, explain why each suits my room, and recommend complementary styles and colours grounded in the image and real catalogue. Do not invent products. Do not generate an image.";
-const DISCOVER_PREVIEW_REQUEST = "Analyse my room photo and find suitable real furniture from this store with verified AI preview availability. Show me product cards so I can choose which exact product to preview. Do not generate a preview yet.";
+const RECOMMEND_ROOM_REQUEST = "Analyse my room photo and show me suitable furniture from this store.";
+const DISCOVER_PREVIEW_REQUEST = "Show me furniture from this store that I can preview in my room.";
 
 const BED_ICON = `<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 26V14h22v12M8 14V8h16v6M5 23h22M9 18h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M23 2l1 3 3 1-3 1-1 3-1-3-3-1 3-1z" fill="currentColor"/></svg>`;
 function roomIllustration(bed: boolean) {
@@ -366,7 +366,7 @@ export class RoomAssistant {
     if (product) form.set("product", product);
     form.set("hasPhoto", this.roomPhoto ? "1" : "0");
     if (this.state.room) form.set("room", JSON.stringify(this.state.room));
-    if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 6)));
+    if (this.state.shown.length) form.set("shown", JSON.stringify(this.state.shown.slice(0, 10)));
     if (this.state.explored?.length) form.set("explored", JSON.stringify(this.state.explored.slice(-100)));
     if (this.state.selected) form.set("selected", JSON.stringify(this.state.selected));
     if (this.state.preferences) form.set("preferences", JSON.stringify(this.state.preferences));
