@@ -164,7 +164,7 @@ describe("conversation memory", () => {
     const { client, requests } = scriptedModel([toolCall("request_visualisation", { productRef: ref(egerie.id), variantRef: null }), finalAnswer("Pick a fabric first.")]);
     const reply = await ask(fixtureAdmin([egerie]), client, [{ role: "user", content: "Show it in my room" }], { selected: { productRef: ref(egerie.id), variantRef: null } });
     expect(reply.visualise).toBeNull();
-    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "Choose a fabric or colour to check AI room preview." });
+    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "An exact approved product appearance could not be verified for room preview." });
   });
 
   it("keeps shopper-stated room facts and earlier preferences in later turns", async () => {
