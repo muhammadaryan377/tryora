@@ -1184,13 +1184,16 @@ export class RoomAssistant {
   }
 
   private recommendationCopy() {
+    // The welcome screen suggests a room-suitable product, not an appearance-selection form.
+    // Keep product category grounded in the current page or verified catalogue metadata.
     const configuredNoun = this.context.productNoun?.trim();
     const noun = configuredNoun && configuredNoun !== "product" ? configuredNoun : this.recommendation?.noun ?? "furniture";
     const item = noun === "furniture" || noun === "product" ? "furniture" : noun;
     const article = /^[aeiou]/i.test(item) ? "an" : "a";
-    const traits = [this.recommendation?.fabric && "fabric", this.recommendation?.colour && "colour"].filter(Boolean);
-    const subject = traits.length === 2 ? `${item}, fabric and colour` : traits.length ? `${item} and ${traits[0]}` : item;
-    return { title: `Recommend ${item === "furniture" ? item : `${article} ${item}`} for my room`, description: `Find the best ${subject} for your room.` };
+    return {
+      title: `Recommend ${item === "furniture" ? item : `${article} ${item}`} for my room`,
+      description: `Find the best ${item} for your room.`,
+    };
   }
 
   private photoActionsHtml() {
@@ -1223,10 +1226,11 @@ export class RoomAssistant {
   }
 
   private welcomeHtml() {
+    // Exactly two home cards on product and non-product pages. Product pages must
+    // not bypass these cards to reveal an extra upload form on the home screen.
     const noun = this.productNoun();
     const beds = (this.recommendation?.noun ?? noun) === "bed";
     const currentPreview = !!this.context.productId;
-    if (currentPreview) return `<div class="tryora-assistant__welcome"><span class="tryora-assistant__welcome-icon">${ICONS.room}</span><h3>See this ${escapeHtml(this.context.productTitle || noun)} in your room</h3><p>This product is selected. Upload your room photo to continue.</p><button type="button" class="tryora-assistant__primary" data-ta="welcome" data-action="visualise">See in my room</button>${this.photoActionsHtml()}${this.context.openCurrentPreview ? `<button type="button" class="tryora-assistant__link" data-ta="product-preview">Use product preview</button>` : ""}<p class="tryora-assistant__photo-privacy">Your photo is used to prepare your selection. Generate preview starts only when you press it.</p></div>`;
     const productPreview = this.context.openCurrentPreview
       ? `<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>` : "";
     const actionIcon = (icon: string) => `<span class="tryora-assistant__action-icon">${icon}<i>${ICONS.camera}</i></span>`;
@@ -1237,11 +1241,15 @@ export class RoomAssistant {
       <div class="tryora-assistant__actions-grid">
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
           ${actionIcon(ICONS.photo)}
-          <span><strong>${currentPreview ? `Preview this ${escapeHtml(noun)} in my room` : "Choose a product"}</strong><small>${currentPreview ? `See how this ${escapeHtml(noun)} looks in your own space.` : "Choose a furniture product with room preview available."}</small></span><b aria-hidden="true">&rsaquo;</b>
+          <span><strong>${currentPreview ? `Preview this ${escapeHtml(noun)} in my room` : "Choose a product"}</strong>
+            <small>${currentPreview ? `See how this ${escapeHtml(noun)} looks in your own space.` : "Choose a product with an approved room preview."}</small></span>
+          <b aria-hidden="true">&rsaquo;</b>
         </button>
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="recommend">
           ${actionIcon(beds ? BED_ICON : ICONS.sofa)}
-          <span><strong data-ta-recommend-title>${escapeHtml(this.recommendationCopy().title)}</strong><small data-ta-recommend-description>${escapeHtml(this.recommendationCopy().description)}</small></span><b aria-hidden="true">&rsaquo;</b>
+          <span><strong data-ta-recommend-title>${escapeHtml(this.recommendationCopy().title)}</strong>
+            <small data-ta-recommend-description>${escapeHtml(this.recommendationCopy().description)}</small></span>
+          <b aria-hidden="true">&rsaquo;</b>
         </button>
       </div>
       ${productPreview}
