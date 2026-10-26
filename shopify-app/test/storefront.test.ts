@@ -369,6 +369,27 @@ describe("lead delivery", () => {
     expect(await captureLead(admin, lead)).toEqual({ ok: true });
     expect(fixture.leadUpdates.at(-1)).toMatchObject({ status: "failed", lastError: "CUSTOMER_SAVE_FAILED" });
   });
+  it("retains the local name and email even when Shopify rejects customer sync", async () => {
+    admin.graphql.mockRejectedValueOnce(new Error("Shopify unavailable"));
+    await captureLead(admin, { ...lead, email: " shopper@example.com ", firstName: " Sam ", marketing: false });
+    expect(prisma.leadDelivery.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ email: "shopper@example.com", firstName: "Sam", marketingOptIn: false, marketingWording: null, shopId }) });
+    expect(fixture.leadUpdates.at(-1)).toMatchObject({ status: "failed", lastError: "CUSTOMER_SAVE_FAILED" });
+    expect(prisma.event.create).toHaveBeenCalledWith({ data: { shopId, name: "lead_captured", productId } });
+  });
+  it("does not capture or sync contacts when the merchant has switched leads off", async () => {
+    vi.mocked(prisma.shop.findUnique).mockResolvedValueOnce({ leadCapture: "off", leadSettings: {} } as any);
+    vi.mocked(prisma.leadDelivery.create).mockClear();
+    await captureLead(admin, lead);
+    expect(prisma.leadDelivery.create).not.toHaveBeenCalled();
+    expect(admin.graphql).not.toHaveBeenCalled();
+  });
+  it("does not subscribe a shopper when the merchant's opt-in checkbox is disabled", async () => {
+    vi.mocked(prisma.shop.findUnique).mockResolvedValueOnce({ leadCapture: "required", leadSettings: { showOptIn: false } } as any);
+    admin.graphql.mockResolvedValueOnce(Response.json({ data: { customerSet: { customer: { id: "customer" }, userErrors: [] } } }));
+    await captureLead(admin, lead);
+    expect(admin.graphql).toHaveBeenCalledTimes(1);
+    expect(prisma.leadDelivery.create).toHaveBeenLastCalledWith({ data: expect.objectContaining({ marketingOptIn: false, marketingWording: null }) });
+  });
   it("accepts a successful customer save and consent update", async () => {
     admin.graphql.mockResolvedValueOnce(Response.json({ data: { customerSet: { customer: { id: "customer" }, userErrors: [] } } }))
       .mockResolvedValueOnce(Response.json({ data: { customerEmailMarketingConsentUpdate: { userErrors: [] } } }));

@@ -1543,7 +1543,7 @@ export class RoomAssistant {
     const canSkip = entry.after || lead?.mode === "skippable";
     return `<div class="tryora-assistant__lead" data-entry="${id}" role="group" aria-labelledby="ta-lead-${id}">
       <h4 id="ta-lead-${id}">${entry.after ? "Enter your email to keep previewing" : "Enter your email to create your preview"}</h4>
-      <p>This store asks for an email for AI room previews. Your image is never emailed.</p>
+      <p>Your name and email are saved for this store. Marketing emails require your opt-in. Your image is never emailed.</p>
       <label class="tryora-assistant__field"><span>Email address</span>
         <input type="email" name="ta-lead-email" data-entry="${id}" autocomplete="email" inputmode="email" required value="${escapeHtml(draft.email)}" ${entry.error ? 'aria-invalid="true"' : ""} ${sending ? "disabled" : ""}></label>
       <label class="tryora-assistant__field"><span>First name (optional)</span>

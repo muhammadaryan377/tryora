@@ -35,13 +35,29 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
   const campaign = await prisma.campaign.findFirst({ where: { shopId }, orderBy: { updatedAt: "desc" } });
   const copy: OfferCopy = { headline: "15% off this {item}", details: "This {item} only. Cannot be combined.", ...((campaign?.copy as object) ?? {}) };
-  const leadsTotal = await prisma.leadDelivery.count({ where: { shopId } });
+  const url = new URL(request.url);
+  const rawCursor = url.searchParams.get("before");
+  const cursor = rawCursor && /^[a-zA-Z0-9_-]{1,100}$/.test(rawCursor) ? rawCursor : null;
+  const [leadsTotal, leadsFailed, leadsPending, consentFailed, rows] = await Promise.all([
+    prisma.leadDelivery.count({ where: { shopId, OR: [{ email: { not: null } }, { customerRef: { not: null } }] } }),
+    prisma.leadDelivery.count({ where: { shopId, status: "failed", customerRef: null } }),
+    prisma.leadDelivery.count({ where: { shopId, status: "queued" } }),
+    prisma.leadDelivery.count({ where: { shopId, status: "failed", customerRef: { not: null } } }),
+    prisma.leadDelivery.findMany({ where: { shopId }, orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 51, ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: { id: true, email: true, firstName: true, marketingOptIn: true, customerRef: true,
+        productId: true, optionValue: true, status: true, lastError: true, createdAt: true } }),
+  ]);
+  const leads = rows.slice(0, 50);
+  url.searchParams.set("before", leads.at(-1)?.id ?? "");
+  const olderUrl = rows.length > 50 ? `${url.pathname}${url.search}` : null;
   return {
     leadCapture: settings.leadCapture,
     leadTiming: (shop?.leadTiming ?? "before") as "before" | "after",
     lead,
     offer: { on: campaign?.mode === "offer" && campaign.active, code: campaign?.code ?? "", ...copy },
-    leadsTotal,
+    leadsTotal, leadsFailed, leadsPending, consentFailed, leads, olderUrl,
+    customersUrl: `https://${shopId}/admin/customers?query=${encodeURIComponent(`tag:"${lead.customerTag.replace(/["\\]/g, "")}"`)}`,
   };
 };
 
@@ -126,6 +142,8 @@ export default function Leads() {
         )}
 
         <s-section heading="Collect shoppers' emails">
+          <s-switch label="Collect names and emails for previews" checked={leadCapture !== "off" || undefined}
+            onChange={(e: any) => setLeadCapture(checked(e) ? "required" : "off")} />
           <s-select
             label="Ask shoppers for their email"
             value={leadCapture}
@@ -205,20 +223,50 @@ export default function Leads() {
         </s-section>
       </Form>
 
+      <s-section heading="Captured leads">
+        <s-paragraph>Names and emails submitted through your preview forms are saved here. Turning collection off stops new submissions; existing leads remain available.</s-paragraph>
+        {d.leads.length === 0 ? <s-paragraph>No leads captured yet.</s-paragraph> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
+              <thead><tr>{["Name", "Email", "Captured", "Marketing choice", "Shopify sync"].map(title => <th key={title} style={{ padding: "12px 8px", borderBottom: "1px solid #ddd" }}>{title}</th>)}</tr></thead>
+              <tbody>{d.leads.map(lead => <tr key={lead.id}>
+                <td style={{ padding: "12px 8px" }}>{lead.firstName || "Not provided"}</td>
+                <td style={{ padding: "12px 8px" }}>{lead.email || "Email not retained (older record)"}</td>
+                <td style={{ padding: "12px 8px", whiteSpace: "nowrap" }}>{new Date(lead.createdAt).toISOString().slice(0, 16).replace("T", " ")} UTC</td>
+                <td style={{ padding: "12px 8px" }}>{lead.email ? lead.marketingOptIn ? "Opted in" : "Not opted in" : "See Shopify"}</td>
+                <td style={{ padding: "12px 8px" }}>{lead.status === "accepted" ? "Synced" : lead.customerRef ? "Customer saved; consent not confirmed" : lead.status === "failed" ? lead.email ? "Sync failed; lead kept here" : "Failed; older contact unavailable" : "Not confirmed"}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+        )}
+        {d.olderUrl && <s-paragraph><a href={d.olderUrl}>Older leads</a></s-paragraph>}
+      </s-section>
       <s-section slot="aside" heading="Emails captured">
         <s-heading>{d.leadsTotal}</s-heading>
         <s-paragraph>
-          <s-text color="subdued">All time. Find them in Customers with the tag "{d.lead.customerTag}".</s-text>
+          <s-text color="subdued">Saved leads, including repeat submissions. Customers synced to Shopify have the tag "{d.lead.customerTag}".</s-text>
         </s-paragraph>
+        <s-paragraph><a href={d.customersUrl} target="_top">View customers in Shopify</a></s-paragraph>
+        {d.leadsFailed > 0 && <s-paragraph>
+          {d.leadsFailed} customer sync attempts failed. New submissions are still saved in the list above.
+          Older failed submissions may have no email because contact details were not retained at that time.
+        </s-paragraph>}
+        {d.leadsPending > 0 && <s-paragraph>{d.leadsPending} customer sync attempts have not been confirmed by Shopify yet.</s-paragraph>}
+        {d.consentFailed > 0 && <s-paragraph>
+          {d.consentFailed} customers were saved, but their marketing consent could not be confirmed. Do not treat them as subscribed without checking Shopify.
+        </s-paragraph>}
       </s-section>
       <s-section slot="aside" heading="Privacy">
         <s-paragraph>
-          Tryora never stores shoppers' room photos or generated images. Only the email, the product and colour they
-          looked at, and their marketing choice are saved to your Shopify customers.
+          Tryora never stores shoppers' room photos or generated images. Submitted names, emails, product references and marketing choices are saved in Tryora for this store. Shopify customer sync is attempted separately. Marketing opt-in is never assumed from submitting a preview.
         </s-paragraph>
       </s-section>
     </s-page>
   );
 }
 
-export const headers: HeadersFunction = (headersArgs) => boundary.headers(headersArgs);
+export const headers: HeadersFunction = (headersArgs) => {
+  const headers = new Headers(boundary.headers(headersArgs));
+  headers.set("Cache-Control", "no-store");
+  return headers;
+};

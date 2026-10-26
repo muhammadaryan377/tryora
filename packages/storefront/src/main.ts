@@ -836,7 +836,7 @@ export class Tryora {
       }
       <button class="tryora__btn" data-act="lead-submit">${esc(submitLabel)}</button>
       ${c.lead.mode === "skippable" ? `<button class="tryora__link" data-act="lead-skip">${this.state.step === "result" ? "No thanks" : "Skip"}</button>` : ""}
-      <p class="tryora__small">Your image is never emailed.</p>
+      <p class="tryora__small">Your name and email are saved for this store. Marketing emails require your opt-in. Your image is never emailed.</p>
       ${this.privacy()}`;
   }
 

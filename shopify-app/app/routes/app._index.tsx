@@ -26,7 +26,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     prisma.productPreviewConfig.count({ where: { shopId, enabled: true } }),
     prisma.appearance.findFirst({ where: { shopId, scope: "store" } }),
     prisma.previewJob.count({ where: { shopId, state: "DELIVERED", deliveredAt: { gte: monthStart } } }),
-    prisma.leadDelivery.count({ where: { shopId, createdAt: { gte: monthStart } } }),
+    prisma.leadDelivery.count({ where: { shopId, OR: [{ email: { not: null } }, { customerRef: { not: null } }], createdAt: { gte: monthStart } } }),
   ]);
 
   const sales = await salesReport(admin, shopId);

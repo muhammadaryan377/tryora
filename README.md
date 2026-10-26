@@ -28,7 +28,7 @@ explicitly authorized database operation; development startup does not apply mig
 See `docs/release-safety-review.md` for release gates and the migration/rollback plan.
 
 ## Rules
-- Never store shopper photos, generated images or shopper details (emails go straight to Shopify customers).
+- Never store shopper photos or generated images. Preview lead contact details (email, optional first name and explicit marketing choice) are retained only in the authenticated merchant lead dashboard; Shopify customer sync is best-effort. Never put contact details in logs or browser storage. See docs/lead-capture-dashboard.md for retention and release details.
 - The credits ledger is append-only; a credit is charged only when an image is delivered.
 - Don't import `core/index` into browser code (admin page components); it breaks the build.
 - New Shopify permissions need the owner's approval.
