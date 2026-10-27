@@ -1,8 +1,13 @@
 # Visully
 
+> Previously Tryora. Internal API routes (`/apps/tryora`), the theme asset filenames,
+> legacy Shopify client configuration, CSS classes, and environment variables keep
+> their original identifiers for compatibility. Deploy the public app with
+> `npx shopify app deploy --config visully` from `shopify-app/`.
+
 Shopify app: shoppers see a merchant's product in a photo of their own room. Merchant admin, storefront popup,
 credits, limits, lead capture and sales tracking are built; real AI images, billing and App Store submission are next.
-The full handover (access, what's built, what's left, test plan) is in the owner's "Visully developer handover" doc.
+The full handover (access, what's built, what's left, test plan) is in the owner's "Tryora developer handover" doc.
 Product decisions: `TRYORA/docs/decisions.md` (owner's folder).
 
 ## Layout
