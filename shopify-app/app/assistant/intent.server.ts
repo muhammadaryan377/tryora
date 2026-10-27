@@ -16,7 +16,7 @@ export interface IntentPlan {
 
 const CATEGORY = /\b(beds?|bedframes?|sofas?|couches?|settees?|armchairs?|chairs?|tables?|wardrobes?|desks?|rugs?|ottomans?|mattresses?|headboards?|shelves?|dressers?)\b/i;
 const FOLLOW_UP = /^(?:and\s+)?(?:what about|how about|also|and|in (?:grey|gray|cream|beige|black|white|green|blue)|something|any|cheaper|more expensive|better|the (?:first|second|third|last)|this|that|it|those|same|another)\b/i;
-const ACK = /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|thanks|thank you|alright|got it)|(?:this|that|it|the preview)\s+(?:looks?|sounds?)\s+(?:good|great|nice|perfect))(?:[!., ]*)$/i;
+const ACK = /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|thanks|thank you|alright|got it)|(?:(?:this|that|it|the preview)\s+)?(?:looks?|sounds?)\s+(?:good|great|nice|perfect))(?:[!., ]*)$/i;
 
 function categoryOf(text: string): string | null {
   const match = text.match(CATEGORY);
@@ -57,7 +57,7 @@ export function planShopperTurn(input: {
   const more = /\b(show|see|give|any)\s+(?:me\s+)?more\b|\b(?:more|other|different|another)\s+(?:options?|products?|choices?|ones?|sofas?|beds?)\b|\b(?:something else|show me moes)\b/i.test(lower);
   const support = /\b(deliver(?:y|ies)?|shipping|return(?:s)?|refund|warrant(?:y|ies)|order status|opening hours|contact)\b/i.test(lower);
   const question = /\b(price|cost|how much|dimensions?|materials?|fabrics?|colou?rs?|sizes?|stock|available|made of|does it have|what about)\b/i.test(lower);
-  const discovery = /\b(show|recommend|suggest|find|looking for|need|pick|choose|best for|what (?:would|will) suit|which (?:one|furniture))\b/i.test(lower);
+  const discovery = /\b(show|recommend|suggest|find|looking for|need|pick|choose|best for|what (?:would|will) (?:suit|look|work|be)|which (?:one|furniture))\b/i.test(lower);
   const roomMention = /\b(room|bedroom|living room|my space|this space|here)\b/i.test(lower) || input.newRoomPhoto;
   const intent: ShopperIntent =
     ACK.test(latest) ? "acknowledgement" :
