@@ -57,7 +57,7 @@ used a placeholder localhost URL and opened no database connection.
 
 Existing product enabled/readiness checks still apply. A profile does not enable
 a manually OFF product or bypass original merchant restrictions. New shop records
-use the same automatic-product default as existing Tryora shop initialization;
+use the same automatic-product default as existing Visully shop initialization;
 existing shop settings are not overwritten.
 
 ## Mapping invariants
