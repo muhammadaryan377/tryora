@@ -984,13 +984,16 @@ describe("simple chat cards and safe direct previews", () => {
     return assistant;
   }
 
-  it("never shows Fabric, Colour or colour swatches inside a recommended chat card", async () => {
+  it("shows selected fabric and colour without a configuration picker or fabricated swatch inside a recommended card", async () => {
     const item = card({ hasOptions: true, variantCount: 3, options: { Fabric: "Naples", Colour: "Cream" } });
     await showCards([item]);
     const element = $(".tryora-assistant__card")!;
     expect(element.querySelector(".tryora-assistant__card-choices")).toBeNull();
     expect(element.querySelectorAll("[data-ta='opt'], [data-ta='options'], .tryora-assistant__swatch, .tryora-assistant__tag")).toHaveLength(0);
-    expect(element.textContent).not.toMatch(/Select a fabric and colour|Show fabric|Colour:|Fabric:/);
+    expect(element.textContent).toContain("Fabric: Naples");
+    expect(element.textContent).toContain("Colour: Cream");
+    expect(element.querySelector(".tryora-assistant__selected-colour-swatch")).toBeNull();
+    expect(element.textContent).not.toMatch(/Select a fabric and colour|Show fabric/);
     expect([...element.querySelectorAll(".tryora-assistant__card-actions > *")].map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
     expect(proxy.calls.some((call) => call.url.startsWith("/apps/visully/assistant/options?"))).toBe(false);
   });
