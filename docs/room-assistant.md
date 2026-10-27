@@ -42,12 +42,12 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 | Kept | Where | Limits |
 |---|---|---|
 | Messages, cards, preview offers, room observations, stated preferences, selected product | `sessionStorage` key `tryora_assistant_v2:<shop>` | 4 h idle or 24 h total; ~100 KB and 60 entries (oldest dropped first) |
-| Room photo and generated preview images | In-memory object URLs only | Gone on reload; the transcript then shows "not kept after the page reloads" |
+| Room photo, uploaded thumbnails, original-vs-generated comparisons and generated previews | In-memory object URLs plus same-tab scoped IndexedDB Blobs on the Shopify browser origin | Browser-local only, best effort, 4-hour expiry; unavailable in blocked/private storage; no server-side image history |
 
-- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Visully's database, Shopify or analytics.
+- History and available local images follow the shopper across pages and refreshes in the same tab. Only the legitimate Shopify app proxy receives photos for the requested analysis/generation; no chat images are uploaded for persistence to Visully's database, Shopify Files or analytics. Same-origin storefront scripts can access IndexedDB like other origin-scoped web storage; browser storage is not a substitute for customer-facing long-term image hosting.
 - Each message sends a bounded slice to the server: the last 12 completed turns, up to 6 numbered recommendations, the selected product, room observations and preferences. The server re-validates every reference against fresh Shopify data.
 - The key and stored shop are checked on load, so one store's context can't appear in another. The v1 shared key `tryora_assistant_context` is deleted.
-- **New chat** clears messages, recommendations and preferences but keeps the room. **Forget room** removes the room notes and photo but keeps messages. **Clear conversation** removes everything.
+- **New chat** clears messages, cached previews and preferences but keeps the current room. **Forget room** removes room notes, current photo and original comparison photos but keeps messages and already generated previews. **Clear conversation** revokes object URLs and deletes this tab/shop's local images. An expiry sweep purges stale browser cache entries on assistant launch.
 - This is browser-side history. OpenAI requests still use `store: false`.
 
 ## Streaming
@@ -172,7 +172,8 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
 
 ## Privacy and security
 
-- Room photos are compressed in the browser (max 1600px), sent only with the message they're attached to, normalised on the server for that request, and never stored or logged.
+- Room photos are compressed in the browser (max 1600px), sent only for requested analysis/preview, and never stored in the app database or server logs. **For same-tab continuity the browser may temporarily cache compressed source and generated Blobs in its own IndexedDB** (up to 8 MB per item, 4-hour logical expiry, pruned on return). Images are neither saved in localStorage/sessionStorage nor hosted on external media storage. If browser storage is blocked, full, evicted or expired, the assistant still works, but the shopper may need to upload the photo again.
+- An in-progress generation resumes by its opaque server job ID after navigation, or by re-posting the **same idempotency key and exact original room** if navigation interrupted job creation. The server still enforces all credit, lead, shop and variant checks. Its transient job expires, so recovery is best effort—not guaranteed if backend restarts or the visitor returns outside the delivery window. Shoppers can minimise the drawer and continue browsing.
 - Logs are structured and allowlisted (`app/assistant/log.server.ts`): no message text, photos, visitor IDs or API keys.
 - The proxy enforces request size limits (history 30 KB, photo 8 MB) and the existing visitor, shop and concurrency rate limits.
 - Chat never consumes credits.
