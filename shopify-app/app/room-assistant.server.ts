@@ -1824,6 +1824,36 @@ export async function answerRoomAssistant(input: AssistantTurnInput): Promise<As
   return reply!;
 }
 
+/**
+ * Incremental delivery of the FINAL, validated reply. Model tool-round text stays hidden:
+ * it may refer to unverified prices, unavailable products, or an obsolete selection.
+ * These chunks can be sent over poll/SSE without exposing an unverified model draft.
+ * This improves on-the-wire display, but does not pretend to stream raw model tokens.
+ */
+export function verifiedReplyChunks(message: string, maxLength = 56): string[] {
+  const chunks: string[] = [];
+  let remaining = message;
+  while (remaining.length > maxLength) {
+    const boundary = remaining.lastIndexOf(" ", maxLength);
+    const end = boundary > maxLength / 2 ? boundary + 1 : maxLength;
+    chunks.push(remaining.slice(0, end));
+    remaining = remaining.slice(end);
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+async function emitVerifiedReply(message: string, emit: (event: AssistantEvent) => void, signal?: AbortSignal) {
+  emit({ type: "status", stage: "writing" });
+  const chunks = verifiedReplyChunks(message);
+  for (let index = 0; index < chunks.length; index++) {
+    if (signal?.aborted) throw new TryoraError("BAD_REQUEST", "cancelled");
+    emit({ type: "delta", text: chunks[index]! });
+    // Yield to the turn transport so SSE/long-poll can deliver individual verified chunks.
+    if (index + 1 < chunks.length) await new Promise((resolve) => setTimeout(resolve, 45));
+  }
+}
+
 /** Streams one assistant turn through `emit`, ending with a "final" event. Throws TryoraError on failure. */
 export async function runAssistantTurn(input: AssistantTurnInput, emit: (event: AssistantEvent) => void): Promise<void> {
   const active = inFlight.get(input.shopId) ?? 0;
@@ -1942,7 +1972,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   let toolCalls = 0;
   let rounds = 0;
   let streamedText = false;
-  /** One model call, streamed. Text deltas are forwarded as they arrive. */
+  /** One model call. Draft text is buffered until all tool checks and sanitisation finish. */
   const call = async (body: Record<string, unknown>) => {
     for (let attempt = 0; ; attempt += 1) {
       const remaining = deadline - Date.now();
@@ -1968,10 +1998,9 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           response = null;
           for await (const event of result as AsyncIterable<any>) {
             if (event?.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
-              if (!streamedText) emit({ type: "status", stage: "writing" });
               streamedText = true;
               deltas += 1;
-              // Final, grounded reply is emitted after the tool loop.
+              // Never publish unverified model drafts to the shopper.
             } else if (event?.type === "response.completed" || event?.type === "response.incomplete") {
               response = event.response;
             } else if (event?.type === "response.failed" || event?.type === "error") {
@@ -1983,9 +2012,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           // Non-streaming result (test doubles): forward its text as a single delta.
           const text = responseText(result);
           if (text && !(result.output ?? []).some((item: any) => item?.type === "function_call")) {
-            if (!streamedText) emit({ type: "status", stage: "writing" });
             streamedText = true;
-            // Final, grounded reply is emitted after the tool loop.
+            // Non-streaming test doubles also stay private until the final checks.
           }
         }
         inputTokens += Number(response?.usage?.input_tokens ?? 0);
@@ -2108,7 +2136,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     photo: !!input.roomPhoto,
     model,
   }, "info");
-  emit({ type: "delta", text: message });
+  await emitVerifiedReply(message, emit, input.signal);
   emit({ type: "final", reply });
 }
 
