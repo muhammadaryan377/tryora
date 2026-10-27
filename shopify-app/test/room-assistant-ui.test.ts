@@ -21,12 +21,16 @@ function fakeProxy() {
   const forms: FormData[] = [];
   const calls: { method: string; url: string; body?: FormData }[] = [];
   let pollGate: Promise<void> | null = null;
+  let leadStatusGate: Promise<void> | null = null;
   const respond = (body: unknown, status = 200) => Promise.resolve(Response.json(body, { status }));
   const fetcher = vi.fn(async (input: string, init: RequestInit = {}) => {
     const url = String(input);
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     calls.push({ method: init.method ?? "GET", url, body: init.body as FormData });
-    if (url.startsWith("/apps/visully/lead/status?")) return respond({ satisfied: proxy.leadSatisfied });
+    if (url.startsWith("/apps/visully/lead/status?")) {
+      if (leadStatusGate) await leadStatusGate;
+      return respond({ satisfied: proxy.leadSatisfied });
+    }
     if (url === "/apps/visully/lead/skip") { proxy.leadSatisfied = true; return respond({ ok: true }); }
     if (url.startsWith("/apps/visully/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions, recommendation: proxy.recommendation });
     if (url === "/apps/visully/assistant/turn") { forms.push(init.body as FormData); return respond({ turnId: `turn${forms.length}` }); }
@@ -73,6 +77,7 @@ function fakeProxy() {
     fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any, checkGate: null as Promise<void> | null,
     script(...batches: any[][]) { turns.push(batches); },
     hold() { let release!: () => void; pollGate = new Promise((resolve) => { release = resolve; }); return () => { pollGate = null; release(); }; },
+    holdLeadStatus() { let release!: () => void; leadStatusGate = new Promise((resolve) => { release = resolve; }); return () => { leadStatusGate = null; release(); }; },
   };
   return proxy;
 }
@@ -729,6 +734,39 @@ describe("recommendation cards and previews", () => {
     await settle(70);
     expect(proxy.calls.some(c => c.url === "/apps/visully/lead/skip")).toBe(true);
     expect($$(".tryora-assistant__lead [data-ta='lead-submit']")).toHaveLength(0);
+  });
+
+  it("locks two different product previews while the lead-status check is pending", async () => {
+    const assistant = makeAssistant({}, { lead: { mode: "skippable", timing: "after", showOptIn: false, optInWording: "" } });
+    assistant.open();
+    assistant.roomPhoto = photo();
+    const release = proxy.holdLeadStatus();
+    const first = assistant.startPreview(card());
+    const second = assistant.startPreview(card({
+      id: "2:22", productRef: "2", variantRef: "22",
+      productId: "gid://shopify/Product/2", variantId: "gid://shopify/ProductVariant/22",
+      title: "Another Bed", optionValue: "Grey",
+    }));
+    await settle(40);
+    expect(proxy.calls.filter(c => c.url.startsWith("/apps/visully/lead/status?"))).toHaveLength(1);
+    expect(previewStarts()).toHaveLength(0);
+    release();
+    await Promise.all([first, second]);
+    expect(previewStarts()).toHaveLength(1);
+    expect(previewStarts()[0]!.body!.get("product")).toBe("gid://shopify/Product/1");
+  });
+
+  it("does not start a paid preview after Forget room invalidates a pending lead check", async () => {
+    const assistant = makeAssistant({}, { lead: { mode: "skippable", timing: "after", showOptIn: false, optInWording: "" } });
+    assistant.open();
+    assistant.roomPhoto = photo();
+    const release = proxy.holdLeadStatus();
+    const pending = assistant.startPreview(card());
+    await settle(20);
+    assistant.forgetRoom();
+    release();
+    await pending;
+    expect(previewStarts()).toHaveLength(0);
   });
 
   it("never starts a second job while one is generating", async () => {
