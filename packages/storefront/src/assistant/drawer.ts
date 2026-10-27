@@ -1233,7 +1233,7 @@ export class RoomAssistant {
         <div class="tryora-assistant__room-art" aria-hidden="true">${roomIllustration(preview)}</div>
         ${this.photoActionsHtml()}
       </div>
-      <p class="tryora-assistant__photo-privacy">Your photo is sent to our AI provider to ${preview ? "prepare your preview" : "provide recommendations"}. Tryora keeps photo bytes only in memory for this page.</p>
+      <p class="tryora-assistant__photo-privacy">Your photo is sent to our AI provider to ${preview ? "prepare your preview" : "provide recommendations"}. Visully keeps photo bytes only in memory for this page.</p>
       <p class="tryora-assistant__camera-help">Camera capture depends on your device and browser. If permission is denied or capture is unavailable, choose Upload photo.</p>
     </div>`;
   }
@@ -1423,7 +1423,7 @@ export class RoomAssistant {
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${escapeHtml(item.title)}</h4>
-        <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Tryora places the item automatically.</p>
+        <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Visully places the item automatically.</p>
         <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : this.roomPhoto ? "Generate preview" : "Upload room photo"}</button>
       </div>
     </div>`;
