@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "./db.server";
+import { leadPolicy, markLeadCaptured, reserveLeadPermission, type LeadChannel } from "./lead-gate.server";
 import { tryora } from "./tryora.server";
 import { ensureBillingAllowance } from "./billing-status.server";
 import {
@@ -305,7 +306,10 @@ export async function startPreview(input: {
   if (analysis.outcome !== "accepted") throw new TryoraError("BAD_PHOTO");
   await ensureBillingAllowance(input.admin, input.shopId);
   const roomPhotoHash = createHash("sha256").update(room).digest("hex").slice(0, 32);
-  const { job, deduplicated } = await tryora.createPreview({
+  const rollbackLead = await reserveLeadPermission(input.shopId, input.visitorId, input.assistantPreview ? "assistant" : "popup");
+  let jobResult: Awaited<ReturnType<typeof tryora.createPreview>>;
+  try {
+    jobResult = await tryora.createPreview({
     workerId,
     shopId: input.shopId,
     idempotencyKey: input.idempotencyKey,
@@ -314,8 +318,14 @@ export async function startPreview(input: {
     optionValue: product.optionValue,
     referenceVersion: product.referenceVersion,
     roomPhotoHash,
-    leadStepDone: input.assistantPreview === true || input.leadStepDone,
-  });
+    // Verified from a server-owned visitor gate, never an untrusted browser field.
+    leadStepDone: true,
+    });
+  } catch (error) {
+    await rollbackLead();
+    throw error;
+  }
+  const { job, deduplicated } = jobResult;
   if (deduplicated) return { jobId: job.id };
   const t: Transient = {
     shopId: input.shopId,
@@ -456,14 +466,14 @@ export async function acknowledge(shopId: string, jobId: string, token: string) 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function captureLead(
   admin: AdminGraphql,
-  input: { shopId: string; email: string; firstName?: string; marketing: boolean; wording: string; productId: string; optionValue?: string },
+  input: { shopId: string; email: string; firstName?: string; marketing: boolean; wording: string; productId: string; optionValue?: string; visitorId?: string; channel?: LeadChannel },
 ) {
   const email = input.email.trim();
   if (email.length > 254 || !EMAIL.test(email)) throw new TryoraError("BAD_EMAIL");
   const shop = await prisma.shop.findUnique({ where: { id: input.shopId } });
-  // Re-check the merchant setting on the server: a stale popup must not collect
-  // a new lead after the merchant has turned capture off.
-  if (shop?.leadCapture === "off") return { ok: true };
+  // A stale channel cannot collect a lead after its merchant switch was disabled.
+  const policy = await leadPolicy(input.shopId, input.channel ?? "popup");
+  if (policy.mode === "off") return { ok: true };
   const leadSettings = (shop?.leadSettings as { customerTag?: string; showOptIn?: boolean; optInWording?: string }) ?? {};
   const tag = leadSettings.customerTag || "tryora-lead";
   const firstName = input.firstName?.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80) || null;
@@ -476,6 +486,7 @@ export async function captureLead(
       marketingWording: marketing ? (leadSettings.optInWording || input.wording).slice(0, 1000) : null,
       status: "queued" },
   });
+  if (input.visitorId) await markLeadCaptured(input.shopId, input.visitorId);
   await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
   let customerRef: string | null = null;
   try {
