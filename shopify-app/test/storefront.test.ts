@@ -315,7 +315,7 @@ describe("preview lifecycle", () => {
       { value: "Blue", available: false, variants: [] },
       { value: "Red", available: true, variants: [{ id: "gid://shopify/ProductVariant/2", image: "https://cdn.shopify.com/red.jpg", options: { Colour: "Red" } }] },
     ]);
-    expect(admin.graphql).toHaveBeenCalledTimes(2);
+    expect(admin.graphql.mock.calls.filter(([query]) => !query.includes("TryoraBillingStatus"))).toHaveLength(2);
   });
 
   it("checks photo context and records analysis costs without a preview job", async () => {

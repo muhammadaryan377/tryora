@@ -4,119 +4,31 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { tryora } from "../tryora.server";
-import { TRIAL_CREDITS, TRIAL_DAYS } from "../core/index";
+import { billingPresentation, ensureBillingAllowance } from "../billing-status.server";
 
-import { PLANS, TOP_UP } from "../plans";
+import { FREE_PLAN, PLANS, TOP_UP } from "../plans";
 import styles from "../styles/billing.module.css";
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
 
-const GRANT_LABEL: Record<string, string> = {
-  trial: "Free trial",
-  period: "Monthly plan credits",
-  topup: "Top-up",
-  refund: "Credit returned for a reported issue",
-};
-
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await authenticate.admin(request);
   const shopId = session.shop;
-  await tryora.grantTrial(shopId);
-  const usage = await usageOverview(admin, shopId);
-
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  monthStart.setUTCHours(0, 0, 0, 0);
-
-  const [balance, trial, shop, entitlement, grants, deliveredThisMonth] = await Promise.all([
+  const billingStatus = await ensureBillingAllowance(admin, shopId);
+  const [balance, shop, entitlement] = await Promise.all([
     tryora.balance(shopId),
-    tryora.trialStatus(shopId),
     prisma.shop.findUnique({ where: { id: shopId } }),
     prisma.billingEntitlement.findUnique({ where: { shopId } }),
-    prisma.creditLedgerEntry.findMany({ where: { shopId, type: "GRANT" }, orderBy: { createdAt: "desc" }, take: 25 }),
-    prisma.previewJob.count({ where: { shopId, state: "DELIVERED", deliveredAt: { gte: monthStart } } }),
   ]);
-
   return {
-    trialCredits: TRIAL_CREDITS,
-    trialDays: TRIAL_DAYS,
-    paid: shop?.paidPlanActive ?? false,
-    plan: entitlement?.plan ?? "trial",
+    billingStatus,
+    presentation: billingPresentation(billingStatus, entitlement?.plan ?? "free", shop?.paidPlanActive ?? false),
+    entitlementStatus: entitlement?.status ?? "none",
+    plan: entitlement?.plan ?? "free",
     periodEnds: entitlement?.currentPeriodEnds?.toISOString() ?? null,
-    autoTopUp: entitlement?.autoTopUp ?? false,
-    capDollars: entitlement?.monthlySpendCapCents != null ? (entitlement.monthlySpendCapCents / 100).toString() : "",
-    balance: {
-      total: balance.availableTotal,
-      trial: balance.available.trial,
-      period: balance.available.period + balance.available.refund,
-      topup: balance.available.topup,
-      reserved: balance.reserved,
-    },
-    trial: {
-      started: trial.started,
-      active: trial.started && trial.active,
-      used: trial.started ? trial.delivered : 0,
-      endsAt: trial.started && trial.endsAt ? new Date(trial.endsAt).toISOString() : null,
-    },
-    deliveredThisMonth,
-    usage,
-    grants: grants.map((g) => ({
-      id: g.id,
-      label: GRANT_LABEL[g.bucket ?? ""] ?? "Credits added",
-      quantity: g.quantity,
-      at: g.createdAt.toISOString(),
-      expiresAt: g.expiresAt?.toISOString() ?? null,
-    })),
+    availableCredits: balance.availableTotal,
   };
 };
-
-/** Last 30 days of delivered previews (one credit each), by day and by product. */
-async function usageOverview(admin: { graphql: (q: string, o?: any) => Promise<Response> }, shopId: string) {
-  const since = new Date();
-  since.setUTCHours(0, 0, 0, 0);
-  since.setUTCDate(since.getUTCDate() - 29);
-  const [delivered, notCharged] = await Promise.all([
-    prisma.previewJob.findMany({
-      where: { shopId, state: "DELIVERED", deliveredAt: { gte: since } },
-      select: { deliveredAt: true, productId: true, refundedAt: true },
-    }),
-    prisma.previewJob.count({ where: { shopId, createdAt: { gte: since }, state: { in: ["FAILED", "REJECTED", "EXPIRED", "CANCELLED"] } } }),
-  ]);
-  const days: { date: string; count: number }[] = [];
-  for (let i = 0; i < 30; i++) {
-    const d = new Date(since.getTime() + i * 86_400_000);
-    days.push({ date: d.toISOString().slice(0, 10), count: 0 });
-  }
-  const byDay = new Map(days.map((d) => [d.date, d]));
-  const byProduct = new Map<string, number>();
-  let refunded = 0;
-  for (const j of delivered) {
-    const key = j.deliveredAt!.toISOString().slice(0, 10);
-    const day = byDay.get(key);
-    if (day) day.count++;
-    byProduct.set(j.productId, (byProduct.get(j.productId) ?? 0) + 1);
-    if (j.refundedAt) refunded++;
-  }
-  const top = [...byProduct.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-  let titles: Record<string, string> = {};
-  if (top.length) {
-    try {
-      const res = await admin.graphql(`#graphql
-        query T($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id title } } }`, { variables: { ids: top.map(([id]) => id) } });
-      const json: any = await res.json();
-      titles = Object.fromEntries((json.data?.nodes ?? []).filter(Boolean).map((n: any) => [n.id, n.title]));
-    } catch {
-      /* titles are a nicety */
-    }
-  }
-  return {
-    days,
-    total: delivered.length,
-    refunded,
-    notCharged,
-    products: top.map(([id, count]) => ({ id, title: titles[id] ?? "Removed product", count })),
-  };
-}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { session } = await authenticate.admin(request);
@@ -146,17 +58,20 @@ const date = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "
 
 export default function Billing() {
   const d = useLoaderData<typeof loader>();
-  const currentPlan = PLANS.find((p) => p.id === d.plan);
 
   return (
     <s-page heading="Plans & Billing" inlineSize="large">
       <p className={styles.subtitle}>Choose the right plan for your business. Simple, transparent pricing to grow with you.</p>
       <section className={styles.current} aria-label="Current plan">
-        <p>Your current plan: <span className={styles.badge}>{d.paid && currentPlan ? currentPlan.name : "Free trial"}</span></p>
-        <div className={styles.notice}><span aria-hidden="true">&#9432;</span> {d.paid ? `Your plan includes ${currentPlan?.previews ?? 0} previews each month.${d.periodEnds ? ` Credits renew on ${date(d.periodEnds)}.` : ""}` : `Try Tryora with ${d.trialCredits} previews for ${d.trialDays} days. No automatic charges.`}</div>
+        <p>Store status: <span className={styles.badge}>{d.presentation.storeStatus}</span></p>
+        <p>Your current plan: {d.presentation.plan}</p>
+        <p>Shopify subscription: {d.presentation.subscriptionStatus}</p>
+        <p>Saved entitlement: {d.plan} ({d.entitlementStatus})</p>
+        <p>Available preview credits: {d.availableCredits}</p>
+        <div className={styles.notice}><span aria-hidden="true">&#9432;</span> {d.presentation.information}{d.periodEnds ? ` Current credit period ends on ${date(d.periodEnds)}.` : ""}</div>
       </section>
       <div className={styles.plans}>
-        {[{ id: "free", name: "Free", price: 0, previews: 10 }, ...PLANS].map((p) => {
+        {[FREE_PLAN, ...PLANS].map((p) => {
           return (
             <section key={p.id} className={styles.plan} aria-label={`${p.name} plan`}>
               <h2>{p.name}</h2>

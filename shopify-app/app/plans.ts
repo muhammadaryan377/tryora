@@ -1,4 +1,5 @@
 // USD, per store, before tax. Shared by billing and the sales report.
+export const FREE_PLAN = { id: "free", name: "Free", price: 0, previews: 10 } as const;
 export const PLANS = [
   { id: "starter", name: "Starter", price: 29, previews: 100 },
   { id: "growth", name: "Growth", price: 69, previews: 300 },

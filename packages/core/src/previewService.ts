@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { TryoraError } from "./errors.js";
 import { canTransition, isTerminal, RESERVATION_HELD } from "./jobs.js";
-import { pickGrantForReservation, shopBalance, trialDeliveredCount, type ShopBalance } from "./ledger.js";
+import { grantBalances, pickGrantForReservation, shopBalance, trialDeliveredCount, type ShopBalance } from "./ledger.js";
 import { checkQuota } from "./quota.js";
 import type { Store, Tx } from "./store.js";
 import type { JobId, JobState, LedgerEntry, PreviewJob, ShopId, ShopSettings } from "./types.js";
@@ -100,6 +100,36 @@ export class PreviewService {
         expiresAt: periodEndsAt,
       }),
     );
+  }
+
+  /** Server-authorized free/test allowance, once per UTC calendar month. Never rewrites history. */
+  async grantMonthlyAllowance(shopId: ShopId, quantity: number) {
+    if (!Number.isSafeInteger(quantity) || quantity < 0 || quantity > 10000) throw new Error("Invalid monthly allowance");
+    if (quantity === 0) return;
+    return this.store.transaction({ shopId }, (tx) => {
+      if (this.settingsIn(tx, shopId).paidPlanActive) return;
+      const now = this.clock.now();
+      const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const reference = `grant:allowance:${start.toISOString().slice(0, 7)}`;
+      const existing = tx.findLedgerByReference(shopId, reference);
+      if (existing) return existing;
+      // Count legacy trial/plan grants against the first month's budget, including consumed credits.
+      // Keep the original grants, reservations and expiry dates intact.
+      const entries = tx.ledger(shopId);
+      const consumedThisMonth = new Set(entries.filter((e) => e.type === "CONSUME" && e.createdAt >= start).map((e) => e.jobId));
+      const previous = grantBalances(entries).filter(({ grant }) => grant.bucket === "trial" || grant.bucket === "period")
+        .reduce((sum, balance) => {
+          const grant = balance.grant;
+          if (grant.createdAt >= start) return sum + grant.quantity;
+          const consumed = entries.filter((e) => e.type === "RESERVE" && e.grantId === grant.id && consumedThisMonth.has(e.jobId))
+            .reduce((total, e) => total + e.quantity, 0);
+          const carried = !grant.expiresAt || grant.expiresAt > now ? Math.max(0, balance.remaining) + balance.reserved : 0;
+          return sum + carried + consumed;
+        }, 0);
+      return this.grantOnce(tx, { shopId, reference, bucket: "period",
+        quantity: Math.max(0, quantity - previous), expiresAt: end });
+    });
   }
 
   /** Paid top-up. Rolls over while subscribed. Idempotent per Shopify charge id. Paid plans only. */
