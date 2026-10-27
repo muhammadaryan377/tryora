@@ -539,7 +539,7 @@ describe("chat image upload", () => {
       return original(url, init);
     });
     assistant.minimise();
-    await assistant.send("Suggest a sofa");
+    void assistant.send("Suggest a sofa");
     await settle(45);
     expect(assistant.typing.size).toBe(0);
     assistant.open();
