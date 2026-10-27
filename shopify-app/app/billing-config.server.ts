@@ -5,7 +5,7 @@ import { PLANS, annualPrice, billingPlanName, type BillingPlanName } from "./pla
 type RecurringInterval = BillingInterval.Every30Days | BillingInterval.Annual;
 type SubscriptionPlan = { lineItems: [{ amount: number; currencyCode: "USD"; interval: RecurringInterval }] };
 
-const entries: [BillingPlanName, SubscriptionPlan][] = PLANS.flatMap(plan => [
+const entries: [BillingPlanName, SubscriptionPlan][] = PLANS.flatMap((plan): [BillingPlanName, SubscriptionPlan][] => [
   [billingPlanName(plan, "monthly"), {
     lineItems: [{ amount: plan.price, currencyCode: "USD" as const, interval: BillingInterval.Every30Days }],
   }],
