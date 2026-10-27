@@ -1,0 +1,31 @@
+name: Temporary storefront bundle export
+on:
+  push:
+    branches:
+      - fix/chatbot-inline-fabric-colour-20261027
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install root packages
+        run: npm ci --no-audit --no-fund
+      - name: Build storefront only
+        run: npm run build --workspace=@tryora/storefront
+      - name: Export generated bundle in JSON chunks
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const content = fs.readFileSync('shopify-app/extensions/tryora-theme/assets/tryora.js', 'utf8');
+          const step = 6000;
+          console.log('SYNC_BUNDLE_START ' + content.length);
+          for (let i = 0; i < content.length; i += step) {
+            console.log('SYNC_BUNDLE_CHUNK ' + (i / step) + ' ' + JSON.stringify(content.slice(i, i + step)));
+          }
+          console.log('SYNC_BUNDLE_END');
+          NODE
