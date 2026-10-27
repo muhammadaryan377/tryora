@@ -11,6 +11,7 @@ interface LeadSettings {
   showOptIn: boolean;
   optInWording: string;
   customerTag: string;
+  chatLeadCapture: "off" | "required" | "skippable";
 }
 
 interface OfferCopy {
@@ -31,6 +32,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     showOptIn: true,
     optInWording: defaultOptIn(shopName),
     customerTag: "tryora-lead",
+    chatLeadCapture: "off",
     ...((shop?.leadSettings as object) ?? {}),
   };
   const campaign = await prisma.campaign.findFirst({ where: { shopId }, orderBy: { updatedAt: "desc" } });
@@ -67,12 +69,16 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const f = await request.formData();
   const errors: string[] = [];
 
-  const leadCapture = String(f.get("leadCapture")) as LeadCaptureMode;
+  const mode = (value: unknown): LeadCaptureMode =>
+    value === "required" || value === "skippable" ? value : "off";
+  const leadCapture = mode(f.get("leadCapture"));
+  const chatLeadCapture = mode(f.get("chatLeadCapture"));
   const leadTiming = f.get("leadTiming") === "after" ? "after" : "before";
   const lead: LeadSettings = {
     showOptIn: f.get("showOptIn") === "on",
     optInWording: String(f.get("optInWording") ?? "").trim(),
     customerTag: String(f.get("customerTag") ?? "").trim() || "tryora-lead",
+    chatLeadCapture,
   };
   if (lead.showOptIn && !lead.optInWording) errors.push("Add the wording for the marketing checkbox.");
 
@@ -102,6 +108,7 @@ export default function Leads() {
   const result = useActionData<typeof action>();
   const nav = useNavigation();
   const [leadCapture, setLeadCapture] = useState<string>(d.leadCapture);
+  const [chatLeadCapture, setChatLeadCapture] = useState<string>(d.lead.chatLeadCapture);
   const [leadTiming, setLeadTiming] = useState<string>(d.leadTiming);
   const [showOptIn, setShowOptIn] = useState(d.lead.showOptIn);
   const [optInWording, setOptInWording] = useState(d.lead.optInWording);
@@ -117,6 +124,7 @@ export default function Leads() {
     <s-page heading="Leads & offers">
       <Form method="post">
         <input type="hidden" name="leadCapture" value={leadCapture} />
+        <input type="hidden" name="chatLeadCapture" value={chatLeadCapture} />
         <input type="hidden" name="leadTiming" value={leadTiming} />
         {showOptIn && <input type="hidden" name="showOptIn" value="on" />}
         <input type="hidden" name="optInWording" value={optInWording} />
@@ -142,26 +150,35 @@ export default function Leads() {
         )}
 
         <s-section heading="Collect shoppers' emails">
-          <s-switch label="Collect names and emails for previews" checked={leadCapture !== "off" || undefined}
+          <s-paragraph>Both experiences are off by default. You can enable either one independently.</s-paragraph>
+          <s-switch label="Collect leads in See in my room" checked={leadCapture !== "off" || undefined}
             onChange={(e: any) => setLeadCapture(checked(e) ? "required" : "off")} />
-          <s-select
-            label="Ask shoppers for their email"
+          {leadCapture !== "off" && <s-select
+            label="See in my room email requirement"
             value={leadCapture}
             onChange={(e: any) => setLeadCapture(val(e))}
-            details="Asked once per visit. The image itself is never emailed."
           >
             <s-option value="required">Required</s-option>
             <s-option value="skippable">Optional (shoppers can skip)</s-option>
-            <s-option value="off">Off – don't ask</s-option>
-          </s-select>
-          {leadCapture !== "off" && (
+          </s-select>}
+          <s-switch label="Collect leads in the chatbot" checked={chatLeadCapture !== "off" || undefined}
+            onChange={(e: any) => setChatLeadCapture(checked(e) ? "required" : "off")} />
+          {chatLeadCapture !== "off" && <s-select
+            label="Chatbot email requirement"
+            value={chatLeadCapture}
+            onChange={(e: any) => setChatLeadCapture(val(e))}
+          >
+            <s-option value="required">Required</s-option>
+            <s-option value="skippable">Optional (shoppers can skip)</s-option>
+          </s-select>}
+          {(leadCapture !== "off" || chatLeadCapture !== "off") && (
             <s-select
               label="When to ask"
               value={leadTiming}
               onChange={(e: any) => setLeadTiming(val(e))}
               details={
                 leadTiming === "after"
-                  ? "Shoppers see their first image straight away. The email is asked for on the result (to unlock your offer, if you have one) and before any further images."
+                  ? "Shoppers see their first image before being asked for email; subsequent previews follow the chosen requirement."
                   : "Shoppers enter their email before their first image is made."
               }
             >
@@ -170,7 +187,7 @@ export default function Leads() {
             </s-select>
           )}
 
-          {leadCapture !== "off" && (
+          {(leadCapture !== "off" || chatLeadCapture !== "off") && (
             <s-stack gap="base">
               <s-switch
                 label="Show a marketing opt-in checkbox"
@@ -224,7 +241,7 @@ export default function Leads() {
       </Form>
 
       <s-section heading="Captured leads">
-        <s-paragraph>Names and emails submitted through your preview forms are saved here. Turning collection off stops new submissions; existing leads remain available.</s-paragraph>
+        <s-paragraph>Names and emails submitted through enabled chatbot or product-preview lead forms appear here. Disabling a channel stops new capture in that channel without deleting previous leads.</s-paragraph>
         {d.leads.length === 0 ? <s-paragraph>No leads captured yet.</s-paragraph> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
