@@ -26,10 +26,10 @@ function verifiedText(product: CatalogueProduct) {
     ...product.collections.map(entry => entry.title)].join(" ").toLowerCase();
 }
 function productColour(item: { options?: Record<string, string> }, product: CatalogueProduct) {
-  return [
-    ...Object.entries(item.options ?? {}).filter(([name]) => /colou?r|fabric|material/i.test(name)).map(([,value]) => value),
-    ...product.options.filter(opt => /colou?r|fabric|material/i.test(opt.name)).flatMap(opt => opt.values),
-  ];
+  const exact = Object.entries(item.options ?? {}).filter(([name]) => /colou?r|fabric|material/i.test(name)).map(([,value]) => value);
+  // Once a variant is selected its verified options win: do not promote Charcoal merely
+  // because another variant of the product happens to offer Cream.
+  return exact.length ? exact : product.options.filter(opt => /colou?r|fabric|material/i.test(opt.name)).flatMap(opt => opt.values);
 }
 
 export function roomFitScore(
@@ -45,7 +45,7 @@ export function roomFitScore(
   // Individual verified item option has more authority than a product-wide marketing tag.
   for (const preferred of preferences?.colours ?? []) {
     if (colours.some(value => related(preferred, value))) score += 7;
-    else if (related(preferred, text)) score += 2;
+    else if (!Object.keys(item.options ?? {}).some(name => /colou?r|fabric/i.test(name)) && related(preferred, text)) score += 2;
   }
   for (const material of preferences?.materials ?? []) {
     if (colours.some(value => related(material, value))) score += 5;
