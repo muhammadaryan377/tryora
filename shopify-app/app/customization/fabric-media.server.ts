@@ -131,12 +131,13 @@ export async function uploadFabricMedia(admin: AdminGraphql, productId: string, 
 
 /** Waits before each status check after attaching (first check immediately; about 12 seconds in total). Tests may shorten it. */
 export const UPLOAD_STATUS_DELAYS_MS = [0, 1000, 1500, 2000, 3000, 4000];
-export const UPLOAD_MARKER = /^Tryora (fabric sample|furniture reference) [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// Accept newly branded uploads and legacy Tryora media already in Shopify. Retain the strict UUID and role checks.
+export const UPLOAD_MARKER = /^(?:Visully|Tryora) (fabric sample|furniture reference) [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** The processed image carrying this upload's marker, or null while Shopify is still processing it. */
 export async function findUploadedMedia(admin: AdminGraphql, productId: string, marker: string, fileId?: string) {
   if (fileId) {
-    if (!/^gid:\/\/shopify\/MediaImage\/\d{1,20}$/.test(fileId) || !UPLOAD_MARKER.test(marker) || !marker.startsWith("Tryora fabric sample ")) {
+    if (!/^gid:\/\/shopify\/MediaImage\/\d{1,20}$/.test(fileId) || !UPLOAD_MARKER.test(marker) || !/(?:^Visully|^Tryora) fabric sample /.test(marker)) {
       throw new FabricConfigError("Invalid isolated sample upload.");
     }
     const response = await admin.graphql(FABRIC_FILE_UPLOAD_STATUS, { variables: { id: fileId } });
