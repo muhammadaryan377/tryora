@@ -62,6 +62,7 @@ model Shop {
   entitlement   BillingEntitlement?
   campaigns     Campaign[]
   leads         LeadDelivery[]
+  leadVisits    LeadVisit[]
   consents      ConsentRecord[]
   issues        IssueReport[]
   events        Event[]
@@ -331,4 +332,17 @@ model ProviderUsage {
 
   @@index([shopId, createdAt])
   @@index([jobId])
+}
+
+/// A small, per-visitor lead gate. No email, images or raw visitor identifiers are stored here.
+model LeadVisit {
+  shopId           String
+  shop             Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  visitorHash      String
+  channel          String   // assistant | popup
+  satisfied        Boolean  @default(false)
+  firstPreviewUsed Boolean  @default(false)
+  updatedAt        DateTime @updatedAt
+
+  @@id([shopId, visitorHash, channel])
 }
