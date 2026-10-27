@@ -210,12 +210,12 @@ export async function assistantStorefrontConfig(shopId: string, page: AssistantP
     Promise.resolve().then(() => prisma.shop.findUnique({ where: { id: shopId } })).catch(() => null),
     Promise.resolve().then(() => tryora.balance(shopId)).catch(() => null),
   ]) : [null, null];
-  const lead = { showOptIn: true, optInWording: "", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string };
+  const lead = { showOptIn: true, optInWording: "", chatLeadCapture: "off", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string; chatLeadCapture: string };
   const shopName = shopId.replace(".myshopify.com", "").replace(/-/g, " ");
   return {
-    // The merchant's email step for previews, exactly as the product-page popup applies it.
+    // Chatbot lead choice is independent of the product popup; both default off.
     lead: {
-      mode: (shop?.leadCapture ?? "required") as "required" | "skippable" | "off",
+      mode: (["required", "skippable"].includes(lead.chatLeadCapture) ? lead.chatLeadCapture : "off") as "required" | "skippable" | "off",
       timing: (shop?.leadTiming === "after" ? "after" : "before") as "before" | "after",
       showOptIn: lead.showOptIn !== false,
       optInWording: lead.optInWording || `Email me offers and updates from ${shopName}. I can unsubscribe at any time.`,
