@@ -644,6 +644,8 @@ interface RequestContext {
   currentProduct: CatalogueProduct | null;
   /** True only when a complete catalogue check proved that nothing matched. Gates any "the store has none" claim. */
   zeroVerified: boolean;
+  /** Exact catalogue count last verified for this shopper turn, never from model prose. */
+  verifiedCount: number | null;
 }
 
 const priceKey = (value: number | string) => Number(value).toFixed(2);
@@ -794,6 +796,7 @@ async function runCount(ctx: RequestContext, args: { query: string; colour: stri
   if (ctx.snapshot?.complete) {
     const matches = countCatalogue(ctx.snapshot, args);
     if (!matches.length) ctx.zeroVerified = true;
+    ctx.verifiedCount = matches.length;
     matches.slice(0, 5).forEach((product) => ctx.allowed.add(product.ref));
     return {
       verified: true,
@@ -811,6 +814,7 @@ async function runCount(ctx: RequestContext, args: { query: string; colour: stri
     if (!Number.isFinite(count)) throw new Error("count");
     const precision = String(data.productsCount?.precision ?? "EXACT");
     if (count === 0 && precision === "EXACT" && words.length) ctx.zeroVerified = true;
+    if (precision === "EXACT") ctx.verifiedCount = count;
     return {
       verified: true,
       count,
@@ -1850,6 +1854,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     preferences: null,
     currentProduct: current,
     zeroVerified: false,
+    verifiedCount: null,
   };
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
   ctx.exploring = ctx.explored.size > 0 && (wantsMoreOptions(ctx.latestMessage) || requestedProductCount(ctx.latestMessage) !== null);
@@ -2004,11 +2009,17 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   // Prefer a concise grounded introduction over contradicting what was actually returned.
   const contradictsCards = ctx.recommendations.length > 0 &&
     /\b(?:found no|couldn['’]t find|cannot find|no (?:matching|suitable|available)|nothing matches|no beds|no sofas)\b/i.test(guarded.message);
-  const message = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
+  const conciseMessage = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
     ? (ctx.recommendations.length === 1
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
     : guarded.message), ctx.recommendations.length, ctx.latestMessage);
+  // A count question must answer the verified quantity, even when a recommendation card is also shown.
+  // Never trust a count merely written by the model: use the exact result of count_products.
+  const countedNoun = ctx.latestMessage.match(/\b(beds?|sofas?|chairs?|tables?|products?|items?|pieces?)\b/i)?.[1]?.toLowerCase();
+  const message = /\bhow many\b|\bnumber of\b/i.test(ctx.latestMessage) && ctx.verifiedCount !== null && countedNoun
+    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? conciseMessage : ""}`.trim()
+    : conciseMessage;
   const reply: AssistantReply = {
     message,
     room: ctx.room,
