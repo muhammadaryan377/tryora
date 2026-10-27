@@ -52,7 +52,7 @@ import {
 } from "./assistant/references.server";
 import { errorShape, logAssistant } from "./assistant/log.server";
 import { planShopperTurn, type IntentPlan } from "./assistant/intent.server";
-import { rankRoomRecommendations } from "./assistant/room-fit.server";
+import { rankRoomRecommendations, roomFitScore } from "./assistant/room-fit.server";
 import {
   roomAssistantSettings,
   roomAssistantVisible,
@@ -746,7 +746,21 @@ async function runSearch(ctx: RequestContext, requested: ProductQuery) {
   const fresh = (match: ProductMatch) => !ctx.exploring || !ctx.explored.has(match.product.ref);
   const widened = ctx.exploring ? { ...query, limit: Math.min(10, query.limit + ctx.explored.size) } : query;
   const allMatches = merged(pools, widened, ctx.currentProductId);
-  const matches = merged(pools, query, ctx.currentProductId, ctx.exploring ? ctx.explored : undefined).filter(fits).slice(0, query.limit);
+  // Search a slightly broader Shopify-verified candidate pool for room requests.
+  // Rerank BEFORE truncating to requested count so the first BM25 search hit does not
+  // automatically become the room recommendation. Do not relax budget, category or stock checks.
+  const roomRanking = !!ctx.activeRoom && !!ctx.intentPlan?.needsRoomFit;
+  const shortlist = merged(pools,
+    roomRanking ? { ...query, limit: Math.min(10, Math.max(query.limit, query.limit + 5)) } : query,
+    ctx.currentProductId, ctx.exploring ? ctx.explored : undefined).filter(fits);
+  const matches = (roomRanking
+    ? shortlist.map((match, index) => ({
+      match, index,
+      roomScore: roomFitScore(match.product, { options: match.matchingVariants[0]?.options ?? {} },
+        ctx.activeRoom, ctx.activePreferences),
+    })).sort((a, b) => b.roomScore - a.roomScore || b.match.score - a.match.score || a.index - b.index)
+      .map(entry => entry.match)
+    : shortlist).slice(0, query.limit);
   matches.forEach((match) => ctx.allowed.add(match.product.ref));
   if (matches.length) {
     return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete }, appliedConstraints: applied,
