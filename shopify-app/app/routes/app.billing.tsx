@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import { Link, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -177,7 +177,7 @@ export default function Billing() {
       </section>
       <section className={styles.help}>
         <div><h2>Need help?</h2><p>Have questions about our plans or need a custom solution?</p></div>
-        <a href="mailto:support@visully.io">Contact support <span aria-hidden="true">&#8599;</span></a>
+        <Link to="/app/support">Contact support <span aria-hidden="true">&#8599;</span></Link>
       </section>
     </s-page>
   );
