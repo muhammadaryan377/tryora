@@ -11,6 +11,7 @@ vi.mock("../app/image-provider.server", async () => {
 });
 vi.mock("../app/db.server", () => ({ default: {
   productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
+  previewJob: { findFirst: vi.fn(async () => null) },
   customizationConfig: { findMany: vi.fn(async () => fixture.providerSettings) },
   visualChoice: { findMany: vi.fn(async () => fixture.config.choices ?? []) },
   providerUsage: { create: vi.fn(async ({ data }) => { fixture.usages.push(data); return data; }) },
@@ -25,6 +26,7 @@ vi.mock("../app/lead-gate.server", () => ({
   leadPolicy: vi.fn(async () => ({ mode: "required", timing: "before" })),
   markLeadCaptured: vi.fn(async () => {}),
   reserveLeadPermission: vi.fn(async () => async () => {}),
+  precheckLeadPermission: vi.fn(async () => {}),
 }));
 import { acknowledge, captureLead, checkPhoto, cleanupStalePreviews, pollLocalPreview, provider, startPreview, storefrontConfig } from "../app/storefront.server";
 import prisma from "../app/db.server";
