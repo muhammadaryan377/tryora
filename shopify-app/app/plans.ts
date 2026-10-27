@@ -11,8 +11,9 @@ export const TOP_UP = { price: 25, previews: 100 };
 export type PaidPlanId = (typeof PLANS)[number]["id"];
 export type BillingCycle = "monthly" | "annual";
 export const annualPrice = (monthlyPrice: number) => monthlyPrice * 10;
-export const billingPlanName = (plan: (typeof PLANS)[number], cycle: BillingCycle) =>
-  cycle === "annual" ? `${plan.name} Annual` : plan.name;
+export type BillingPlanName = (typeof PLANS)[number]["name"] | `${(typeof PLANS)[number]["name"]} Annual`;
+export const billingPlanName = (plan: (typeof PLANS)[number], cycle: BillingCycle): BillingPlanName =>
+  cycle === "annual" ? `${plan.name} Annual` as BillingPlanName : plan.name;
 export function paidPlanForSubscription(name: string) {
   for (const plan of PLANS) {
     if (name === plan.name) return { plan, cycle: "monthly" as const };
