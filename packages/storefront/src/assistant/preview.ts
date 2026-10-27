@@ -51,6 +51,9 @@ export async function generatePreview(input: {
   /** "1" once the merchant's email step is satisfied (or not required yet), exactly as the popup sends it. */
   leadDone: "0" | "1";
   pollMs?: number;
+  /** Stable across navigation so a retried POST cannot reserve another generation. */
+  idempotencyKey?: string;
+  onJobCreated?: (id: string) => void;
 }): Promise<{ url: string; acknowledge: () => void }> {
   const { item } = input;
   if (!item.previewAvailable || !item.variantId || !item.optionValue) throw new PreviewError("BAD_REQUEST");
@@ -65,7 +68,7 @@ export async function generatePreview(input: {
       mappingRevision: item.previewContext?.mappingRevision ?? "",
       sourceVariant: item.previewContext?.sourceVariantId ?? "",
       visitor: input.visitor,
-      key: crypto.randomUUID(),
+      key: input.idempotencyKey ?? crypto.randomUUID(),
       leadDone: input.leadDone,
       channel: "assistant",
     }, input.signal));
@@ -74,6 +77,16 @@ export async function generatePreview(input: {
     if (input.signal.aborted) throw error;
     throw new PreviewError(error?.code ?? "REQUEST_FAILED");
   }
+  input.onJobCreated?.(jobId);
+  return resumePreview(jobId, input);
+}
+
+/** Rejoin the exact same server-side preview job after navigating between storefront pages. */
+export async function resumePreview(
+  jobId: string,
+  input: { signal: AbortSignal; onStage: (stage: string) => void; pollMs?: number; }
+): Promise<{ url: string; acknowledge: () => void }> {
+  if (!/^[\w-]{1,128}$/.test(jobId)) throw new PreviewError("BAD_REQUEST");
   input.onStage("preparing");
   const startedAt = Date.now();
   for (;;) {
@@ -90,7 +103,8 @@ export async function generatePreview(input: {
       continue;
     }
     if (state.stage === "generating" || state.stage === "checking_result") input.onStage(state.stage);
-    if (state.stage === "failed" || state.stage === "expired") throw new PreviewError(state.error === "RESULT_REJECTED" ? "RESULT_REJECTED" : "FAILED");
+    if (state.stage === "expired") throw new PreviewError("EXPIRED");
+    if (state.stage === "failed") throw new PreviewError(state.error === "RESULT_REJECTED" ? "RESULT_REJECTED" : "FAILED");
     if (state.stage === "ready") {
       let url = "";
       try {

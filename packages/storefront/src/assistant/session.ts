@@ -3,8 +3,8 @@
  *
  * - Scoped by shop: the key includes the shop domain and the stored shop is re-checked on load.
  * - Expires after 4 hours idle or 24 hours in total, and is capped at ~100 KB (oldest entries are dropped first).
- * - Never contains image bytes or object URLs: photos live in memory only; room photos are reduced to the
- *   structured observations returned by the server.
+ * - Never contains image bytes or object URLs: short-lived image Blobs may be cached separately
+ *   in same-tab IndexedDB; the server still receives only the images requested for inference.
  * - Nothing here is sent to Tryora's database or analytics. Each message sends only a bounded slice to the server.
  */
 
@@ -84,7 +84,9 @@ export type Entry =
     focus?: boolean;
     at: number;
   }
-  | { id: string; kind: "preview"; item: Recommendation; status: "generating" | "ready" | "failed"; stage?: string; error?: string; handoff?: string; at: number }
+  | { id: string; kind: "preview"; item: Recommendation; status: "generating" | "ready" | "failed"; stage?: string; error?: string; handoff?: string;
+    /** A safe opaque server-side job identifier, never the image, token or customer data. */
+    jobId?: string; idempotencyKey?: string; at: number }
   | { id: string; kind: "notice"; text: string; at: number }
   /** The merchant's email step for previews. The email itself is never stored here. */
   | { id: string; kind: "lead"; item: Recommendation; status: "open" | "sending" | "done" | "skipped"; after: boolean; error?: string; at: number };
@@ -96,6 +98,8 @@ export interface ChatState {
   updatedAt: number;
   entries: Entry[];
   room: RoomNotes | null;
+  /** True only when the shopper explicitly supplied a photo in this session. */
+  roomMedia?: boolean;
   preferences: Preferences | null;
   shown: Ref[];
   /** Every product shown in this chat's recommendation batches, so "show more" never repeats one (optional for older sessions). */
@@ -118,7 +122,7 @@ const LEGACY_KEY = "tryora_assistant_context";
 export const sessionKey = (shop: string) => `tryora_assistant_v2:${shop}`;
 
 export function emptyState(shop: string, view: "side" | "fullscreen" = "side", now = Date.now()): ChatState {
-  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, preferences: null, shown: [], explored: [], selected: null, constraints: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
+  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, roomMedia: false, preferences: null, shown: [], explored: [], selected: null, constraints: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
 }
 
 function storage(): Storage | null {
@@ -140,10 +144,13 @@ export function loadState(shop: string, view: "side" | "fullscreen" = "side", no
       store?.removeItem(sessionKey(shop));
       return emptyState(shop, view, now);
     }
-    // A turn or preview interrupted by navigation cannot resume; show it as stopped rather than spinning forever.
+    // Interrupted text turns stop, but a durable preview idempotency key can rejoin its existing job.
+    // Old clients and jobs past the transient ten-minute window fail instead of spinning indefinitely.
     parsed.entries = parsed.entries.map((entry) =>
       entry.kind === "assistant" && entry.status === "streaming" ? { ...entry, status: "stopped" as const, stage: undefined } :
-        entry.kind === "preview" && entry.status === "generating" ? { ...entry, status: "failed" as const, error: "The preview was interrupted when the page changed. No credit was used." } :
+        entry.kind === "preview" && entry.status === "generating" &&
+          (!entry.idempotencyKey || now - entry.at > 10 * 60_000)
+          ? { ...entry, status: "failed" as const, stage: undefined, error: "This preview expired during navigation. Please try again." } :
           entry.kind === "lead" && entry.status === "sending" ? { ...entry, status: "open" as const } :
             entry);
     return {

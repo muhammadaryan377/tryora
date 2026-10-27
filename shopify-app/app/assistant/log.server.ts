@@ -16,7 +16,8 @@ export type AssistantLogEvent =
   | "recommendation_completion_unavailable"
   | "recommendation_dropped"
   | "auto_config_failure"
-  | "preview_unavailable";
+  | "preview_unavailable"
+  | "lead_capture_failure";
 
 type Field = string | number | boolean | null | undefined;
 

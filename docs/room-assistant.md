@@ -42,12 +42,12 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 | Kept | Where | Limits |
 |---|---|---|
 | Messages, cards, preview offers, room observations, stated preferences, selected product | `sessionStorage` key `tryora_assistant_v2:<shop>` | 4 h idle or 24 h total; ~100 KB and 60 entries (oldest dropped first) |
-| Room photo and generated preview images | In-memory object URLs only | Gone on reload; the transcript then shows "not kept after the page reloads" |
+| Room photo, uploaded thumbnails, original-vs-generated comparisons and generated previews | In-memory object URLs plus same-tab scoped IndexedDB Blobs on the Shopify browser origin | Browser-local only, best effort, 4-hour expiry; unavailable in blocked/private storage; no server-side image history |
 
-- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Visully's database, Shopify or analytics.
+- History and available local images follow the shopper across pages and refreshes in the same tab. Only the legitimate Shopify app proxy receives photos for the requested analysis/generation; no chat images are uploaded for persistence to Visully's database, Shopify Files or analytics. Same-origin storefront scripts can access IndexedDB like other origin-scoped web storage; browser storage is not a substitute for customer-facing long-term image hosting.
 - Each message sends a bounded slice to the server: the last 12 completed turns, up to 6 numbered recommendations, the selected product, room observations and preferences. The server re-validates every reference against fresh Shopify data.
 - The key and stored shop are checked on load, so one store's context can't appear in another. The v1 shared key `tryora_assistant_context` is deleted.
-- **New chat** clears messages, recommendations and preferences but keeps the room. **Forget room** removes the room notes and photo but keeps messages. **Clear conversation** removes everything.
+- **New chat** clears messages, cached previews and preferences but keeps the current room. **Forget room** removes room notes, current photo and original comparison photos but keeps messages and already generated previews. **Clear conversation** revokes object URLs and deletes this tab/shop's local images. An expiry sweep purges stale browser cache entries on assistant launch.
 - This is browser-side history. OpenAI requests still use `store: false`.
 
 ## Streaming
@@ -70,9 +70,27 @@ Buffers are bounded (3,000 events, 512 KB), bound to shop and visitor, expire 3 
 - Real Chrome against a local HTTP server running the real turn handlers: long-poll delivered at least 3 partial answer states over more than 750 ms before the final text, and SSE delivered at least 4 incremental states over one real chunked HTTP response.
 - **Not verified:** whether Shopify's app proxy forwards SSE chunks unbuffered. That needs a real store, which is why SSE is off by default. Long-polling doesn't depend on it.
 
+**ChatGPT-style live rendering**
+
+- The browser displays the real model's `delta` events as they arrive. Large network-coalesced chunks are gently paced (24 ms presentation ticks), while small chunks appear immediately; no invented text or duplicate AI requests.
+- The writing cursor appears only on an actively streaming response. `reset_text` clears a discarded tool-call draft, and `final` immediately commits the sanitised authoritative answer without leaving stale animation timers.
+- Existing verified product cards appear as soon as their server events arrive. They replace only the current assistant message node, not the whole conversation, preventing scroll jumps and chat flicker.
+- Stopping a turn, New Chat, Clear Conversation, changing pages or minimising the drawer cancels/avoids queued typing animations. The full latest true text is available on reopen. Users with reduced-motion preferences receive deltas instantly.
+- This is **real streaming through long polling**, not a synthetic response written ahead of time. First-token speed still depends on model/provider processing and Shopify network conditions.
+
 **Safety of streamed text**
 
 Recommendations are only shown as cards that the server has verified, and they arrive before the prose. The final message replaces the streamed draft, and any price the server never returned (and the shopper never typed) is removed from it. Stock and preview status appear only on cards.
+
+## English conversation intelligence and room-fit ranking
+
+The customer-facing chatbot remains **English**. Its latest question is authoritative. A conservative per-turn `intent.server.ts` plan detects whether the shopper wants a product answer, recommendations, a comparison, more options, a preview, store support, an acknowledgement, or analysis of a freshly uploaded room. Short follow-ups such as "what about grey?" can inherit an earlier explicit furniture category; verified selected/numbered products remain controlled by `references.server.ts`. The internal standalone interpretation is passed into the model's verified conversation state and is not displayed to the shopper or treated as permission to invent missing facts. Existing session history retains previous AI answers, Shopify card references, selections and completed previews.
+
+A freshly uploaded room photo **must** be analysed before search or recommendations; it must never inherit a different room's saved observations. For room-based discovery, the backend retrieves a broader shortlist of up to ten real Shopify candidates, then sorts by a transparent internal room-fit score using merchant-reported options, product descriptions and the active room's colours/style plus explicit customer preferences. The verified final cards are reranked by the same evidence; the first search hit and AI-preview availability are no longer automatic top-pick signals. These are **soft aesthetic signals** only, not certainty scores, invented variant colours or guarantees of physical fit. Existing mandatory category, audience, budget, stock and exact-variant checks remain in force; compare/price requests retain their verified ordering, and no unrelated cards should be generated for ordinary follow-up questions.
+
+The English system prompt now explicitly distinguishes the product card's verified **Fabric / Colour** controls from unsolicited chat questions asking shoppers to configure products. The controls continue to work, and no AI image is generated without the existing exact-variant check and shopper confirmation.
+
+Regression coverage: `test/assistant-intent-room-fit.test.ts` checks follow-up intents, missing context, shopper preferences and stable reranking; `test/room-assistant.test.ts` checks broader initial retrieval chooses a room-compatible product rather than the first Shopify result. Run full CI and real-store conversation smoke tests before release.
 
 ## Agent and tools
 
@@ -172,7 +190,8 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
 
 ## Privacy and security
 
-- Room photos are compressed in the browser (max 1600px), sent only with the message they're attached to, normalised on the server for that request, and never stored or logged.
+- Room photos are compressed in the browser (max 1600px), sent only for requested analysis/preview, and never stored in the app database or server logs. **For same-tab continuity the browser may temporarily cache compressed source and generated Blobs in its own IndexedDB** (up to 8 MB per item, 4-hour logical expiry, pruned on return). Images are neither saved in localStorage/sessionStorage nor hosted on external media storage. If browser storage is blocked, full, evicted or expired, the assistant still works, but the shopper may need to upload the photo again.
+- An in-progress generation resumes by its opaque server job ID after navigation, or by re-posting the **same idempotency key and exact original room** if navigation interrupted job creation. The server still enforces all credit, lead, shop and variant checks. Its transient job expires, so recovery is best effort—not guaranteed if backend restarts or the visitor returns outside the delivery window. Shoppers can minimise the drawer and continue browsing.
 - Logs are structured and allowlisted (`app/assistant/log.server.ts`): no message text, photos, visitor IDs or API keys.
 - The proxy enforces request size limits (history 30 KB, photo 8 MB) and the existing visitor, shop and concurrency rate limits.
 - Chat never consumes credits.

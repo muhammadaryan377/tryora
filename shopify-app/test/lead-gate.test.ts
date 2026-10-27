@@ -60,6 +60,14 @@ describe("independent lead capture", () => {
     await expect(precheckLeadPermission(shop, visitor, "popup")).resolves.toBeUndefined();
   });
 
+  it("writes both channel proofs through an existing transaction without nesting a second one", async () => {
+    const upsert = vi.fn(async (_input: { create: { channel: string } }) => ({}));
+    await markLeadCaptured(shop, visitor, { leadVisit: { upsert } } as any);
+    expect(upsert).toHaveBeenCalledTimes(2);
+    expect(upsert.mock.calls.map(([input]) => input.create.channel)).toEqual(["popup", "assistant"]);
+    expect(fixture.visits.size).toBe(0);
+  });
+
   it("requires real server lead proof for a required first preview", async () => {
     fixture.shop.leadSettings = { chatLeadCapture: "required" };
     await expect(reserveLeadPermission(shop, visitor, "assistant")).rejects.toThrow();
