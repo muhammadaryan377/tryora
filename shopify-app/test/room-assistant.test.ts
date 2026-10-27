@@ -832,16 +832,16 @@ describe("reliability and safety", () => {
 
   it("retries one transient provider error, and reports timeouts separately", async () => {
     const retry = scriptedModel([Object.assign(new Error("busy"), { status: 503 }), search({ query: "hello" }), finalAnswer("Hello! How can I help?")]);
-    await expect(ask(fixtureAdmin([aria]), retry.client, "Hi")).resolves.toMatchObject({ message: "Hello! How can I help?" });
+    await expect(ask(fixtureAdmin([aria]), retry.client, "Can you help me find a bed?")).resolves.toMatchObject({ message: "Hello! How can I help?" });
     expect(retry.requests).toHaveLength(3);
     const timeout = scriptedModel([Object.assign(new Error("timed out"), { name: "APIConnectionTimeoutError" })]);
-    await expect(ask(fixtureAdmin([aria]), timeout.client, "Hi")).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
+    await expect(ask(fixtureAdmin([aria]), timeout.client, "Can you help me find a bed?")).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
     expect(logs.some((line) => line.event === "timeout")).toBe(true);
   });
 
   it("rejects an empty final answer", async () => {
     const { client } = scriptedModel([search({ query: "hi" }), { output: [], output_text: "" }]);
-    await expect(ask(fixtureAdmin([aria]), client, "Hi")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(ask(fixtureAdmin([aria]), client, "Can you help me find a bed?")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
     expect(logs).toContainEqual(expect.objectContaining({ event: "model_parse_failure", reason: "empty" }));
   });
 
@@ -863,12 +863,12 @@ describe("reliability and safety", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const slow = { responses: { create: async () => { await gate; return finalAnswer("ok"); } } } as any;
     const admin = fixtureAdmin([aria]);
-    const running = Array.from({ length: 8 }, () => ask(admin, slow, "Hi"));
+    const running = Array.from({ length: 8 }, () => ask(admin, slow, "Can you help me find a bed?"));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(ask(admin, slow, "Hi")).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    await expect(ask(admin, slow, "Can you help me find a bed?")).rejects.toMatchObject({ code: "RATE_LIMITED" });
     release();
     await Promise.all(running);
-    await expect(ask(admin, scriptedModel([finalAnswer("ok")]).client, "Hi")).resolves.toBeTruthy();
+    await expect(ask(admin, scriptedModel([finalAnswer("ok")]).client, "Can you help me find a bed?")).resolves.toBeTruthy();
   });
 
   it("never offers an AI preview for Cloudlift configurations it cannot verify from chat", async () => {
