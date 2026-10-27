@@ -33,6 +33,7 @@ import {
   removeAppearanceChoiceRequests,
   runAssistantTurn,
   sanitiseMessage,
+  verifiedReplyChunks,
   wantsMoreOptions,
   requestedProductCount,
   conciseAssistantReply,
@@ -488,6 +489,29 @@ describe("visualisation in the conversation", () => {
 });
 
 describe("streaming", () => {
+  it("sends ordered verified chunks after tool processing without exposing raw model draft", async () => {
+    const events: AssistantEvent[] = [];
+    const verified = "The cream upholstery complements a warm, neutral room. The design has a softer outline and works well with light wooden furniture.";
+    const { client } = scriptedModel([
+      search({ query: "bed" }),
+      streamed(finalAnswer(verified), ["Unverified price £12,345. ", "The shop definitely has no beds."]),
+    ]);
+    await runAssistantTurn({
+      admin: fixtureAdmin([aria]), shopId: SHOP,
+      history: [{ role: "user", content: "Describe the style in a little detail." }],
+      client, env: {} as any, settings,
+    }, event => events.push(event));
+    const chunks = events.filter((event): event is Extract<AssistantEvent, { type: "delta" }> => event.type === "delta");
+    const reply = events.at(-1) as Extract<AssistantEvent, { type: "final" }>;
+    expect(reply.type).toBe("final");
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.map(chunk => chunk.text).join("")).toBe(reply.reply.message);
+    expect(chunks.map(chunk => chunk.text).join("")).not.toContain("£12,345");
+    expect(events.findIndex(e => e.type === "status" && e.stage === "searching_products"))
+      .toBeLessThan(events.findIndex(e => e.type === "delta"));
+    expect(verifiedReplyChunks(reply.reply.message).join("")).toBe(reply.reply.message);
+  });
+
   it("only delivers concise verified text, never raw model prose", async () => {
     const events: AssistantEvent[] = [];
     const final = finalAnswer("Option 1 is £999. Option 2 is £1,111.");
