@@ -40,7 +40,7 @@ model Shop {
   installState     String   @default("installed") // installed | uninstalled
   timezone         String?
   settingsVersion  Int      @default(1)
-  leadCapture      String   @default("required") // off | required | skippable
+  leadCapture      String   @default("off") // off | required | skippable
   leadSettings     Json     @default("{}")      // opt-in checkbox on/off and wording, customer tag
   leadTiming       String   @default("before") // before | after the first image
   paidPlanActive   Boolean  @default(false)
