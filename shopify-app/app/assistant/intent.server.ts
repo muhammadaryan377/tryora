@@ -55,7 +55,7 @@ export function planShopperTurn(input: {
   const preview = /\b(preview|visuali[sz]e)\b|\b(?:show|see)\b[^.!?]*\b(?:in my room|in this room)\b|\bhow (?:does|would|will) (?:it|this|that) look\b/i.test(lower);
   const compare = /\b(compare|versus|vs\.?|difference|which (?:is|one is) better)\b/i.test(lower);
   const more = /\b(show|see|give|any)\s+(?:me\s+)?more\b|\b(?:more|other|different|another)\s+(?:options?|products?|choices?|ones?|sofas?|beds?)\b|\b(?:something else|show me moes)\b/i.test(lower);
-  const support = /\b(deliver(?:y|ies)?|shipping|return(?:s)?|refund|warrant(?:y|ies)|order status|opening hours|contact)\b/i.test(lower);
+  const support = /\b(ship|ships|shipping|deliver(?:y|ies)?|return(?:s)?|refund|warrant(?:y|ies)|order status|opening hours|contact)\b/i.test(lower);
   const question = /\b(price|cost|how much|dimensions?|materials?|fabrics?|colou?rs?|sizes?|stock|available|made of|does it have|what about)\b/i.test(lower);
   const discovery = /\b(show|recommend|suggest|find|looking for|need|pick|choose|best for|what (?:would|will) (?:suit|look|work|be)|which (?:one|furniture))\b/i.test(lower);
   const roomMention = /\b(room|bedroom|living room|my space|this space|here)\b/i.test(lower) || input.newRoomPhoto;
