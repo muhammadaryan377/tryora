@@ -153,8 +153,8 @@ describe("room assistant settings", () => {
     vi.stubEnv("OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED", "true");
     const config = await assistantStorefrontConfig(SHOP, { pageType: "product" });
     expect(config).toMatchObject({ enabled: true, shop: SHOP, transport: "poll", defaultView: "side", previewsAvailable: true });
-    // The chat applies the merchant's email step exactly as the product popup does.
-    expect(config.lead).toEqual({ mode: "skippable", timing: "after", showOptIn: false, optInWording: expect.stringMatching(/^Email me offers/) });
+    // The chatbot stays off independently of the popup until the merchant opts in.
+    expect(config.lead).toEqual({ mode: "off", timing: "after", showOptIn: false, optInWording: expect.stringMatching(/^Email me offers/) });
     vi.stubEnv("TRYORA_ASSISTANT_TRANSPORT", "sse");
     expect((await assistantStorefrontConfig(SHOP, { pageType: "product" })).transport).toBe("sse");
   });
