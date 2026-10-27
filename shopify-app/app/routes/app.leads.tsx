@@ -275,7 +275,7 @@ export default function Leads() {
       </s-section>
       <s-section slot="aside" heading="Privacy">
         <s-paragraph>
-          Tryora never stores shoppers' room photos or generated images. Submitted names, emails, product references and marketing choices are saved in Tryora for this store. Shopify customer sync is attempted separately. Marketing opt-in is never assumed from submitting a preview.
+          Visully never stores shoppers' room photos or generated images. Submitted names, emails, product references and marketing choices are saved in Visully for this store. Shopify customer sync is attempted separately. Marketing opt-in is never assumed from submitting a preview.
         </s-paragraph>
       </s-section>
     </s-page>
