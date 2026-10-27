@@ -696,8 +696,9 @@ describe("multi-turn conversations", () => {
     expect(isConversationAcknowledgement(message)).toBe(true);
     expect(reply.recommendations).toHaveLength(0);
     expect(reply.visualise).toBeNull();
-    expect(toolOutputs(requests, "call-recommend_products")[0]).toMatchObject({ error: "no_new_cards_requested" });
-    expect(requests[0].instructions).toContain("Respond in natural, concise English");
+    // These uncomplicated social reactions are answered locally; no model tool call can repeat cards.
+    expect(requests).toHaveLength(0);
+    expect(reply.message).toMatch(/glad|welcome/i);
   });
 
   it("answers a price follow-up from verified details without redisplaying the product", async () => {
