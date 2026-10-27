@@ -9,18 +9,21 @@ vi.mock("../app/image-provider.server", async () => {
   const { MockImageProvider } = await import("../app/core/provider");
   return { createImageProvider: () => new MockImageProvider(0) };
 });
-vi.mock("../app/db.server", () => ({ default: {
-  productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
-  previewJob: { findFirst: vi.fn(async () => null) },
-  customizationConfig: { findMany: vi.fn(async () => fixture.providerSettings) },
-  visualChoice: { findMany: vi.fn(async () => fixture.config.choices ?? []) },
-  providerUsage: { create: vi.fn(async ({ data }) => { fixture.usages.push(data); return data; }) },
-  event: { upsert: vi.fn(async ({ where, create }) => { fixture.events.set(where.id, create); }), create: vi.fn(async () => ({})) },
-  shop: { findUnique: vi.fn(async () => ({ leadSettings: {}, storefrontEnabled: true })) },
-  appearance: { findFirst: vi.fn(async () => null) },
-  campaign: { findFirst: vi.fn(async () => null) },
-  leadDelivery: { create: vi.fn(async () => ({ id: "lead" })), update: vi.fn(async ({ data }) => { fixture.leadUpdates.push(data); }) },
-} }));
+vi.mock("../app/db.server", () => {
+  const db = {
+    productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
+    previewJob: { findFirst: vi.fn(async () => null) },
+    customizationConfig: { findMany: vi.fn(async () => fixture.providerSettings) },
+    visualChoice: { findMany: vi.fn(async () => fixture.config.choices ?? []) },
+    providerUsage: { create: vi.fn(async ({ data }) => { fixture.usages.push(data); return data; }) },
+    event: { upsert: vi.fn(async ({ where, create }) => { fixture.events.set(where.id, create); }), create: vi.fn(async () => ({})) },
+    shop: { findUnique: vi.fn(async () => ({ leadSettings: {}, storefrontEnabled: true })) },
+    appearance: { findFirst: vi.fn(async () => null) },
+    campaign: { findFirst: vi.fn(async () => null) },
+    leadDelivery: { create: vi.fn(async () => ({ id: "lead" })), update: vi.fn(async ({ data }) => { fixture.leadUpdates.push(data); }) },
+  };
+  return { default: { ...db, $transaction: vi.fn(async (fn: (client: typeof db) => Promise<unknown>) => fn(db)) } };
+});
 vi.mock("../app/tryora.server", () => ({ tryora: new Proxy({}, { get: (_, key) => fixture.service[key].bind(fixture.service) }) }));
 vi.mock("../app/lead-gate.server", () => ({
   leadPolicy: vi.fn(async () => ({ mode: "required", timing: "before" })),
@@ -365,6 +368,24 @@ describe("preview lifecycle", () => {
 
 describe("lead delivery", () => {
   const lead = { shopId, productId, email: "shopper@example.com", marketing: true, wording: "Offers" };
+  it("atomically saves the email and both visitor lead proofs before Shopify customer sync", async () => {
+    const { markLeadCaptured } = await import("../app/lead-gate.server");
+    await captureLead(admin, { ...lead, visitorId: "123e4567-e89b-42d3-a456-426614174000", channel: "popup" });
+    expect(prisma.$transaction).toHaveBeenCalledOnce();
+    expect(markLeadCaptured).toHaveBeenCalledWith(shopId, "123e4567-e89b-42d3-a456-426614174000", expect.objectContaining({ leadDelivery: expect.any(Object) }));
+    expect(prisma.leadDelivery.create).toHaveBeenCalledOnce();
+  });
+  it("never runs Shopify customer sync or marks a lead successful if database migration is missing", async () => {
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce(Object.assign(new Error("sensitive contact must not appear in logs"), { code: "P2021" }));
+    await expect(captureLead(admin, { ...lead, visitorId: "123e4567-e89b-42d3-a456-426614174000" })).rejects.toThrow();
+    expect(admin.graphql).not.toHaveBeenCalled();
+    expect(prisma.event.create).not.toHaveBeenCalled();
+  });
+  it("does not block saved leads when optional analytics storage is unavailable", async () => {
+    vi.mocked(prisma.event.create).mockRejectedValueOnce(new Error("Analytics down"));
+    await expect(captureLead(admin, lead)).resolves.toEqual({ ok: true });
+    expect(prisma.leadDelivery.create).toHaveBeenCalledOnce();
+  });
   it("records consent API user errors as delivery failures using safe error codes", async () => {
     admin.graphql.mockResolvedValueOnce(Response.json({ data: { customerSet: { customer: { id: "customer" }, userErrors: [] } } }))
       .mockResolvedValueOnce(Response.json({ data: { customerEmailMarketingConsentUpdate: { userErrors: [{ message: "shopper@example.com failed" }] } } }));
