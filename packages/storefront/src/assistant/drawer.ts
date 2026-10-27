@@ -612,6 +612,7 @@ export class RoomAssistant {
       this.openPicker("upload");
       return;
     }
+    await this.refreshLeadStatus();
     if (this.leadNeeded()) { this.openLeadForm(chosen, false); return; }
     const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
     this.originals.set(entry.id, this.roomPhoto.url);
@@ -1470,6 +1471,17 @@ export class RoomAssistant {
   }
 
   // ---------- email step (the merchant's lead capture) ----------
+
+  private async refreshLeadStatus() {
+    if (this.state.lead.done || !this.config.lead || this.config.lead.mode === "off") return;
+    try {
+      const response = await fetch(`${PROXY}/lead/status?visitor=${encodeURIComponent(storedVisitorId())}&channel=assistant`, { credentials: "same-origin" });
+      if (response.ok && (await response.json()).satisfied === true) {
+        this.state.lead.done = true;
+        this.save();
+      }
+    } catch { /* Keep the merchant's required step when verification is unavailable. */ }
+  }
 
   /** True when the merchant's email step must be completed before the next preview, mirroring the popup's rules. */
   private leadNeeded(): boolean {
