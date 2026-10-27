@@ -310,8 +310,10 @@ export class Tryora {
       const channel = this.handoff ? "assistant" : "popup";
       const url = `${PROXY}/lead/status?visitor=${encodeURIComponent(visitorId())}&channel=${channel}`;
       const response = await fetch(url, { credentials: "same-origin" });
-      if (response.ok && (await response.json()).satisfied === true) {
-        this.state.leadDone = true;
+      if (response.ok) {
+        const status = await response.json();
+        if (status.satisfied === true) this.state.leadDone = true;
+        else if (status.hasPreviewed === true && this.state.leadTiming === "after") this.state.leadTiming = "before";
         this.render();
       }
     } catch { /* Existing lead rules still apply when status is unavailable. */ }
