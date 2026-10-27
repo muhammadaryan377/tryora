@@ -1,8 +1,8 @@
 /**
- * Launcher settings (owner decision, 19 Oct 2026). The merchant chooses how shoppers open Tryora:
- *   - "tryora": a Tryora button (overlay, floating or inline). One automatic launcher per page.
+ * Launcher settings (owner decision, 19 Oct 2026). The merchant chooses how shoppers open Visully:
+ *   - "tryora": a Visully button (overlay, floating or inline). One automatic launcher per page.
  *   - "own":    only the merchant's own elements (#tryora link, data-tryora attribute, Tryora.open()).
- *   - "both":   a Tryora button plus the merchant's own elements.
+ *   - "both":   a Visully button plus the merchant's own elements.
  */
 
 export type LaunchMode = "tryora" | "own" | "both";
@@ -62,7 +62,7 @@ export function validateLauncher(s: LauncherSettings): string[] {
   const errors: string[] = [];
   if (!s.wording.trim()) errors.push("Button wording can't be empty.");
   if (s.wording.length > 40) errors.push("Button wording must be 40 characters or fewer.");
-  if (s.mode !== "own" && !s.showOnMobile && !s.showOnDesktop) errors.push("Show the Tryora button on mobile, desktop or both.");
+  if (s.mode !== "own" && !s.showOnMobile && !s.showOnDesktop) errors.push("Show the Visully button on mobile, desktop or both.");
   if (s.radiusPx < 0 || s.radiusPx > 999) errors.push("Corner radius must be between 0 and 999.");
   for (const c of [s.background, s.text]) if (c !== null && !/^#[0-9a-fA-F]{6}$/.test(c)) errors.push(`"${c}" isn't a valid colour.`);
   return errors;
