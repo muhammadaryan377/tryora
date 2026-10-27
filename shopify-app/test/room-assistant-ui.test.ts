@@ -727,6 +727,34 @@ describe("conversation history", () => {
     expect(form.get("hasPhoto")).toBe("0");
   });
 
+  it("restores the existing paid preview job after navigating without starting another generation", async () => {
+    const now = Date.now();
+    sessionStorage.setItem(sessionKey(SHOP), JSON.stringify({
+      v: 2, shop: SHOP, createdAt: now, updatedAt: now, entries: [
+        { id: "continued-1", kind: "preview", item: card(), status: "generating",
+          stage: "generating", idempotencyKey: "continued-1", jobId: "job1", at: now },
+      ],
+      room: null, preferences: null, shown: [], explored: [], selected: null, constraints: null,
+      ui: { open: false, view: "side" }, lead: { done: true }, previewsDelivered: 0,
+    }));
+    const assistant = makeAssistant();
+    assistant.open();
+    expect($(".tryora-assistant__preview.is-loading")!.textContent).toContain("Continue browsing");
+    click(".tryora-assistant__preview.is-loading [data-ta='minimise']");
+    expect(assistant.isOpen).toBe(false);
+    expect(launcher.classList.contains("is-generating")).toBe(true);
+    await settle(1550);
+    expect(proxy.calls.filter(call => call.url === "/apps/visully/preview")).toHaveLength(0);
+    expect(proxy.calls.filter(call => call.url.endsWith("/preview/job1")).length).toBeGreaterThan(0);
+    assistant.open();
+    expect($(".tryora-assistant__preview img")).not.toBeNull();
+    expect(assistant.state.entries.find((entry: any) => entry.id === "continued-1").status).toBe("ready");
+    expect(assistant.state.previewsDelivered).toBe(1);
+    expect(launcher.classList.contains("is-generating")).toBe(false);
+    expect(proxy.calls.filter(call => call.url === "/apps/visully/ack")).toHaveLength(1);
+    expect(sessionStorage.getItem(sessionKey(SHOP))!).not.toContain("base64");
+  });
+
   it("expires idle history, ignores other stores and removes the legacy shared key", () => {
     sessionStorage.setItem("tryora_assistant_context", JSON.stringify({ room: { style: "old store" }, shown: [] }));
     sessionStorage.setItem(sessionKey("other.myshopify.com"), JSON.stringify({ v: 2, shop: "other.myshopify.com", createdAt: Date.now(), updatedAt: Date.now(), entries: [{ id: "x", kind: "user", text: "secret", photo: false, at: 1 }], ui: { open: true, view: "side" } }));
