@@ -701,6 +701,27 @@ describe("multi-turn conversations", () => {
     expect(reply.message).toMatch(/glad|welcome/i);
   });
 
+  it("answers which product is cheaper from verified details without showing the same cards again", async () => {
+    const { client, requests } = scriptedModel([
+      toolCall("get_product_details", { productRefs: ["1", "2"], colour: null, size: null, material: null }),
+      recommend([{ productRef: "1", variantRef: null, reason: "Do not repeat this card." }]),
+      finalAnswer("The Aspen Grey Bed costs less than the Aria Bed, based on the verified prices."),
+    ]);
+    const reply = await answerRoomAssistant({
+      admin: fixtureAdmin([aria, aspen]), shopId: SHOP, client, env: {} as any, settings,
+      history: [
+        { role: "user", content: "Show me two beds" },
+        { role: "assistant", content: "Here are Aria and Aspen." },
+        { role: "user", content: "Which one is cheaper?" },
+      ],
+      shown: [{ productRef: "1", variantRef: null }, { productRef: "2", variantRef: null }],
+    });
+    expect(reply.message).toContain("Aspen Grey Bed");
+    expect(reply.recommendations).toHaveLength(0);
+    expect(toolOutputs(requests, "call-recommend_products")[0]).toMatchObject({ error: "no_new_cards_requested" });
+    expect(toolOutputs(requests, "call-get_product_details")[0].products).toHaveLength(2);
+  });
+
   it("answers a price follow-up from verified details without redisplaying the product", async () => {
     const variantRef = ref(aria.variants[0]!.id);
     const { client, requests } = scriptedModel([
