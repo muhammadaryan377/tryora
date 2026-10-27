@@ -4,7 +4,7 @@ The Room Assistant is an opt-in storefront chat for Shopify furniture merchants.
 
 ## Merchant controls
 
-The assistant is disabled by default. Merchants configure it in **Tryora > Room assistant**:
+The assistant is disabled by default. Merchants configure it in **Visully > Room assistant**:
 
 - page visibility (product, collection, home, other), plus exact product and collection exclusions. Exclusions control where the launcher appears; they do not hide products from search.
 - greeting, launcher label, launcher side (left or right) and accent colour.
@@ -34,7 +34,7 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 - **Welcome screen:** *Visualise in my room*, *Find furniture for my room* and *Ask about products*, all real actions, plus suggestion chips. On a preview-enabled product page, *Use product preview instead* opens the existing popup.
 - **Composer:** a ＋ menu with *Upload photo* and *Take photo* (camera, shown on touch devices). The photo appears as a thumbnail with Replace and Remove, with validation and preparation errors and upload progress (percentage while sending). Enter sends, and Shift+Enter starts a new line.
 - **Answers:** status steps ("Analysing your room…", "Searching store products…", "Checking variants and availability…", "Preparing recommendations…"), then the model's text appears as it is generated. Stop cancels on the server too; Retry re-sends the same question once. Model text is escaped; only bold, bullets and paragraphs are rendered.
-- **Cards:** image, options, verified price, *Available to buy* or *Currently sold out*, AI preview status, the reason, *View product*, and *See it in my room* only when the exact variant passes Tryora's preview checks.
+- **Cards:** image, options, verified price, *Available to buy* or *Currently sold out*, AI preview status, the reason, *View product*, and *See it in my room* only when the exact variant passes Visully's preview checks.
 - Motion is subtle, and `prefers-reduced-motion` disables it.
 
 ## Conversation history
@@ -44,7 +44,7 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 | Messages, cards, preview offers, room observations, stated preferences, selected product | `sessionStorage` key `tryora_assistant_v2:<shop>` | 4 h idle or 24 h total; ~100 KB and 60 entries (oldest dropped first) |
 | Room photo and generated preview images | In-memory object URLs only | Gone on reload; the transcript then shows "not kept after the page reloads" |
 
-- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Tryora's database, Shopify or analytics.
+- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Visully's database, Shopify or analytics.
 - Each message sends a bounded slice to the server: the last 12 completed turns, up to 6 numbered recommendations, the selected product, room observations and preferences. The server re-validates every reference against fresh Shopify data.
 - The key and stored shop are checked on load, so one store's context can't appear in another. The v1 shared key `tryora_assistant_context` is deleted.
 - **New chat** clears messages, recommendations and preferences but keeps the room. **Forget room** removes the room notes and photo but keeps messages. **Clear conversation** removes everything.
@@ -107,7 +107,7 @@ Catalogue awareness, search (synonyms, BM25, constraints, live Shopify fallback)
 - **Absence guard:** any final-message sentence claiming the store has none of a product kind is replaced unless a complete check proved it. The replacement says the range could not be verified and mentions the viewed product. Policy sentences such as "no delivery charge" are left alone.
 - **Logging:** Shopify failures are logged with Shopify's own error code (`MAX_COST_EXCEEDED`, `ACCESS_DENIED`, `THROTTLED`) and the requested cost when Shopify reports it.
 
-**Real-store verification:** in the Shopify admin, open **Tryora › Room assistant › Check catalogue connection** (`/app/assistant-diagnostics?q=bed&handle=<product-handle>`). This read-only page runs the assistant's own queries against the store and shows:
+**Real-store verification:** in the Shopify admin, open **Visully › Room assistant › Check catalogue connection** (`/app/assistant-diagnostics?q=bed&handle=<product-handle>`). This read-only page runs the assistant's own queries against the store and shows:
 - the shop and granted scopes
 - active and total product counts
 - whether the catalogue query succeeds, with Shopify's reported cost
@@ -192,7 +192,7 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
 
 1. Re-run `npm test`, `npm run typecheck`, `npm run build`, `git diff --check` and the browser suite (`TRYORA_E2E=1`).
 2. Deploy the app server to a **staging** environment with `TRYORA_ASSISTANT_TRANSPORT` unset (poll).
-3. `shopify app deploy` the theme extension to a **development store** only, and enable the Tryora app embed.
+3. `shopify app deploy` the theme extension to a **development store** only, and enable the Visully app embed.
 4. In the development store, enable the assistant for product pages and add test Store notes. Confirm the notes persist after saving.
 5. Verify on desktop and a real phone:
    - launcher placement next to the product preview button and any chat widget
