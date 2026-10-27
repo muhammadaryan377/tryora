@@ -175,6 +175,7 @@ export class Tryora {
   private email = "";
   private firstName = "";
   private marketing = false;
+  private leadSaving = false;
   private emailError = "";
   private copied = false;
   private configurationNotice: string | null = null;
@@ -235,7 +236,10 @@ export class Tryora {
   openForAssistant(handoff: PopupPreviewHandoff) {
     if (!this.state.generation) {
       this.handoff = handoff;
-      this.state.leadDone = this.cfg.lead.mode === "off" || handoff.leadDone();
+      const lead = this.activeLead();
+      this.state.leadMode = lead.mode;
+      this.state.leadTiming = lead.timing;
+      this.state.leadDone = lead.mode === "off" || handoff.leadDone();
       if (this.assistantDelivered && this.state.leadTiming === "after" && !this.state.leadDone) this.state.leadTiming = "before";
     }
     this.open();
@@ -273,6 +277,7 @@ export class Tryora {
     // Some themes change the cart-form ID programmatically without a change event.
     this.pageWatchTimer = setInterval(this.pageChangeHandler, 750);
     this.render();
+    void this.refreshLeadStatus();
     (root.querySelector("[data-autofocus]") as HTMLElement | null)?.focus();
   }
 
@@ -291,6 +296,61 @@ export class Tryora {
     document.documentElement.classList.remove("tryora-open");
     (this.lastFocus as HTMLElement | null)?.focus?.();
     this.handoff?.closed();
+  }
+
+  /** Merchant policies differ for product popups and previews initiated from the chatbot. */
+  private activeLead(): Config["lead"] {
+    return this.handoff?.lead ?? this.cfg.lead;
+  }
+
+  /** Reuse proof of a previously submitted email in either surface during this visit. */
+  private async refreshLeadStatus() {
+    if (this.state.leadDone || this.activeLead().mode === "off") return;
+    try {
+      const channel = this.handoff ? "assistant" : "popup";
+      const url = `${PROXY}/lead/status?visitor=${encodeURIComponent(visitorId())}&channel=${channel}`;
+      const response = await fetch(url, { credentials: "same-origin" });
+      if (response.ok && (await response.json()).satisfied === true) {
+        this.state.leadDone = true;
+        this.render();
+      }
+    } catch { /* Existing lead rules still apply when status is unavailable. */ }
+  }
+
+  /** Never allow a generation before the backend has accepted the lead or an allowed Skip. */
+  private async completeLead(skip: boolean) {
+    if (this.leadSaving || (this.state.step !== "emailStep" && this.state.step !== "result")) return;
+    if (skip && this.activeLead().mode !== "skippable") return;
+    if (!skip && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(this.email.trim())) {
+      this.emailError = "Please enter a valid email address.";
+      this.render();
+      return;
+    }
+    this.leadSaving = true;
+    this.emailError = "";
+    try {
+      const channel = this.handoff ? "assistant" : "popup";
+      if (skip) {
+        await post("lead/skip", { visitor: visitorId(), channel });
+      } else {
+        await post("lead", {
+          email: this.email.trim(),
+          firstName: this.firstName.trim(),
+          marketing: this.activeLead().showOptIn && this.marketing ? "1" : "0",
+          wording: this.activeLead().optInWording,
+          product: this.cfg.productId,
+          option: this.state.selectedOption ?? "",
+          visitor: visitorId(),
+          channel,
+        });
+      }
+      this.dispatch({ type: skip ? "LEAD_SKIPPED" : "LEAD_SUBMITTED" });
+    } catch {
+      this.emailError = "We couldn't save your details just now. Please try again.";
+      this.render();
+    } finally {
+      this.leadSaving = false;
+    }
   }
 
   private dispatch(event: FlowEvent) {
@@ -332,18 +392,9 @@ export class Tryora {
         this.images.clear();
         return;
       }
-      case "SUBMIT_LEAD": {
-        // Fire and forget: the preview never waits on saving the email.
-        void post("lead", {
-          email: this.email,
-          firstName: this.firstName,
-          marketing: this.marketing ? "1" : "0",
-          wording: this.cfg.lead.optInWording,
-          product: this.cfg.productId,
-          option: this.state.selectedOption ?? "",
-        }).catch(() => {});
+      case "SUBMIT_LEAD":
+        // Already saved and verified by completeLead(), before the preview state advanced.
         return;
-      }
       case "CREATE_PREVIEW":
         return this.generate(c.option, c.photoId);
     }
@@ -382,6 +433,7 @@ export class Tryora {
         visitor: visitorId(),
         key: crypto.randomUUID(),
         leadDone: leadSatisfied(this.state) ? "1" : "0",
+        channel: this.handoff ? "assistant" : "popup",
       };
       const r = await createWithRetry(() => post("preview", fields));
       jobId = r.jobId;
@@ -525,14 +577,9 @@ export class Tryora {
         if (s.selectedOption && !isViewed(s, s.selectedOption) && !this.canPreviewOption(s.selectedOption)) return this.render();
         return this.dispatch({ type: "GENERATE_PRESSED" });
       case "lead-submit":
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email.trim())) {
-          this.emailError = "Please enter a valid email address.";
-          return this.render();
-        }
-        this.emailError = "";
-        return this.dispatch({ type: "LEAD_SUBMITTED" });
+        return void this.completeLead(false);
       case "lead-skip":
-        return this.dispatch({ type: "LEAD_SKIPPED" });
+        return void this.completeLead(true);
       case "another":
         return this.dispatch({ type: "TRY_ANOTHER_COLOUR" });
       case "new-room":
@@ -813,7 +860,7 @@ export class Tryora {
           }
           ${
             // With "after" + required, the offer is the reason to give an email, so it shows once they have.
-            showLeadOnResult(s) && c.lead.mode === "required" ? "" : this.voucher()
+            showLeadOnResult(s) && this.activeLead().mode === "required" ? "" : this.voucher()
           }`;
       case "unavailable":
         return `<p>${esc(NOTICES.previews_paused!)}</p><button class="tryora__btn" data-act="close">Close</button>`;
@@ -822,7 +869,7 @@ export class Tryora {
 
   /** Email, first name and the (always unticked) marketing box. Shared by the email step and the result-screen card. */
   private leadFields(submitLabel: string): string {
-    const c = this.cfg;
+    const c = { ...this.cfg, lead: this.activeLead() };
     return `
       <label class="tryora__field"><span>Email address</span>
         <input name="email" type="email" autocomplete="email" value="${esc(this.email)}" ${this.state.step === "emailStep" ? "data-autofocus" : ""} ${this.emailError ? 'aria-invalid="true"' : ""}></label>
