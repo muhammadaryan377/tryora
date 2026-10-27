@@ -26,10 +26,3 @@
 @media (max-width: 560px) { .plans { grid-template-columns: 1fr; } .help { align-items: flex-start; flex-direction: column; } .badge { margin: 8px 0 0; } }
 
 .watermark { display: block; color: #778193; font-size: 14px; font-weight: 400; margin-top: 3px; }
-.supportForm { display: grid; gap: 12px; margin-top: 16px; }
-.supportForm label { font-weight: 600; }
-.supportForm input, .supportForm textarea { box-sizing: border-box; width: 100%; padding: 12px; border: 1px solid #cbd2dd; border-radius: 8px; font: inherit; }
-.supportForm textarea { resize: vertical; }
-.supportForm button { justify-self: start; padding: 12px 28px; border: 0; border-radius: 8px; background: #2878ee; color: white; font: inherit; cursor: pointer; }
-.supportForm button:disabled { opacity: .6; cursor: wait; }
-.supportForm :focus-visible { outline: 2px solid #2878ee; outline-offset: 3px; }
