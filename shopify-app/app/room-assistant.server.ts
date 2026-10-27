@@ -51,6 +51,8 @@ import {
   type SelectionSource,
 } from "./assistant/references.server";
 import { errorShape, logAssistant } from "./assistant/log.server";
+import { planShopperTurn, type IntentPlan } from "./assistant/intent.server";
+import { rankRoomRecommendations } from "./assistant/room-fit.server";
 import {
   roomAssistantSettings,
   roomAssistantVisible,
@@ -639,6 +641,9 @@ interface RequestContext {
   /** Set by tools; returned to the browser. */
   selectionSource: SelectionSource | null;
   room: RoomObservations | null;
+  /** Saved active room or freshly analysed photo; an unanalysed new photo never reuses old observations. */
+  activeRoom: RoomObservations | null;
+  intentPlan: IntentPlan | null;
   preferences: ShopperPreferences | null;
   /** The product page the shopper is on, read fresh from Shopify (null if unknown or unverifiable). */
   currentProduct: CatalogueProduct | null;
@@ -707,7 +712,11 @@ function merged(pools: CatalogueSnapshot[], query: ProductQuery, currentProductI
 async function runSearch(ctx: RequestContext, requested: ProductQuery) {
   // The shopper's budget is a standing constraint: applied even when the model forgets it.
   const budget = ctx.constraints.budgetMax;
-  const query = budget !== null && (requested.maxPrice === null || requested.maxPrice > budget) ? { ...requested, maxPrice: budget } : requested;
+  // Elliptical follow-ups ("what about grey?", "something cheaper") keep the earlier furniture type.
+  const inferredCategory = ctx.intentPlan?.inheritedCategory;
+  const hasKind = /\b(beds?|sofas?|couches?|settees?|chairs?|tables?|wardrobes?|desks?|rugs?|ottomans?|mattresses?|headboards?|shelves?|dressers?)\b/i.test(requested.query);
+  const contextualQuery = inferredCategory && !hasKind ? { ...requested, query: `${inferredCategory} ${requested.query}`.trim() } : requested;
+  const query = budget !== null && (contextualQuery.maxPrice === null || contextualQuery.maxPrice > budget) ? { ...contextualQuery, maxPrice: budget } : contextualQuery;
   const applied = { budgetMax: budget, childrensProductsExcluded: 0 };
   const fits = (match: ProductMatch) => {
     const issue = !ctx.constraints.forChildren && isChildrensProduct(match.product) && !namedInLatest(ctx, match.product.ref);
@@ -1029,7 +1038,11 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   });
   // Show one card per real product only, preferring approved configurations when multiple were checked.
   const distinctProducts = new Set<string>();
-  const fitting = [...valid].sort((a, b) => Number(b.previewAvailable) - Number(a.previewAvailable)).filter((item) => {
+  // Real room fit outranks AI-preview configuration. Preview eligibility matters
+  // when the shopper explicitly asks for a preview, not during discovery.
+  const roomRanked = rankRoomRecommendations(valid,
+    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.preferences);
+  const fitting = roomRanked.filter((item) => {
     if (distinctProducts.has(item.productRef)) return false;
     distinctProducts.add(item.productRef);
     return true;
@@ -1038,7 +1051,7 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   // out when at least one previewable product exists; eligibility itself is never relaxed.
   const previewable = (item: AssistantRecommendation) => item.previewAvailable && !!item.variantId && !!item.optionValue;
   const roomPreview = wantsRoomPreview(ctx.latestMessage) && fitting.some(previewable);
-  const ranked = roomPreview ? fitting.filter(previewable) : [...fitting.filter(previewable), ...fitting.filter((item) => !previewable(item))];
+  const ranked = roomPreview ? fitting.filter(previewable) : fitting;
   const verified = orderPriceComparison(ranked, ctx.latestMessage);
   const notPreviewable = fitting.length - verified.length;
   if (verified.length) {
@@ -1173,6 +1186,7 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
     case "record_room_observations":
       if (!inputPhotoAvailable(ctx)) return { error: "No photo is attached to this message; use the room notes in the context instead." };
       ctx.room = args;
+      ctx.activeRoom = args;
       ctx.photoNeedsAnalysis = false;
       ctx.emit({ type: "room", room: args });
       return { recorded: true };
@@ -1305,7 +1319,9 @@ async function completeRequestedCards(ctx: RequestContext, history: { role: stri
     return product && matchesRequestedCardCategory(product, category) && !constraintIssue(ctx, product, Number(item.price));
   });
   if (!fitting.length) return;
-  ctx.recommendations = [...ctx.recommendations, ...fitting].slice(0, desired);
+  const ranked = rankRoomRecommendations(fitting,
+    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.preferences);
+  ctx.recommendations = [...ctx.recommendations, ...ranked].slice(0, desired);
   ctx.recommendations.forEach(item => { ctx.explored.add(item.productRef); notePrices(ctx, item.price, item.maxPrice); });
   ctx.emit({ type: "recommendations", items: ctx.recommendations });
 }
@@ -1646,6 +1662,10 @@ async function resolveLatestReference(ctx: RequestContext, message: string) {
 /** The server-verified state the model must follow; rebuilt every turn from structured data, never from prose. */
 function stateMessage(ctx: RequestContext) {
   const lines = ["Authoritative conversation state (server-verified; follow it over anything earlier in the chat):"];
+  if (ctx.intentPlan) {
+    lines.push(`- Internal standalone interpretation (not a customer quote): ${ctx.intentPlan.standaloneQuery}`);
+    lines.push(`- Intended response action: ${ctx.intentPlan.intent}. A product question should not start a new recommendation search or preview unless explicitly requested.`);
+  }
   const count = requestedProductCount(ctx.latestMessage);
   if (count) lines.push(`- The shopper requested ${count} products. Search with limit ${count} and call recommend_products with that many distinct verified matches if available. If fewer can be verified, state the actual number honestly. Do not reuse previously shown products to fill the count.`);
   const budget = ctx.constraints;
@@ -1851,6 +1871,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     latestMessage: history.at(-1)!.content,
     selectionSource: null,
     room: null,
+    activeRoom: input.roomPhoto ? null : room,
+    intentPlan: null,
     preferences: null,
     currentProduct: current,
     zeroVerified: false,
@@ -1859,6 +1881,15 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
   ctx.exploring = ctx.explored.size > 0 && (wantsMoreOptions(ctx.latestMessage) || requestedProductCount(ctx.latestMessage) !== null);
   await resolveLatestReference(ctx, history.at(-1)!.content);
+  const referencedRef = targetRef(ctx);
+  ctx.intentPlan = planShopperTurn({
+    latest: ctx.latestMessage,
+    previousUserMessages: history.slice(0, -1).filter(message => message.role === "user").map(message => message.content),
+    roomKnown: !!ctx.activeRoom || !!input.roomPhoto,
+    newRoomPhoto: !!input.roomPhoto,
+    referencedProductName: referencedRef ? titleOf(ctx, referencedRef) : null,
+    selectedProductName: ctx.selection ? titleOf(ctx, ctx.selection.productRef) : null,
+  });
   emit({ type: "constraints", constraints: ctx.constraints });
   if (current) {
     ctx.fresh.set(current.ref, current);
