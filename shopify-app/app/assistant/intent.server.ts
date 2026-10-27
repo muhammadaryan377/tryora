@@ -15,8 +15,8 @@ export interface IntentPlan {
 }
 
 const CATEGORY = /\b(beds?|bedframes?|sofas?|couches?|settees?|armchairs?|chairs?|tables?|wardrobes?|desks?|rugs?|ottomans?|mattresses?|headboards?|shelves?|dressers?)\b/i;
-const FOLLOW_UP = /^(?:and\s+)?(?:what about|how about|also|and|in (?:grey|gray|cream|beige|black|white|green|blue)|something|any|cheaper|more expensive|better|the (?:first|second|third|last)|this|that|it|those|same|another)\b/i;
-const ACK = /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|thanks|thank you|alright|got it)|(?:(?:this|that|it|the preview)\s+)?(?:looks?|sounds?)\s+(?:good|great|nice|perfect))(?:[!., ]*)$/i;
+const FOLLOW_UP = /^(?:and\s+)?(?:what about|how about|also|and|in (?:grey|gray|cream|beige|black|white|green|blue)|something|any|cheaper|more expensive|better|the (?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last)|this|that|it|those|same|another)\b/i;
+const ACK = /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|thanks|thank you|alright|got it)|(?:(?:this|that|it|the preview)\s+)?(?:looks?|sounds?)\s+(?:good|great|nice|perfect)|i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that))(?:[!., ]*)$/i;
 
 function categoryOf(text: string): string | null {
   const match = text.match(CATEGORY);
@@ -53,14 +53,16 @@ export function planShopperTurn(input: {
   const inheritedCategory = !mentionedCategory && FOLLOW_UP.test(latest) ? previousCategory : null;
   const knownCategory = mentionedCategory ?? inheritedCategory;
   const preview = /\b(preview|visuali[sz]e)\b|\b(?:show|see)\b[^.!?]*\b(?:in my room|in this room)\b|\bhow (?:does|would|will) (?:it|this|that) look\b/i.test(lower);
-  const compare = /\b(compare|versus|vs\.?|difference|which (?:is|one is) better)\b/i.test(lower);
-  const more = /\b(show|see|give|any)\s+(?:me\s+)?more\b|\b(?:more|other|different|another)\s+(?:options?|products?|choices?|ones?|sofas?|beds?)\b|\b(?:something else|show me moes)\b/i.test(lower);
+  const compare = /\b(compare|versus|vs\.?|difference|which (?:is|one is) (?:better|cheaper|more expensive)|which one (?:costs? less|costs? more)|cheapest|least expensive|most expensive|lower price|higher price)\b/i.test(lower);
+  const more = /\b(show|see|give|any)\s+(?:me\s+)?(?:more|moes|mroe)\b|\b(?:more|other|different|another)\s+(?:options?|products?|choices?|ones?|sofas?|beds?)\b|\b(?:something else|anything else)\b/i.test(lower);
   const support = /\b(ship|ships|shipping|deliver(?:y|ies)?|return(?:s)?|refund|warrant(?:y|ies)|order status|opening hours|contact)\b/i.test(lower);
-  const question = /\b(price|cost|how much|dimensions?|materials?|fabrics?|colou?rs?|sizes?|stock|available|made of|does it have|what about)\b/i.test(lower);
+  const question = /\b(price|cost|how much|dimensions?|measurements?|materials?|fabrics?|colou?rs?|sizes?|stock|available|availability|made of|does it have|what about|tell me about|can you explain|is it|does this|what is)\b/i.test(lower);
   const discovery = /\b(show|recommend|suggest|find|looking for|need|pick|choose|best for|what (?:would|will) (?:suit|look|work|be)|which (?:one|furniture))\b/i.test(lower);
+  const explanation = /\bwhy\b.*\b(?:only|show|shown|two|three|\d+)\b/i.test(lower);
   const roomMention = /\b(room|bedroom|living room|my space|this space|here)\b/i.test(lower) || input.newRoomPhoto;
   const intent: ShopperIntent =
     ACK.test(latest) ? "acknowledgement" :
+    explanation ? "product_question" :
     compare ? "comparison" :
     preview ? "preview" :
     more ? "more_options" :
@@ -77,6 +79,9 @@ export function planShopperTurn(input: {
     ...(knownCategory ? [`Furniture category: ${knownCategory}.`] : []),
     ...(input.roomKnown ? ["Use verified observations from the active room (never an older room)."] : []),
     ...(inheritedCategory ? ["This is a follow-up to that earlier furniture category, not a new unrelated search."] : []),
+    ...(intent === "comparison" ? ["Answer the comparison directly using verified prices or attributes. Do not generate another recommendation batch unless explicitly requested."] : []),
+    ...(intent === "product_question" ? ["Answer the actual question first. Do not replace it with new product cards or a generic preview offer."] : []),
+    ...(intent === "acknowledgement" ? ["Respond briefly and naturally. Do not repeat a product card or preview."] : []),
     "Use the latest request to override conflicting earlier preferences. Do not infer an unstated price, variant or product.",
   ];
   return {
