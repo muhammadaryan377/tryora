@@ -54,12 +54,12 @@ export async function skipLead(shopId: string, visitorId: string, channel: LeadC
 
 export async function leadVisitStatus(shopId: string, visitorId: string, channel: LeadChannel) {
   const policy = await leadPolicy(shopId, channel);
-  if (policy.mode === "off") return { satisfied: true };
+  if (policy.mode === "off") return { satisfied: true, hasPreviewed: false };
   const hash = visitorHash(shopId, visitorId);
   const state = await prisma.leadVisit.findUnique({
     where: { shopId_visitorHash_channel: { shopId, visitorHash: hash, channel } },
   });
-  return { satisfied: !!state?.satisfied && state.updatedAt.getTime() >= Date.now() - VISIT_MS };
+  return { satisfied: !!state?.satisfied && state.updatedAt.getTime() >= Date.now() - VISIT_MS, hasPreviewed: !!state?.firstPreviewUsed };
 }
 
 /** Reject an unsatisfied Required lead before running paid photo analysis. */
