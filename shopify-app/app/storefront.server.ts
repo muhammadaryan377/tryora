@@ -30,7 +30,7 @@ import { providerAdapter, resolveConfiguredPreview } from "./customization/regis
 import { isFabricDocument } from "./customization/fabric-manager";
 import { manualStorefrontData } from "./customization/validation.server";
 /**
- * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
+ * Storefront side of Tryora, reached through the Shopify app proxy (/apps/visully/*).
  * Image bytes are handled in process memory and never written to disk or the database here.
  * Delivery, failure and expiry clear the result and abort outstanding work. Providers must honour
  * cancellation; OpenAI additionally requires an explicit data-policy acknowledgement.
