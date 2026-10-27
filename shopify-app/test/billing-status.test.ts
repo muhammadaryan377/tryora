@@ -117,6 +117,9 @@ describe("authenticated store classification and credits", () => {
       id: "gid://shopify/AppSubscription/annual-1", name: "Starter Annual",
       status: "ACTIVE", test: true, currentPeriodEnd: "2027-10-27T12:00:00Z",
     };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    try {
     const status = await ensureBillingAllowance(admin(true, [subscription]), shop);
     expect(status.verified).toBe(true);
     expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(true);
@@ -125,8 +128,10 @@ describe("authenticated store classification and credits", () => {
     await ensureBillingAllowance(admin(true, [subscription]), shop);
     expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
     now = new Date("2026-11-01T00:00:00Z");
+    vi.setSystemTime(now);
     await ensureBillingAllowance(admin(true, [subscription]), shop);
     expect((await fixture.service.balance(shop)).availableTotal).toBe(200);
+    } finally { vi.useRealTimers(); }
   });
 
   it("does not replace a live Shopify subscription with Free credits", async () => {
