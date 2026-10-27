@@ -4,7 +4,7 @@ import { combinationKey } from "./customization/adapters/manual-mapping.server";
 import OpenAI from "openai";
 import type { ProductPreviewConfig, VisualChoice } from "@prisma/client";
 import prisma from "./db.server";
-import { TryoraError } from "./core/index";
+import { VisullyError } from "./core/index";
 import { matchesOptions, nativeSelections, type NativeVariant } from "./core/customization";
 import type { AdminGraphql } from "./preview-product.server";
 import { boundedOpenAIFetch } from "./openai-image-provider.server";
@@ -131,7 +131,7 @@ export interface AssistantRecommendation {
    * reference for this exact variant. "product": the product's featured image, which may show a different option.
    */
   imageSource: ImageSource;
-  /** The approved reference Tryora's preview pipeline validated for this exact variant; null when not previewable. */
+  /** The approved reference Visully's preview pipeline validated for this exact variant; null when not previewable. */
   referenceImage: string | null;
   price: string | null;
   maxPrice: string | null;
@@ -139,7 +139,7 @@ export interface AssistantRecommendation {
   options: Record<string, string>;
   /** Verified from fresh Shopify data in this request. */
   purchaseAvailable: boolean;
-  /** True only after Tryora's strict preview validation passed for this exact variant. */
+  /** True only after Visully's strict preview validation passed for this exact variant. */
   previewAvailable: boolean;
   previewStatus: PreviewStatus;
   /** One shopper-facing explanation when previewAvailable is false; the model receives the same text. */
@@ -239,17 +239,17 @@ export async function assistantStorefrontConfig(shopId: string, page: AssistantP
 // ---------- input normalisation (everything from the browser is untrusted) ----------
 
 export function normaliseAssistantHistory(raw: unknown): AssistantMessage[] {
-  if (!Array.isArray(raw)) throw new TryoraError("BAD_REQUEST");
+  if (!Array.isArray(raw)) throw new VisullyError("BAD_REQUEST");
   const messages = raw.slice(-MAX_HISTORY).map((entry) => {
     const role = (entry as AssistantMessage | null)?.role;
     const content = (entry as AssistantMessage | null)?.content;
-    if ((role !== "user" && role !== "assistant") || typeof content !== "string") throw new TryoraError("BAD_REQUEST");
+    if ((role !== "user" && role !== "assistant") || typeof content !== "string") throw new VisullyError("BAD_REQUEST");
     const clean = content.trim();
     // Assistant turns can be longer than shopper messages; both are bounded.
-    if (!clean || clean.length > (role === "user" ? MAX_MESSAGE_LENGTH : MAX_MESSAGE_OUTPUT)) throw new TryoraError("BAD_REQUEST");
+    if (!clean || clean.length > (role === "user" ? MAX_MESSAGE_LENGTH : MAX_MESSAGE_OUTPUT)) throw new VisullyError("BAD_REQUEST");
     return { role, content: clean };
   });
-  if (!messages.length || messages.at(-1)?.role !== "user") throw new TryoraError("BAD_REQUEST");
+  if (!messages.length || messages.at(-1)?.role !== "user") throw new VisullyError("BAD_REQUEST");
   return messages;
 }
 
@@ -1136,7 +1136,7 @@ async function runVisualise(ctx: RequestContext, args: { productRef: string; var
     ...(overBudget ? { budgetNote: `This is above the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${ctx.constraints.budgetMax}; mention the difference once.` } : {}),
     needsPhoto: !ctx.hasPhoto,
     note: ctx.hasPhoto
-      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Tryora places the item automatically; do not promise exact positions."
+      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Visully places the item automatically; do not promise exact positions."
       : "A preview card is shown. Ask the shopper to attach a room photo, then confirm the card.",
   };
 }
@@ -1209,7 +1209,7 @@ export interface PreviewCheck {
 }
 
 /**
- * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
+ * "Available for AI preview" means Visully's existing strict validation passed for this exact variant, through the
  * same provider adapter chain that startPreview uses. Anything less is reported as not available, with the reason.
  */
 export async function exactPreviewStatus(ctx: PreviewCheckContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<PreviewCheck> {
@@ -1543,7 +1543,7 @@ let clientOverride: (() => OpenAI) | null = null;
 export function setAssistantClientForTests(factory: (() => OpenAI) | null) { clientOverride = factory; }
 
 function openAIClient(env: NodeJS.ProcessEnv = process.env) {
-  if (!assistantProviderReady(env)) throw new TryoraError("PROVIDER_UNAVAILABLE");
+  if (!assistantProviderReady(env)) throw new VisullyError("PROVIDER_UNAVAILABLE");
   return new OpenAI({
     apiKey: env.OPENAI_API_KEY,
     maxRetries: 0,
@@ -1773,12 +1773,12 @@ export async function answerRoomAssistant(input: AssistantTurnInput): Promise<As
   return reply!;
 }
 
-/** Streams one assistant turn through `emit`, ending with a "final" event. Throws TryoraError on failure. */
+/** Streams one assistant turn through `emit`, ending with a "final" event. Throws VisullyError on failure. */
 export async function runAssistantTurn(input: AssistantTurnInput, emit: (event: AssistantEvent) => void): Promise<void> {
   const active = inFlight.get(input.shopId) ?? 0;
   if (active >= MAX_CONCURRENT_PER_SHOP) {
     logAssistant("rate_limited", { shop: input.shopId, reason: "concurrency" });
-    throw new TryoraError("RATE_LIMITED");
+    throw new VisullyError("RATE_LIMITED");
   }
   inFlight.set(input.shopId, active + 1);
   try { await run(input, emit); }
@@ -1883,7 +1883,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
       const remaining = deadline - Date.now();
       if (remaining < 2_000) {
         logAssistant("timeout", { shop: input.shopId, stage: "model", round: rounds });
-        throw new TryoraError("PROVIDER_TIMEOUT");
+        throw new VisullyError("PROVIDER_TIMEOUT");
       }
       const timeout = Math.min(MODEL_CALL_TIMEOUT_MS, remaining);
       const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(timeout)]) : AbortSignal.timeout(timeout);
@@ -1928,10 +1928,10 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
         return response;
       } catch (error) {
         // The shopper stopped or replaced this turn; nothing to log or retry.
-        if (input.signal?.aborted) throw new TryoraError("BAD_REQUEST", "cancelled");
+        if (input.signal?.aborted) throw new VisullyError("BAD_REQUEST", "cancelled");
         if (isTimeout(error) || isAbort(error)) {
           logAssistant("timeout", { shop: input.shopId, stage: "model", round: rounds, ...errorShape(error) });
-          throw new TryoraError("PROVIDER_TIMEOUT");
+          throw new VisullyError("PROVIDER_TIMEOUT");
         }
         logAssistant("openai_failure", { shop: input.shopId, round: rounds, ...errorShape(error) });
         // A retry after text has streamed would duplicate it, so only retry before any output.
@@ -1939,7 +1939,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           await new Promise((resolve) => setTimeout(resolve, 500));
           continue;
         }
-        throw new TryoraError("PROVIDER_UNAVAILABLE");
+        throw new VisullyError("PROVIDER_UNAVAILABLE");
       }
     }
   };
@@ -1993,7 +1993,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const raw = responseText(final).trim();
   if (!raw) {
     logAssistant("model_parse_failure", { shop: input.shopId, reason: "empty" });
-    throw new TryoraError("PROVIDER_UNAVAILABLE");
+    throw new VisullyError("PROVIDER_UNAVAILABLE");
   }
   const shopperText = history.filter((message) => message.role === "user").map((message) => message.content).join(" ");
   const priced = sanitiseMessage(raw, ctx.prices, shopperText);
@@ -2043,6 +2043,6 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
 
 export async function requireAssistantEnabled(shopId: string): Promise<RoomAssistantSettings> {
   const settings = await storeSettings(shopId);
-  if (!settings.enabled || !assistantProviderReady()) throw new TryoraError("PROVIDER_UNAVAILABLE");
+  if (!settings.enabled || !assistantProviderReady()) throw new VisullyError("PROVIDER_UNAVAILABLE");
   return settings;
 }
