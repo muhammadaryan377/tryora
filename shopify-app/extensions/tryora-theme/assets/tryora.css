@@ -600,9 +600,9 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant__card-choices .tryora-assistant__optrow.is-colour { gap:10px; }
 .tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch { width:auto; }
 .tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot { width:36px; height:36px; }
-/* Names stay visible in a row where any colour has no real sample, so plain samples are never ambiguous. */
-.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour:not(.has-plain) .tryora-assistant__swatch-name { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour.has-plain .tryora-assistant__swatch { width:54px; }
+/* Always show the actual colour name under each swatch, including when samples exist. */
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch { width:58px; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-name { position:static; width:auto; max-width:58px; height:auto; overflow:hidden; clip:auto; white-space:normal; }
 .tryora-assistant__card-choices .tryora-assistant__optgroup legend { color:var(--ta-ink); font-size:13px; font-weight:600; }
 .tryora-assistant__card-choices .tryora-assistant__optgroup legend strong { font-weight:400; color:var(--ta-muted); }
 .tryora-assistant__card-choices > .tryora-assistant__chip-button { border:1px solid var(--ta-line); background:var(--ta-bg); text-decoration:none; border-radius:999px; padding:6px 12px; }
