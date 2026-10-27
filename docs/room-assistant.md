@@ -54,16 +54,16 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 
 **Default transport: long-polling a server-side turn buffer**
 
-1. `POST /apps/tryora/assistant/turn` starts the turn and returns `turnId`. A newer question from the same visitor aborts their previous turn.
+1. `POST /apps/visully/assistant/turn` starts the turn and returns `turnId`. A newer question from the same visitor aborts their previous turn.
 2. The server runs the agent loop and appends events: `status`, `delta` (real model output deltas from the streamed Responses API), `reset_text`, `recommendations`, `visualise`, `room`, `preferences`, then `final` (the authoritative message) and `done`, `error` or `cancelled`.
-3. `GET /apps/tryora/assistant/turn/<id>?visitor=&after=n` returns new events as soon as they exist, waiting up to 8 s. Text therefore arrives incrementally even if Shopify's app proxy buffers each response.
+3. `GET /apps/visully/assistant/turn/<id>?visitor=&after=n` returns new events as soon as they exist, waiting up to 8 s. Text therefore arrives incrementally even if Shopify's app proxy buffers each response.
 4. `POST …/turn/<id>/cancel` aborts the model call.
 
 Buffers are bounded (3,000 events, 512 KB), bound to shop and visitor, expire 3 minutes after a turn ends, and hold no photos. Turn IDs carry the worker ID, so with `TRYORA_WORKER_ORIGINS` configured, reads are routed to the instance that owns the turn. The client reconnects through short network drops and resumes from the last event.
 
 **Optional SSE transport (`TRYORA_ASSISTANT_TRANSPORT=sse`)**
 
-`POST /apps/tryora/assistant/stream` returns `text/event-stream` (2 KB padding, `X-Accel-Buffering: no`, keep-alives). If the stream breaks, the browser continues the same turn by polling, without duplicates.
+`POST /apps/visully/assistant/stream` returns `text/event-stream` (2 KB padding, `X-Accel-Buffering: no`, keep-alives). If the stream breaks, the browser continues the same turn by polling, without duplicates.
 
 **What was verified, and what wasn't**
 
@@ -129,7 +129,7 @@ Root causes found for the real-store issues:
 | Card's preview button stuck on "Creating preview…" after a preview | Only the preview message re-rendered | Cards re-render when a job ends |
 
 Also:
-- **Option selector on cards:** "Choose options" or "Change options" opens fabric family chips, circular colour swatches and size, headboard and storage chips. These are built from real Shopify variants (`/apps/tryora/assistant/options`). Composite values such as `Plush Velvet: Cream | Headboard: 50 inches | Storage: No Storage` are split for display only when every value shares one exact shape. A selection resolves to exactly one variant and updates price, stock, image and preview eligibility. Preview eligibility per variant comes from `storefrontConfig`, the product page's own model. Cloudlift and manual mappings point to the product page; no provider is enabled automatically.
+- **Option selector on cards:** "Choose options" or "Change options" opens fabric family chips, circular colour swatches and size, headboard and storage chips. These are built from real Shopify variants (`/apps/visully/assistant/options`). Composite values such as `Plush Velvet: Cream | Headboard: 50 inches | Storage: No Storage` are split for display only when every value shares one exact shape. A selection resolves to exactly one variant and updates price, stock, image and preview eligibility. Preview eligibility per variant comes from `storefrontConfig`, the product page's own model. Cloudlift and manual mappings point to the product page; no provider is enabled automatically.
 - **Memory:**
   - `select_product` remembers "I like the first one".
   - `request_visualisation` uses the selected product, including single-variant products with `variantRef: null`.
@@ -166,7 +166,7 @@ The resolution is written into the developer context as **Authoritative conversa
 
 A *See it in my room* or *Generate preview* button appears only when the server's strict check passed for that exact variant. That check is the same `loadProviderSetting` → adapter → `resolveConfiguredPreview` chain that `startPreview` uses. Cloudlift and manual-mapping products show "choose options on the product page" instead.
 
-Generation calls the existing `/apps/tryora/preview` → `/preview/<job>` → `/ack` endpoints with the exact product, variant and option value. The server therefore re-applies every existing check: reference images, photo analysis, quotas, lead capture and credits. Following the popup's rule, the acknowledgement that consumes a credit is sent only after the image is displayed. If the store requires an email before previews, the chat hands off to the product page popup (`#tryora`).
+Generation calls the existing `/apps/visully/preview` → `/preview/<job>` → `/ack` endpoints with the exact product, variant and option value. The server therefore re-applies every existing check: reference images, photo analysis, quotas, lead capture and credits. Following the popup's rule, the acknowledgement that consumes a credit is sent only after the image is displayed. If the store requires an email before previews, the chat hands off to the product page popup (`#tryora`).
 
 Refinements such as "Show it in cream" or "Try another option" are new verified requests. Placement can't be steered: the instructions forbid promising exact positions, moving furniture, or colours that aren't real variants.
 
@@ -203,7 +203,7 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
    - Stop, Retry, New chat, Clear and Forget room work
    - refresh keeps history
 6. Check the new Admin queries (`TryoraAssistantCatalogue`, `…ProductDetail`, `…StoreInfo`, `…Pages`) succeed against the real store and watch `room-assistant` logs for `shopify_failure`.
-7. Optional: set `TRYORA_ASSISTANT_TRANSPORT=sse` on staging and confirm in browser devtools that `/apps/tryora/assistant/stream` events arrive incrementally through the app proxy. If they arrive all at once, keep `poll`.
+7. Optional: set `TRYORA_ASSISTANT_TRANSPORT=sse` on staging and confirm in browser devtools that `/apps/visully/assistant/stream` events arrive incrementally through the app proxy. If they arrive all at once, keep `poll`.
 8. Only then consider a production release and merchant enablement.
 
 The storefront bundle `shopify-app/extensions/tryora-theme/assets/tryora.js` is generated by `npm run build` and must not be edited by hand.
