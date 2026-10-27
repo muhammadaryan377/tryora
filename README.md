@@ -1,8 +1,8 @@
-# Tryora
+# Visully
 
 Shopify app: shoppers see a merchant's product in a photo of their own room. Merchant admin, storefront popup,
 credits, limits, lead capture and sales tracking are built; real AI images, billing and App Store submission are next.
-The full handover (access, what's built, what's left, test plan) is in the owner's "Tryora developer handover" doc.
+The full handover (access, what's built, what's left, test plan) is in the owner's "Visully developer handover" doc.
 Product decisions: `TRYORA/docs/decisions.md` (owner's folder).
 
 ## Layout
