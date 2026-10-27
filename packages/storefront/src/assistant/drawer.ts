@@ -16,7 +16,7 @@ import { cardForVariant, resolveVariant, selectionsFor, valuesFor, type ProductO
 import { PROXY } from "./transport.js";
 import { tagBasket } from "../attribution.js";
 import { applyAssistantTheme, storefrontAssistantTheme } from "./theme.js";
-import { saveMedia, readMedia, removeMedia, clearMedia } from "./media-cache.js";
+import { saveMedia, readMedia, removeMedia, clearMedia, pruneExpiredMedia } from "./media-cache.js";
 
 export interface AssistantConfig {
   enabled: boolean;
@@ -155,6 +155,7 @@ export class RoomAssistant {
     // Keep lead prompts only for channels that are currently enabled; never persist contact text.
     if (!config.lead || config.lead.mode === "off") this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
     // Initialise recovery even while minimised: browsing other pages must not require an open drawer.
+    void pruneExpiredMedia(this.shop);
     void this.restoreMedia();
   }
 
@@ -296,6 +297,7 @@ export class RoomAssistant {
     this.pendingIntent = null;
     this.pendingPreview = null;
     this.state.room = null;
+    this.state.roomMedia = false;
     const urls = new Set([...this.photoUrls.values(), ...this.originals.values(), this.roomPhoto?.url, this.attachment?.url].filter((url): url is string => !!url));
     for (const url of urls) URL.revokeObjectURL(url);
     this.photoUrls.clear();
@@ -328,6 +330,7 @@ export class RoomAssistant {
     if (photo) {
       this.photoUrls.set(user.id, photo.url);
       this.roomPhoto = photo;
+      this.state.roomMedia = true;
       // Persist compressed browser-local photo before the request so another storefront page can restore it.
       await Promise.all([saveMedia(this.shop, "room", photo.blob), saveMedia(this.shop, `user:${user.id}`, photo.blob)]);
       this.attachment = null;
@@ -627,6 +630,7 @@ export class RoomAssistant {
     if (this.attachment) {
       const previous = this.roomPhoto;
       this.roomPhoto = this.attachment; this.attachment = null;
+      this.state.roomMedia = true;
       void saveMedia(this.shop, "room", this.roomPhoto.blob);
       if (previous?.url !== this.roomPhoto.url) {
         this.state.room = null;
@@ -695,7 +699,8 @@ export class RoomAssistant {
   /** Rehydrate only this shop/tab's local images and reattach to the same server preview job. */
   private async restoreMedia() {
     const epoch = this.restoreEpoch;
-    const room = await readMedia(this.shop, "room");
+    const room = this.state.roomMedia === true || this.state.entries.some(e => e.kind === "user" && e.photo)
+      ? await readMedia(this.shop, "room") : null;
     if (epoch !== this.restoreEpoch) return;
     if (room && !this.roomPhoto) this.roomPhoto = { blob: room, url: URL.createObjectURL(room), name: "Room photo" };
     for (const entry of this.state.entries) {
@@ -936,6 +941,7 @@ export class RoomAssistant {
     void Promise.all([saveMedia(this.shop, "room", result.room), saveMedia(this.shop, `user:${userId}`, result.room), saveMedia(this.shop, `original:${id}`, result.room)]);
     void saveMedia(this.shop, `preview:${id}`, result.image);
     this.roomPhoto = { blob: result.room, url: roomUrl, name: "Room photo" };
+    this.state.roomMedia = true;
     this.state.entries.push({ id: userId, kind: "user", text: `Preview ${result.title}${result.selectionLabel ? ` / ${result.selectionLabel}` : ""} in my room.`, photo: true, at: Date.now() });
     this.previewUrls.set(id, URL.createObjectURL(result.image));
     this.state.entries.push({ id, kind: "preview", item, status: "ready", at: Date.now() });
