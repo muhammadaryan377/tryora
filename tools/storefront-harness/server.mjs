@@ -23,10 +23,10 @@ http.createServer((req, res) => {
   if (u.pathname === "/") return send(res, readFileSync("page.html"), "text/html");
   if (u.pathname.endsWith(".jpg")) return send(res, readFileSync("." + u.pathname), "image/jpeg");
   if (u.pathname.startsWith("/assets/")) return send(res, readFileSync(ASSETS + u.pathname.slice(7)), u.pathname.endsWith(".css") ? "text/css" : "text/javascript");
-  if (u.pathname === "/apps/tryora/config") return send(res, config());
+  if (u.pathname === "/apps/visully/config") return send(res, config());
   const chunks = []; req.on("data", (c) => chunks.push(c)); req.on("end", () => {
-    if (u.pathname === "/apps/tryora/check") return send(res, { ok: true, detected: "existing_item" });
-    if (u.pathname === "/apps/tryora/preview") { const id = "job" + jobs.size; jobs.set(id, Date.now()); return send(res, { jobId: id }); }
+    if (u.pathname === "/apps/visully/check") return send(res, { ok: true, detected: "existing_item" });
+    if (u.pathname === "/apps/visully/preview") { const id = "job" + jobs.size; jobs.set(id, Date.now()); return send(res, { jobId: id }); }
     const m = u.pathname.match(/^\/apps\/tryora\/preview\/(.+)$/);
     if (m) { const age = Date.now() - jobs.get(m[1]); const hold = Number(process.env.HOLD ?? 2500);
       if (age < hold) return send(res, { stage: age < hold / 2 ? "preparing" : "generating" });
