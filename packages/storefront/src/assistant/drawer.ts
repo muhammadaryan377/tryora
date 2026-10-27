@@ -653,7 +653,7 @@ export class RoomAssistant {
       if (code === "LEAD_REQUIRED") {
         entry.error = "This store requires the email step before another preview. No credit was used.";
         this.renderEntry(entry.id);
-        if (this.config.lead?.mode !== "off") this.openLeadForm(chosen, false);
+        if (this.config.lead && this.config.lead.mode !== "off") this.openLeadForm(chosen, false);
         return;
       }
       entry.error = previewErrorMessage(code);
