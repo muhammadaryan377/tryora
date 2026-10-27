@@ -168,7 +168,7 @@ describe("the Egerie incident", () => {
     });
     const developer = requests[0].input.find((item: any) => item.role === "developer").content;
     expect(developer).toContain("Egerie Curved Headboard Beige Boucle Bed");
-    expect(requests[0].instructions).toMatch(/verified context includes a current-page product, include it/);
+    expect(requests[0].instructions).toContain("A current-page product is context, not an automatic recommendation.");
     expect(requests[0].instructions).toContain("Never invent a current selection.");
     expect(toolOutputs(requests, "call-get_product_details")[0].products[0].variants).toHaveLength(3);
     expect(reply.message).toContain("Double, King and Super King");
