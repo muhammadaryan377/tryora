@@ -1476,8 +1476,13 @@ export class RoomAssistant {
     if (this.state.lead.done || !this.config.lead || this.config.lead.mode === "off") return;
     try {
       const response = await fetch(`${PROXY}/lead/status?visitor=${encodeURIComponent(storedVisitorId())}&channel=assistant`, { credentials: "same-origin" });
-      if (response.ok && (await response.json()).satisfied === true) {
-        this.state.lead.done = true;
+      if (response.ok) {
+        const status = await response.json();
+        if (status.satisfied === true) this.state.lead.done = true;
+        else if (status.hasPreviewed === true && this.config.lead?.timing === "after") {
+          // A preview may have been delivered by the separate popup in this visit.
+          this.state.previewsDelivered = Math.max(1, this.state.previewsDelivered);
+        }
         this.save();
       }
     } catch { /* Keep the merchant's required step when verification is unavailable. */ }
