@@ -85,7 +85,7 @@ function stagedUrl(value: string) {
 }
 /** Called only after admin authentication, product ownership, manual-mode and revision checks. */
 export async function uploadFabricMedia(admin: AdminGraphql, productId: string, file: Blob, purpose: "sample" | "reference" = "sample") {
-  const bytes = await cleanFabricImage(file), marker = `Tryora ${purpose === "sample" ? "fabric sample" : "furniture reference"} ${randomUUID()}`;
+  const bytes = await cleanFabricImage(file), marker = `Visully ${purpose === "sample" ? "fabric sample" : "furniture reference"} ${randomUUID()}`;
   const stage = (await result(admin, STAGE_FABRIC_IMAGE, { input: [{ filename: `${randomUUID()}.jpg`, mimeType: "image/jpeg", resource: "IMAGE", httpMethod: "POST", fileSize: String(bytes.length) }] }, "stage", "prepare this upload")).stagedUploadsCreate;
   if (stage?.userErrors?.length || stage?.stagedTargets?.length !== 1) throw refused("stage", "prepare this upload", stage?.userErrors ?? []);
   const target = stage.stagedTargets[0];
