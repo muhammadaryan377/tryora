@@ -1,6 +1,5 @@
-import { useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -8,6 +7,7 @@ import { tryora } from "../tryora.server";
 import { TRIAL_CREDITS, TRIAL_DAYS } from "../core/index";
 
 import { PLANS, TOP_UP } from "../plans";
+import styles from "../styles/billing.module.css";
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
 
@@ -142,265 +142,44 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return { ok: true as const, errors: [] as string[] };
 };
 
-function daysLeft(iso: string | null) {
-  if (!iso) return 0;
-  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000));
-}
-
 const date = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
 export default function Billing() {
   const d = useLoaderData<typeof loader>();
-  const result = useActionData<typeof action>();
-  const nav = useNavigation();
-  const [autoTopUp, setAutoTopUp] = useState(d.autoTopUp);
-  const [cap, setCap] = useState(d.capDollars);
   const currentPlan = PLANS.find((p) => p.id === d.plan);
-  const maxTopUps = cap && Number(cap) >= TOP_UP.price ? Math.floor(Number(cap) / TOP_UP.price) : 0;
 
   return (
-    <s-page heading="Plan & credits">
-      {result?.ok && <s-banner tone="success" heading="Saved" />}
-      {result && !result.ok && (
-        <s-banner tone="critical" heading="Please fix the following">
-          <s-unordered-list>
-            {result.errors.map((e) => (
-              <s-list-item key={e}>{e}</s-list-item>
-            ))}
-          </s-unordered-list>
-        </s-banner>
-      )}
-
-      {!d.paid && d.trial.active && (
-        <s-banner tone="info" heading={`Free trial: ${d.trial.used} of ${d.trialCredits} previews used, ${daysLeft(d.trial.endsAt)} days left`}>
-          <s-paragraph>
-            The trial ends after {d.trialDays} days or {d.trialCredits} previews, whichever comes first. It never turns into a
-            paid plan on its own. Choose a plan below when you're ready.
-          </s-paragraph>
-        </s-banner>
-      )}
-      {!d.paid && d.trial.started && !d.trial.active && (
-        <s-banner tone="warning" heading="Your free trial has ended">
-          <s-paragraph>
-            Shoppers can't make new previews until you choose a plan. Your store and checkout keep working as normal.
-          </s-paragraph>
-        </s-banner>
-      )}
-
-      <s-section heading="Credits">
-        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(150px, 1fr))" gap="base">
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-text color="subdued">Available now</s-text>
-            <s-heading>{d.balance.total}</s-heading>
-          </s-box>
-          {!d.paid ? (
-            <s-box padding="base" background="subdued" borderRadius="base">
-              <s-text color="subdued">Trial credits</s-text>
-              <s-heading>{d.balance.trial}</s-heading>
-            </s-box>
-          ) : (
-            <>
-              <s-box padding="base" background="subdued" borderRadius="base">
-                <s-text color="subdued">This month's plan credits</s-text>
-                <s-heading>{d.balance.period}</s-heading>
-              </s-box>
-              <s-box padding="base" background="subdued" borderRadius="base">
-                <s-text color="subdued">Top-up credits</s-text>
-                <s-heading>{d.balance.topup}</s-heading>
-              </s-box>
-            </>
-          )}
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-text color="subdued">Being made right now</s-text>
-            <s-heading>{d.balance.reserved}</s-heading>
-          </s-box>
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-text color="subdued">Previews delivered this month</s-text>
-            <s-heading>{d.deliveredThisMonth}</s-heading>
-          </s-box>
-        </s-grid>
-        <s-paragraph>
-          <s-text color="subdued">
-            One credit is used only when a shopper receives a finished image. Failed or abandoned attempts, and photos
-            we reject, don't use a credit. Monthly credits are used before top-ups.
-          </s-text>
-        </s-paragraph>
-      </s-section>
-
-      <s-section heading="Usage – last 30 days">
-        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(150px, 1fr))" gap="base">
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-text color="subdued">Credits used</s-text>
-            <s-heading>{d.usage.total - d.usage.refunded}</s-heading>
-          </s-box>
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-text color="subdued">Returned for reported issues</s-text>
-            <s-heading>{d.usage.refunded}</s-heading>
-          </s-box>
-          <s-box padding="base" background="subdued" borderRadius="base">
-            <s-text color="subdued">Attempts not charged</s-text>
-            <s-heading>{d.usage.notCharged}</s-heading>
-          </s-box>
-        </s-grid>
-        <UsageBars days={d.usage.days} />
-        {d.usage.products.length > 0 && (
-          <s-table>
-            <s-table-header-row>
-              <s-table-header listSlot="primary">Product</s-table-header>
-              <s-table-header>Previews</s-table-header>
-            </s-table-header-row>
-            <s-table-body>
-              {d.usage.products.map((p) => (
-                <s-table-row key={p.id}>
-                  <s-table-cell>{p.title}</s-table-cell>
-                  <s-table-cell>{p.count}</s-table-cell>
-                </s-table-row>
-              ))}
-            </s-table-body>
-          </s-table>
-        )}
-      </s-section>
-
-      <s-section heading={d.paid && currentPlan ? `Your plan: ${currentPlan.name}` : "Choose a plan"}>
-        {d.paid && d.periodEnds && (
-          <s-paragraph>Your monthly credits renew on {date(d.periodEnds)}.</s-paragraph>
-        )}
-        <s-grid gridTemplateColumns="repeat(auto-fit, minmax(200px, 1fr))" gap="base">
-          {PLANS.map((p) => {
-            const current = d.paid && d.plan === p.id;
-            return (
-              <s-box key={p.id} padding="base" border={current ? "large-100 strong solid" : "base"} borderRadius="base">
-                <s-stack gap="small-200">
-                  <s-stack direction="inline" justifyContent="space-between" alignItems="center">
-                    <s-heading>{p.name}</s-heading>
-                    {current && <s-badge tone="success">Current plan</s-badge>}
-                  </s-stack>
-                  <s-text type="strong">{usd(p.price)} / month</s-text>
-                  <s-text>{p.previews} previews a month</s-text>
-                  <s-text color="subdued">About {usd(p.price / p.previews)} per preview</s-text>
-                  {!current && (
-                    <s-button disabled accessibilityLabel={`Choose ${p.name} (coming soon)`}>
-                      Choose {p.name}
-                    </s-button>
-                  )}
-                </s-stack>
-              </s-box>
-            );
-          })}
-        </s-grid>
-        <s-paragraph>
-          <s-text color="subdued">
-            Prices in USD before tax, billed through Shopify. Every plan includes all five styles, downloads, email
-            capture, offers and reports. Plan sign-up opens before launch.
-          </s-text>
-        </s-paragraph>
-      </s-section>
-
-      <s-section heading="Top-ups">
-        <s-paragraph>
-          {TOP_UP.previews} extra previews for {usd(TOP_UP.price)}, paid once. Unused top-up credits carry over each month
-          while you're on a paid plan.
-        </s-paragraph>
-        {!d.paid ? (
-          <s-paragraph>
-            <s-text color="subdued">Top-ups are available once you're on a paid plan.</s-text>
-          </s-paragraph>
-        ) : (
-          <Form method="post">
-            {autoTopUp && <input type="hidden" name="autoTopUp" value="on" />}
-            <input type="hidden" name="cap" value={cap} />
-            <s-stack gap="base">
-              <s-button disabled>Buy a top-up (coming soon)</s-button>
-              <s-switch
-                label="Top up automatically when I run out"
-                checked={autoTopUp || undefined}
-                onChange={(e: any) => setAutoTopUp(!!e.currentTarget.checked)}
-                details="Off by default. Without it, new previews pause when credits run out. Checkout is never affected."
-              />
-              {autoTopUp && (
-                <s-number-field
-                  label="Monthly limit for automatic top-ups (USD)"
-                  value={cap}
-                  min={TOP_UP.price}
-                  onInput={(e: any) => setCap(e.currentTarget.value)}
-                  details={
-                    maxTopUps > 0
-                      ? `Up to ${maxTopUps} automatic top-up${maxTopUps === 1 ? "" : "s"} a month.`
-                      : `At least ${usd(TOP_UP.price)}.`
-                  }
-                />
-              )}
-              <s-button type="submit" variant="primary" loading={nav.state === "submitting" || undefined}>
-                Save
-              </s-button>
-            </s-stack>
-          </Form>
-        )}
-      </s-section>
-
-      <s-section heading="Credit history">
-        {d.grants.length === 0 ? (
-          <s-paragraph>
-            <s-text color="subdued">No credits added yet.</s-text>
-          </s-paragraph>
-        ) : (
-          <s-table>
-            <s-table-header-row>
-              <s-table-header listSlot="primary">What</s-table-header>
-              <s-table-header>Credits</s-table-header>
-              <s-table-header listSlot="secondary">Date</s-table-header>
-              <s-table-header>Expires</s-table-header>
-            </s-table-header-row>
-            <s-table-body>
-              {d.grants.map((g) => (
-                <s-table-row key={g.id}>
-                  <s-table-cell>{g.label}</s-table-cell>
-                  <s-table-cell>+{g.quantity}</s-table-cell>
-                  <s-table-cell>{date(g.at)}</s-table-cell>
-                  <s-table-cell>{g.expiresAt ? date(g.expiresAt) : "Doesn't expire"}</s-table-cell>
-                </s-table-row>
-              ))}
-            </s-table-body>
-          </s-table>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="When credits run out">
-        <s-paragraph>
-          The Tryora button stays on your product pages, but shoppers see a short message instead of starting a new
-          preview. Your store and checkout keep working as normal.
-        </s-paragraph>
-      </s-section>
-    </s-page>
-  );
-}
-
-/** Simple daily bar chart. Plain elements, no chart library. */
-function UsageBars({ days }: { days: { date: string; count: number }[] }) {
-  const max = Math.max(1, ...days.map((d) => d.count));
-  const label = (iso: string) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-  return (
-    <figure style={{ margin: "16px 0 8px" }} aria-label="Previews per day, last 30 days">
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 96, borderBottom: "1px solid #d4d4d4" }}>
-        {days.map((d) => (
-          <div
-            key={d.date}
-            title={`${label(d.date)}: ${d.count} preview${d.count === 1 ? "" : "s"}`}
-            style={{
-              flex: 1,
-              height: d.count ? `${Math.max(4, (d.count / max) * 100)}%` : 2,
-              background: d.count ? "#303030" : "#e3e3e3",
-              borderRadius: "3px 3px 0 0",
-            }}
-          />
-        ))}
+    <s-page heading="Plans & Billing" inlineSize="large">
+      <p className={styles.subtitle}>Choose the right plan for your business. Simple, transparent pricing to grow with you.</p>
+      <section className={styles.current} aria-label="Current plan">
+        <p>Your current plan: <span className={styles.badge}>{d.paid && currentPlan ? currentPlan.name : "Free trial"}</span></p>
+        <div className={styles.notice}><span aria-hidden="true">&#9432;</span> {d.paid ? `Your plan includes ${currentPlan?.previews ?? 0} previews each month.${d.periodEnds ? ` Credits renew on ${date(d.periodEnds)}.` : ""}` : `Try Tryora with ${d.trialCredits} previews for ${d.trialDays} days. No automatic charges.`}</div>
+      </section>
+      <div className={styles.plans}>
+        {[{ id: "free", name: "Free", price: 0, previews: 10 }, ...PLANS].map((p) => {
+          return (
+            <section key={p.id} className={styles.plan} aria-label={`${p.name} plan`}>
+              <h2>{p.name}</h2>
+              <p className={styles.price}><strong>${p.price}</strong><span>/month</span></p>
+              <ul className={styles.features}>
+                {["AI room previews", "Furniture recommendations", p.id === "free" ? "Basic analytics" : "Advanced analytics", p.id === "free" ? "Community support" : p.id === "starter" ? "Email support" : "Priority support"].map((feature) => <li key={feature}><span aria-hidden="true">&#10003;</span>{feature}</li>)}
+                <li><span aria-hidden="true">&#10003;</span><div><strong>{p.previews} previews/month</strong>{p.id === "free" && <small className={styles.watermark}>with a small Tryora mark</small>}</div></li>
+              </ul>
+              <button className={styles.select} disabled>Select</button>
+            </section>
+          );
+        })}
       </div>
-      <figcaption style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#616161", marginTop: 4 }}>
-        <span>{label(days[0]!.date)}</span>
-        <span>Busiest day: {max === 1 && !days.some((d) => d.count) ? 0 : max}</span>
-        <span>{label(days[days.length - 1]!.date)}</span>
-      </figcaption>
-    </figure>
+      <section className={styles.information}>
+        <h2>Additional information</h2>
+        <p><span className={styles.infoIcon} aria-hidden="true">&#8853;</span><span><strong>Top-ups:</strong> extra images cost ${TOP_UP.price} per {TOP_UP.previews}, for paid plans only.</span></p>
+        <p><span className={styles.infoIcon} aria-hidden="true">&#8853;</span><span><strong>Annual billing:</strong> paying yearly gets two months free.</span></p>
+      </section>
+      <section className={styles.help}>
+        <div><h2>Need help?</h2><p>Have questions about our plans or need a custom solution?</p></div>
+        <a href="mailto:support@visully.io">Contact support <span aria-hidden="true">&#8599;</span></a>
+      </section>
+    </s-page>
   );
 }
 

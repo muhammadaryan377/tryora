@@ -1,7 +1,7 @@
-// Agreed pricing (build brief section 9). USD, per store, before tax. Shared by billing and the sales report.
+// USD, per store, before tax. Shared by billing and the sales report.
 export const PLANS = [
-  { id: "starter", name: "Starter", price: 34.8, previews: 100 },
-  { id: "growth", name: "Growth", price: 82.8, previews: 250 },
-  { id: "scale", name: "Scale", price: 178.8, previews: 600 },
+  { id: "starter", name: "Starter", price: 29, previews: 100 },
+  { id: "growth", name: "Growth", price: 69, previews: 300 },
+  { id: "scale", name: "Scale", price: 159, previews: 800 },
 ] as const;
-export const TOP_UP = { price: 34.8, previews: 100 };
+export const TOP_UP = { price: 25, previews: 100 };
