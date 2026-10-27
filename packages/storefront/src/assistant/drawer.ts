@@ -129,6 +129,8 @@ export class RoomAssistant {
   private readonly comparisons = new Map<string, string>();
   private active: { controller: AbortController; entryId: string } | null = null;
   private readonly previews = new Map<string, AbortController>();
+  /** Synchronous guard for async eligibility/lead checks before the preview entry exists. */
+  private previewStarting = false;
   /** Only presentation is animated; reply.text always contains the exact real model deltas. */
   private readonly typing = new Map<string, { visible: string; timer: ReturnType<typeof setTimeout> | null }>();
   /** Blocks duplicate clicks while the selected product variant is being verified. */
@@ -602,7 +604,13 @@ export class RoomAssistant {
   }
 
   async startPreview(item: Recommendation) {
-    if (this.config.previewsAvailable === false) return;
+    // Acquire before any await: two products must never pass lead/variant checks concurrently.
+    if (this.previewStarting || this.previews.size > 0 ||
+        this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating") ||
+        this.config.previewsAvailable === false) return;
+    this.previewStarting = true;
+    const startingEpoch = this.conversationEpoch;
+    try {
     let chosen = item;
     // When the shopper is viewing this very product, the product form is the
     // authoritative appearance selection; never generate an older chat variant.
@@ -631,7 +639,10 @@ export class RoomAssistant {
         this.previewChecks.delete(item.id);
       }
     }
+    if (startingEpoch !== this.conversationEpoch) return;
     if (!chosen.previewAvailable || !chosen.variantId || !chosen.optionValue) return;
+    // A restored job can start while variant verification was pending.
+    if (this.previews.size > 0 || this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating")) return;
     // Keep exactly one in-flight paid preview per chat, even when another product is selected.
     if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating")) return;
     const keepConversationChoice = this.state.selected?.source === "conversation" && this.state.selected.productRef === chosen.productRef && this.state.selected.variantRef === chosen.variantRef;
@@ -655,6 +666,9 @@ export class RoomAssistant {
       return;
     }
     await this.refreshLeadStatus();
+    // A New chat / Forget room / Clear conversation during the await invalidates this attempt.
+    if (startingEpoch !== this.conversationEpoch || !this.roomPhoto || this.previews.size > 0 ||
+        this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating")) return;
     if (this.leadNeeded()) { this.openLeadForm(chosen, false); return; }
     const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
     entry.idempotencyKey = entry.id;
@@ -702,6 +716,9 @@ export class RoomAssistant {
       this.syncLauncher();
       // Re-enable the card's preview button (it shows "Creating preview…" while the job runs).
       this.renderAll();
+    }
+    } finally {
+      this.previewStarting = false;
     }
   }
 
