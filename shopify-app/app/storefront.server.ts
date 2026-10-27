@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "./db.server";
 import { tryora } from "./tryora.server";
+import { ensureBillingAllowance } from "./billing-status.server";
 import {
   DEFAULT_WORDING,
   TRIAL_CREDITS,
@@ -46,6 +47,7 @@ export interface Swatch {
   variants: { id: string; image: string | null; options: Record<string, string> }[];
 }
 export async function storefrontConfig(admin: AdminGraphql, shopId: string, productId: string) {
+  await ensureBillingAllowance(admin, shopId);
   ensureSweep();
   await cleanupStalePreviews();
   const gid = productId.startsWith("gid://") ? productId : `gid://shopify/Product/${productId}`;
@@ -301,6 +303,7 @@ export async function startPreview(input: {
     placement: config.placement as Placement, setting: config.setting as Setting, itemNoun: product.itemNoun,
   }, analysisSignal)));
   if (analysis.outcome !== "accepted") throw new TryoraError("BAD_PHOTO");
+  await ensureBillingAllowance(input.admin, input.shopId);
   const roomPhotoHash = createHash("sha256").update(room).digest("hex").slice(0, 32);
   const { job, deduplicated } = await tryora.createPreview({
     workerId,

@@ -5,12 +5,7 @@ import styles from "./home-dashboard.module.css";
 export interface DashboardData {
   shop: string;
   credits: { available: number; reserved: number };
-  trial: {
-    active: boolean;
-    used: number;
-    total: number;
-    endsAt: string | null;
-  };
+  allowance: { developer: boolean | null; verified: boolean; monthly: number };
   paid: boolean;
   abuseAlert: string | null;
   leadCapture: string;
@@ -259,7 +254,7 @@ function ActionArt({
 
 export function HomeDashboard({ data: d }: { data: DashboardData }) {
   const [stepsOpen, setStepsOpen] = useState(true);
-  const [dismissedTrial, setDismissedTrial] = useState<string | null>(null);
+  const [dismissedAllowance, setDismissedAllowance] = useState<string | null>(null);
   const [fabricsHref, setFabricsHref] = useState(
     "/app/fabrics?workspace=manual",
   );
@@ -279,15 +274,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
   }, [d.shop]);
 
   const themeEditor = `https://${d.shop}/admin/themes/current/editor?context=apps`;
-  const trialKey = `${d.shop}:${d.trial.active}:${d.trial.endsAt}`;
-  const daysLeft = d.trial.endsAt
-    ? Math.max(
-        0,
-        Math.ceil(
-          (new Date(d.trial.endsAt).getTime() - Date.now()) / 86_400_000,
-        ),
-      )
-    : 0;
+  const allowanceKey = `${d.shop}:${d.allowance.developer}:${d.allowance.monthly}`;
   const steps = [
     {
       done: d.checklist.products > 0,
@@ -415,21 +402,18 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
             </section>
           )}
 
-          {!d.paid && dismissedTrial !== trialKey && (
-            <section className={styles.alert} aria-label="Trial status">
+          {!d.paid && dismissedAllowance !== allowanceKey && (
+            <section className={styles.alert} aria-label="Credit allowance">
               <span className={styles.warningIcon}>
                 <Icon name="warning" />
               </span>
               <div className={styles.alertCopy}>
                 <h2>
-                  {d.trial.active
-                    ? `Free trial: ${Math.max(0, d.trial.total - d.trial.used)} of ${d.trial.total} previews left`
-                    : "Your free trial has ended"}
+                  {d.allowance.developer ? "Developer testing" : "Free monthly previews"}
                 </h2>
                 <p>
-                  {d.trial.active
-                    ? `Your trial ends in ${daysLeft} days. Trial previews are free and don't renew automatically.`
-                    : "Choose a plan to keep showing previews to your shoppers."}
+                  {!d.allowance.verified ? "Store status could not be verified. Please check Plans & Billing." :
+                    `${d.allowance.monthly} ${d.allowance.developer ? "test " : ""}previews per UTC calendar month. No automatic paid subscription.`}
                 </p>
               </div>
               <Link className={styles.primaryButton} to="/app/billing">
@@ -437,8 +421,8 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
               </Link>
               <button
                 className={styles.iconButton}
-                aria-label="Dismiss trial notice"
-                onClick={() => setDismissedTrial(trialKey)}
+                aria-label="Dismiss credit notice"
+                onClick={() => setDismissedAllowance(allowanceKey)}
               >
                 <Icon name="close" />
               </button>
