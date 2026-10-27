@@ -38,7 +38,7 @@ export default function App() {
         <s-link href="/app/assistant">Room assistant</s-link>
         <s-link href="/app/leads">Leads &amp; offers</s-link>
         <s-link href="/app/limits">Shopper limits</s-link>
-        <s-link href="/app/billing">Plan &amp; credits</s-link>
+        <s-link href="/app/billing">Plans &amp; Billing</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
