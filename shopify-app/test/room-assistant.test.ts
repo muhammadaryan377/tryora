@@ -567,9 +567,12 @@ describe("visual-first recommendations and show more", () => {
       finalAnswer("Here are a few pieces that would suit your room."),
     ]);
     const reply = await ask(fixtureAdmin(products), client, "What furniture would look good in this room?", { room });
-    expect(reply.recommendations.map((item) => item.title)).toEqual(["Linen Lounge Sofa", "Oak Round Coffee Table", "Boucle Accent Armchair", "Jute Area Rug"]);
-    // Each description travels with its own card, unchanged and in order.
-    expect(reply.recommendations.map((item) => item.reason)).toEqual(reasons.slice(0, 4));
+    // Room-aware ranking may change search order. All four real candidates must remain,
+    // with the model's own grounded reason still attached to the correct product.
+    expect(reply.recommendations.map((item) => item.title).sort()).toEqual(
+      ["Linen Lounge Sofa", "Oak Round Coffee Table", "Boucle Accent Armchair", "Jute Area Rug"].sort());
+    const expectedReasons = new Map(products.slice(0, 4).map((product, index) => [product.title, reasons[index]]));
+    for (const item of reply.recommendations) expect(item.reason).toBe(expectedReasons.get(item.title));
     expect(new Set(reply.recommendations.map((item) => item.reason)).size).toBe(4);
     // The saved room notes reached the model, and the instructions ask for real category discovery, not beds only.
     expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain("warm beige");
