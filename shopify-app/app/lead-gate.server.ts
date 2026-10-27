@@ -62,6 +62,19 @@ export async function leadVisitStatus(shopId: string, visitorId: string, channel
   return { satisfied: !!state?.satisfied && state.updatedAt.getTime() >= Date.now() - VISIT_MS };
 }
 
+/** Reject an unsatisfied Required lead before running paid photo analysis. */
+export async function precheckLeadPermission(shopId: string, visitorId: string, channel: LeadChannel): Promise<void> {
+  const policy = await leadPolicy(shopId, channel);
+  if (policy.mode === "off") return;
+  const hash = visitorHash(shopId, visitorId);
+  const entry = await prisma.leadVisit.findUnique({
+    where: { shopId_visitorHash_channel: { shopId, visitorHash: hash, channel } },
+  });
+  if (entry?.satisfied && entry.updatedAt.getTime() >= Date.now() - VISIT_MS) return;
+  if (policy.timing === "after" && !entry?.firstPreviewUsed) return;
+  throw new TryoraError("LEAD_REQUIRED");
+}
+
 /**
  * Reserve an after-first-preview exception atomically. The untrusted leadDone
  * form field is deliberately ignored: email and Skip must be recorded server-side.
