@@ -61,7 +61,7 @@ describe("independent lead capture", () => {
   });
 
   it("writes both channel proofs through an existing transaction without nesting a second one", async () => {
-    const upsert = vi.fn(async () => ({}));
+    const upsert = vi.fn(async (_input: { create: { channel: string } }) => ({}));
     await markLeadCaptured(shop, visitor, { leadVisit: { upsert } } as any);
     expect(upsert).toHaveBeenCalledTimes(2);
     expect(upsert.mock.calls.map(([input]) => input.create.channel)).toEqual(["popup", "assistant"]);
