@@ -577,7 +577,7 @@ describe("recommendation cards and previews", () => {
     click("[data-ta='confirm-preview']");
     await settle(100);
     expect(previewStarts()).toHaveLength(0);
-    expect($(".tryora-assistant__lead")).toHaveLength(1);
+    expect($$(".tryora-assistant__lead")).toHaveLength(1);
     expect($(".tryora-assistant__lead [data-ta='lead-skip']")).toBeNull();
     const email = $(".tryora-assistant__lead input[name='ta-lead-email']") as HTMLInputElement;
     email.value = "shopper@example.com";
@@ -593,7 +593,7 @@ describe("recommendation cards and previews", () => {
     click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(2);
-    expect($(".tryora-assistant__lead")).toHaveLength(0);
+    expect($$(".tryora-assistant__lead")).toHaveLength(0);
   });
 
   it("fails safely when an outdated server still requires email, without displaying a lead form", async () => {
@@ -617,11 +617,11 @@ describe("recommendation cards and previews", () => {
     await settle(1500);
     expect(previewStarts()).toHaveLength(1);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
-    expect($(".tryora-assistant__lead")).toHaveLength(1);
+    expect($$(".tryora-assistant__lead")).toHaveLength(1);
     click("[data-ta='lead-skip']");
     await settle(70);
     expect(proxy.calls.some(c => c.url === "/apps/visully/lead/skip")).toBe(true);
-    expect($(".tryora-assistant__lead [data-ta='lead-submit']")).toHaveLength(0);
+    expect($$(".tryora-assistant__lead [data-ta='lead-submit']")).toHaveLength(0);
   });
 
   it("never starts a second job while one is generating", async () => {
@@ -788,7 +788,7 @@ describe("product images in cards", () => {
     expect(summary.textContent).toContain("Fabric: Velvet");
     expect(summary.textContent).toContain("Colour: Cream");
     expect(summary.textContent).not.toContain("King");
-    expect($(".tryora-assistant__card-actions > *").map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
+    expect($$(".tryora-assistant__card-actions > *").map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
     // Without a real sample it must not invent a swatch colour.
     expect(summary.querySelector(".tryora-assistant__selected-colour-swatch")).toBeNull();
   });
@@ -798,7 +798,7 @@ describe("product images in cards", () => {
       card({ options: { Size: "King" } }),
       card({ id: "2:22", productRef: "2", options: { Color: "<img src=x onerror=alert(1)>" } }),
     ]);
-    expect($(".tryora-assistant__selected-colour")).toHaveLength(1);
+    expect($$(".tryora-assistant__selected-colour")).toHaveLength(1);
     expect($(".tryora-assistant__selected-colour")!.textContent).toContain("<img src=x onerror=alert(1)>");
     expect($(".tryora-assistant__selected-colour img")).toBeNull();
   });
