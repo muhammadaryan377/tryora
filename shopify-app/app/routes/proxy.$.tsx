@@ -30,7 +30,7 @@ import { loadCatalogueWelcome } from "../assistant/suggestions.server";
 import { logAssistant } from "../assistant/log.server";
 
 /**
- * Storefront API behind the Shopify app proxy: the store's /apps/tryora/<path> arrives here as /proxy/<path>.
+ * Storefront API behind the Shopify app proxy: the store's /apps/visully/<path> arrives here as /proxy/<path>.
  * Shopify signs every proxied request; authenticate.public.appProxy rejects anything unsigned.
  */
 
