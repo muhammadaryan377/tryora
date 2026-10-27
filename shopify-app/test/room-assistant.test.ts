@@ -33,6 +33,7 @@ import {
   removeAppearanceChoiceRequests,
   runAssistantTurn,
   sanitiseMessage,
+  verifiedReplyChunks,
   wantsMoreOptions,
   requestedProductCount,
   conciseAssistantReply,
@@ -488,6 +489,29 @@ describe("visualisation in the conversation", () => {
 });
 
 describe("streaming", () => {
+  it("sends ordered verified chunks after tool processing without exposing raw model draft", async () => {
+    const events: AssistantEvent[] = [];
+    const verified = "The cream upholstery complements a warm, neutral room. The design has a softer outline and works well with light wooden furniture.";
+    const { client } = scriptedModel([
+      search({ query: "bed" }),
+      streamed(finalAnswer(verified), ["Unverified price £12,345. ", "The shop definitely has no beds."]),
+    ]);
+    await runAssistantTurn({
+      admin: fixtureAdmin([aria]), shopId: SHOP,
+      history: [{ role: "user", content: "Describe the style in a little detail." }],
+      client, env: {} as any, settings,
+    }, event => events.push(event));
+    const chunks = events.filter((event): event is Extract<AssistantEvent, { type: "delta" }> => event.type === "delta");
+    const reply = events.at(-1) as Extract<AssistantEvent, { type: "final" }>;
+    expect(reply.type).toBe("final");
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.map(chunk => chunk.text).join("")).toBe(reply.reply.message);
+    expect(chunks.map(chunk => chunk.text).join("")).not.toContain("£12,345");
+    expect(events.findIndex(e => e.type === "status" && e.stage === "searching_products"))
+      .toBeLessThan(events.findIndex(e => e.type === "delta"));
+    expect(verifiedReplyChunks(reply.reply.message).join("")).toBe(reply.reply.message);
+  });
+
   it("only delivers concise verified text, never raw model prose", async () => {
     const events: AssistantEvent[] = [];
     const final = finalAnswer("Option 1 is £999. Option 2 is £1,111.");
@@ -672,8 +696,30 @@ describe("multi-turn conversations", () => {
     expect(isConversationAcknowledgement(message)).toBe(true);
     expect(reply.recommendations).toHaveLength(0);
     expect(reply.visualise).toBeNull();
+    // These uncomplicated social reactions are answered locally; no model tool call can repeat cards.
+    expect(requests).toHaveLength(0);
+    expect(reply.message).toMatch(/glad|welcome/i);
+  });
+
+  it("answers which product is cheaper from verified details without showing the same cards again", async () => {
+    const { client, requests } = scriptedModel([
+      toolCall("get_product_details", { productRefs: ["1", "2"], colour: null, size: null, material: null }),
+      recommend([{ productRef: "1", variantRef: null, reason: "Do not repeat this card." }]),
+      finalAnswer("The Aspen Grey Bed costs less than the Aria Bed, based on the verified prices."),
+    ]);
+    const reply = await answerRoomAssistant({
+      admin: fixtureAdmin([aria, aspen]), shopId: SHOP, client, env: {} as any, settings,
+      history: [
+        { role: "user", content: "Show me two beds" },
+        { role: "assistant", content: "Here are Aria and Aspen." },
+        { role: "user", content: "Which one is cheaper?" },
+      ],
+      shown: [{ productRef: "1", variantRef: null }, { productRef: "2", variantRef: null }],
+    });
+    expect(reply.message).toContain("Aspen Grey Bed");
+    expect(reply.recommendations).toHaveLength(0);
     expect(toolOutputs(requests, "call-recommend_products")[0]).toMatchObject({ error: "no_new_cards_requested" });
-    expect(requests[0].instructions).toContain("Respond in natural, concise English");
+    expect(toolOutputs(requests, "call-get_product_details")[0].products).toHaveLength(2);
   });
 
   it("answers a price follow-up from verified details without redisplaying the product", async () => {
@@ -786,16 +832,16 @@ describe("reliability and safety", () => {
 
   it("retries one transient provider error, and reports timeouts separately", async () => {
     const retry = scriptedModel([Object.assign(new Error("busy"), { status: 503 }), search({ query: "hello" }), finalAnswer("Hello! How can I help?")]);
-    await expect(ask(fixtureAdmin([aria]), retry.client, "Hi")).resolves.toMatchObject({ message: "Hello! How can I help?" });
+    await expect(ask(fixtureAdmin([aria]), retry.client, "Can you help me find a bed?")).resolves.toMatchObject({ message: "Hello! How can I help?" });
     expect(retry.requests).toHaveLength(3);
     const timeout = scriptedModel([Object.assign(new Error("timed out"), { name: "APIConnectionTimeoutError" })]);
-    await expect(ask(fixtureAdmin([aria]), timeout.client, "Hi")).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
+    await expect(ask(fixtureAdmin([aria]), timeout.client, "Can you help me find a bed?")).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
     expect(logs.some((line) => line.event === "timeout")).toBe(true);
   });
 
   it("rejects an empty final answer", async () => {
     const { client } = scriptedModel([search({ query: "hi" }), { output: [], output_text: "" }]);
-    await expect(ask(fixtureAdmin([aria]), client, "Hi")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(ask(fixtureAdmin([aria]), client, "Can you help me find a bed?")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
     expect(logs).toContainEqual(expect.objectContaining({ event: "model_parse_failure", reason: "empty" }));
   });
 
@@ -817,12 +863,12 @@ describe("reliability and safety", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const slow = { responses: { create: async () => { await gate; return finalAnswer("ok"); } } } as any;
     const admin = fixtureAdmin([aria]);
-    const running = Array.from({ length: 8 }, () => ask(admin, slow, "Hi"));
+    const running = Array.from({ length: 8 }, () => ask(admin, slow, "Can you help me find a bed?"));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(ask(admin, slow, "Hi")).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    await expect(ask(admin, slow, "Can you help me find a bed?")).rejects.toMatchObject({ code: "RATE_LIMITED" });
     release();
     await Promise.all(running);
-    await expect(ask(admin, scriptedModel([finalAnswer("ok")]).client, "Hi")).resolves.toBeTruthy();
+    await expect(ask(admin, scriptedModel([finalAnswer("ok")]).client, "Can you help me find a bed?")).resolves.toBeTruthy();
   });
 
   it("never offers an AI preview for Cloudlift configurations it cannot verify from chat", async () => {

@@ -297,6 +297,32 @@ export function normalisePreferences(raw: unknown): ShopperPreferences | null {
   return Object.values(preferences).some((entry) => Array.isArray(entry) ? entry.length : entry !== null && entry !== "") ? preferences : null;
 }
 
+/**
+ * Merge the model's incremental preference update with the shopper's existing choices.
+ * Empty fields mean "not mentioned" rather than erasing a previously stated preference.
+ * Explicit "no/any colour" or "forget my budget" still clears that preference.
+ */
+export function mergeShopperPreferences(previous: ShopperPreferences | null, next: ShopperPreferences, latest: string): ShopperPreferences {
+  const original = previous ?? { budgetMin: null, budgetMax: null, colours: [], materials: [], sizes: [], furniture: [], roomDimensions: "", roomNotes: "" };
+  const cleared = (phrase: string) => new RegExp(`\\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\\s+(?:(?:particular|specific)\\s+)?(?:${phrase})\\b`, "i").test(latest);
+  const colours = cleared("colou?rs?|colou?r preference") ? [] : next.colours.length ? next.colours : original.colours;
+  const materials = cleared("materials?|fabrics?|fabric preference") ? [] : next.materials.length ? next.materials : original.materials;
+  const sizes = cleared("sizes?|size preference") ? [] : next.sizes.length ? next.sizes : original.sizes;
+  const furniture = next.furniture.length ? next.furniture : original.furniture;
+  const budgetRemoved = /\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\s+(?:budget|price limit)\b/i.test(latest);
+  const roomNotes = !next.roomNotes ? original.roomNotes
+    : original.roomNotes && !next.roomNotes.toLowerCase().includes(original.roomNotes.toLowerCase()) &&
+        !original.roomNotes.toLowerCase().includes(next.roomNotes.toLowerCase())
+      ? `${original.roomNotes}; ${next.roomNotes}`.slice(0, 240) : next.roomNotes;
+  return {
+    budgetMin: budgetRemoved ? null : next.budgetMin ?? original.budgetMin,
+    budgetMax: budgetRemoved ? null : next.budgetMax ?? original.budgetMax,
+    colours, materials, sizes, furniture,
+    roomDimensions: next.roomDimensions || original.roomDimensions,
+    roomNotes,
+  };
+}
+
 const SOURCES = new Set<SelectionSource>(["card", "options", "conversation"]);
 
 /** The browser's selection. Only refs are trusted; every use re-verifies them against Shopify. */
@@ -1210,11 +1236,13 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
       ctx.photoNeedsAnalysis = false;
       ctx.emit({ type: "room", room: args });
       return { recorded: true };
-    case "update_shopper_context":
-      ctx.preferences = args;
-      ctx.activePreferences = args;
-      ctx.emit({ type: "preferences", preferences: args });
+    case "update_shopper_context": {
+      const merged = mergeShopperPreferences(ctx.activePreferences, args, ctx.latestMessage);
+      ctx.preferences = merged;
+      ctx.activePreferences = merged;
+      ctx.emit({ type: "preferences", preferences: merged });
       return { recorded: true };
+    }
   }
 }
 
@@ -1370,10 +1398,29 @@ export function isConversationAcknowledgement(message: string): boolean {
   return /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|good|thanks|thank you|alright|got it)|(?:(?:that|this|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)|i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that))(?:\s+(?:thanks|thank you|a lot|so much))?[.! ,]*$/i.test(message.trim());
 }
 
+/** Answer only unambiguous social turns locally; factual shopping questions still use verified tools. */
+export function simpleSocialReply(message: string): string | null {
+  const text = message.trim();
+  if (/^(?:hi|hello|hey|hiya|good (?:morning|afternoon|evening))[!. ]*$/i.test(text))
+    return "Hi! I can help you find furniture or preview a product in your room. What are you looking for?";
+  if (/^(?:thanks|thank you|thank you very much|cheers)[!. ]*$/i.test(text))
+    return "You're welcome!";
+  if (/^(?:(?:this|that|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)[!. ]*$/i.test(text) ||
+      /^i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that)[!. ]*$/i.test(text))
+    return "Glad you like it!";
+  if (/^(?:ok(?:ay)?|got it|alright|perfect|great)[!. ]*$/i.test(text)) return "Got it!";
+  return null;
+}
+
 function cardActionNotRequested(ctx: RequestContext): boolean {
-  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  // A question about count or about an already-shown item is not a request for new cards.
+  if (/^\s*(?:how many\b|what(?:'s| is) the number of\b)/i.test(ctx.latestMessage)) return true;
   if (isConversationAcknowledgement(ctx.latestMessage)) return true;
-  // Questions about the previous answer or catalogue count do not request a product selection.
+  const explicitNewCards = /\b(?:show|find|suggest|recommend|list|give me)\b/i.test(ctx.latestMessage);
+  if (!explicitNewCards && ctx.intentPlan &&
+      ["comparison", "product_question", "store_support", "acknowledgement"].includes(ctx.intentPlan.intent)) return true;
+  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  // Questions about the previous answer do not request another product selection.
   if (/^\s*(?:why\b.*\b(?:show|shown|only|two|three|[0-9]+)|how many\b)/i.test(ctx.latestMessage)) return true;
   const reference = ["named", "ordinal", "selected"].includes(ctx.resolution.kind);
   return reference && !wantsRoomPreview(ctx.latestMessage) && !wantsMoreOptions(ctx.latestMessage) &&
@@ -1389,6 +1436,18 @@ export function cardReasonsDistinct(items: { reason?: unknown }[]): boolean {
   return keys.every(Boolean) && new Set(keys).size === keys.length;
 }
 /** The in-card description: at most about 30 words, ending on a whole word. */
+/** A grounded, human-readable introduction derived only from verified cards and saved room observations. */
+export function recommendationIntro(cards: number, request: string, room: RoomObservations | null): string {
+  const fallback = conciseAssistantReply("", cards, request);
+  const colour = room?.colours.find(value => /^[a-z][a-z -]{1,28}$/i.test(value) && !/^(unknown|none|unsure|n\/a)$/i.test(value));
+  const noun = cards === 1 ? "option" : "options";
+  if (colour) return `With the ${colour} tones in your room, here ${cards === 1 ? "is" : "are"} ${cards} ${noun} to consider.`;
+  const style = room?.style?.trim();
+  if (style && /^[a-z][a-z -]{1,28}$/i.test(style) && !/^(unknown|none|mixed|unsure|n\/a)$/i.test(style))
+    return `For your ${style.toLowerCase()} room, here ${cards === 1 ? "is" : "are"} ${cards} ${noun} to consider.`;
+  return fallback;
+}
+
 export function conciseAssistantReply(text: string, cards = 0, request = ""): string {
   if (cards) {
     const wanted = requestedProductCount(request);
@@ -1824,6 +1883,36 @@ export async function answerRoomAssistant(input: AssistantTurnInput): Promise<As
   return reply!;
 }
 
+/**
+ * Incremental delivery of the FINAL, validated reply. Model tool-round text stays hidden:
+ * it may refer to unverified prices, unavailable products, or an obsolete selection.
+ * These chunks can be sent over poll/SSE without exposing an unverified model draft.
+ * This improves on-the-wire display, but does not pretend to stream raw model tokens.
+ */
+export function verifiedReplyChunks(message: string, maxLength = 56): string[] {
+  const chunks: string[] = [];
+  let remaining = message;
+  while (remaining.length > maxLength) {
+    const boundary = remaining.lastIndexOf(" ", maxLength);
+    const end = boundary > maxLength / 2 ? boundary + 1 : maxLength;
+    chunks.push(remaining.slice(0, end));
+    remaining = remaining.slice(end);
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+async function emitVerifiedReply(message: string, emit: (event: AssistantEvent) => void, signal?: AbortSignal) {
+  emit({ type: "status", stage: "writing" });
+  const chunks = verifiedReplyChunks(message);
+  for (let index = 0; index < chunks.length; index++) {
+    if (signal?.aborted) throw new TryoraError("BAD_REQUEST", "cancelled");
+    emit({ type: "delta", text: chunks[index]! });
+    // Yield to the turn transport so SSE/long-poll can deliver individual verified chunks.
+    if (index + 1 < chunks.length) await new Promise((resolve) => setTimeout(resolve, 45));
+  }
+}
+
 /** Streams one assistant turn through `emit`, ending with a "final" event. Throws TryoraError on failure. */
 export async function runAssistantTurn(input: AssistantTurnInput, emit: (event: AssistantEvent) => void): Promise<void> {
   const active = inFlight.get(input.shopId) ?? 0;
@@ -1847,6 +1936,21 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const client = input.client ?? clientOverride?.() ?? openAIClient(env);
   const model = env.OPENAI_ASSISTANT_MODEL?.trim() || "gpt-4.1-mini";
   const history = normaliseAssistantHistory(input.history);
+  // Greetings and simple reactions need no catalogue lookup, model call or paid preview.
+  // Preserve the structured selection and constraints already established in the chat.
+  const social = !input.roomPhoto ? simpleSocialReply(history.at(-1)!.content) : null;
+  if (social) {
+    const reply: AssistantReply = {
+      message: social,
+      room: null, preferences: null, recommendations: [], visualise: null, selected: null,
+      selection: normaliseSelection(input.selected),
+      constraints: nextConstraints(normaliseConstraints(input.constraints), history.at(-1)!.content),
+      model: "local-social",
+    };
+    await emitVerifiedReply(social, emit, input.signal);
+    emit({ type: "final", reply });
+    return;
+  }
   // A newly uploaded image must never reuse the previous room's observations while being analysed.
   const room = input.roomPhoto ? null : normaliseRoomContext(input.room);
   const preferences = normalisePreferences(input.preferences);
@@ -1942,7 +2046,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   let toolCalls = 0;
   let rounds = 0;
   let streamedText = false;
-  /** One model call, streamed. Text deltas are forwarded as they arrive. */
+  /** One model call. Draft text is buffered until all tool checks and sanitisation finish. */
   const call = async (body: Record<string, unknown>) => {
     for (let attempt = 0; ; attempt += 1) {
       const remaining = deadline - Date.now();
@@ -1968,10 +2072,9 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           response = null;
           for await (const event of result as AsyncIterable<any>) {
             if (event?.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
-              if (!streamedText) emit({ type: "status", stage: "writing" });
               streamedText = true;
               deltas += 1;
-              // Final, grounded reply is emitted after the tool loop.
+              // Never publish unverified model drafts to the shopper.
             } else if (event?.type === "response.completed" || event?.type === "response.incomplete") {
               response = event.response;
             } else if (event?.type === "response.failed" || event?.type === "error") {
@@ -1983,9 +2086,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           // Non-streaming result (test doubles): forward its text as a single delta.
           const text = responseText(result);
           if (text && !(result.output ?? []).some((item: any) => item?.type === "function_call")) {
-            if (!streamedText) emit({ type: "status", stage: "writing" });
             streamedText = true;
-            // Final, grounded reply is emitted after the tool loop.
+            // Non-streaming test doubles also stay private until the final checks.
           }
         }
         inputTokens += Number(response?.usage?.input_tokens ?? 0);
@@ -2074,12 +2176,15 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
     : guarded.message), ctx.recommendations.length, ctx.latestMessage);
+  const groundedIntro = ctx.recommendations.length
+    ? recommendationIntro(ctx.recommendations.length, ctx.latestMessage, ctx.activeRoom)
+    : conciseMessage;
   // A count question must answer the verified quantity, even when a recommendation card is also shown.
   // Never trust a count merely written by the model: use the exact result of count_products.
   const countedNoun = ctx.latestMessage.match(/\b(beds?|sofas?|chairs?|tables?|products?|items?|pieces?)\b/i)?.[1]?.toLowerCase();
   const message = /\bhow many\b|\bnumber of\b/i.test(ctx.latestMessage) && ctx.verifiedCount !== null && countedNoun
-    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? conciseMessage : ""}`.trim()
-    : conciseMessage;
+    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? groundedIntro : ""}`.trim()
+    : groundedIntro;
   const reply: AssistantReply = {
     message,
     room: ctx.room,
@@ -2108,7 +2213,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     photo: !!input.roomPhoto,
     model,
   }, "info");
-  emit({ type: "delta", text: message });
+  await emitVerifiedReply(message, emit, input.signal);
   emit({ type: "final", reply });
 }
 

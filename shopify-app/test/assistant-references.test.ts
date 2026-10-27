@@ -93,6 +93,12 @@ describe("product references", () => {
     expect(resolve("Show me the second one")).toEqual({ kind: "ordinal", productRef: "102", position: 2 });
     expect(resolve("option 3 please")).toEqual({ kind: "ordinal", productRef: "103", position: 3 });
     expect(resolve("the last one")).toEqual({ kind: "ordinal", productRef: "103", position: 3 });
+    expect(resolve("the fourth one", { shown: ["101", "102", "103", "104"] }))
+      .toEqual({ kind: "ordinal", productRef: "104", position: 4 });
+    expect(resolve("option 10", { shown: Array.from({ length: 10 }, (_, index) => String(index + 1)) }))
+      .toEqual({ kind: "ordinal", productRef: "10", position: 10 });
+    expect(resolve("the tenth one", { shown: Array.from({ length: 10 }, (_, index) => String(index + 1)) }))
+      .toEqual({ kind: "ordinal", productRef: "10", position: 10 });
     // The latest message beats an older selection.
     expect(resolve("the second one", { selected: { productRef: "101", variantRef: null, source: "conversation" } })).toMatchObject({ productRef: "102" });
   });
