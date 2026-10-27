@@ -14,6 +14,8 @@
     "start": "react-router-serve ./build/server/index.js",
     "docker-start": "npm run start",
     "setup": "prisma generate",
+    "db:status": "prisma migrate status",
+    "db:deploy": "prisma migrate deploy",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
     "shopify": "shopify",
     "prisma": "prisma",
