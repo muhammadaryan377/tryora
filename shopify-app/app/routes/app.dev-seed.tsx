@@ -77,7 +77,7 @@ async function seed({ request }: ActionFunctionArgs) {
           vendor: "Tryora test",
           status: "ACTIVE",
           tags: ["tryora-test"],
-          descriptionHtml: "<p>Test product for checking Tryora's colour swatches. Safe to delete.</p>",
+          descriptionHtml: "<p>Test product for checking Visully's colour swatches. Safe to delete.</p>",
           productOptions: [
             { name: "Colour", values: COLOURS.map(([name]) => ({ name })) },
           ],
@@ -143,7 +143,7 @@ export default function DevSeed() {
       {result?.ok && "handle" in result && (
         <s-banner tone="success" heading="Test sofa created">
           <s-paragraph>
-            Handle: {result.handle}. {result.mediaReady ? "Tryora is on for it." : "Photo still processing – set it up in Products."}
+            Handle: {result.handle}. {result.mediaReady ? "Visully is on for it." : "Photo still processing – set it up in Products."}
           </s-paragraph>
         </s-banner>
       )}
@@ -153,14 +153,14 @@ export default function DevSeed() {
         </s-banner>
       )}
       <s-section>
-        <s-paragraph>Recalculates "Sales from Tryora" now and shows the raw numbers, even below the 3× / 3-order threshold.</s-paragraph>
+        <s-paragraph>Recalculates "Sales from Visully" now and shows the raw numbers, even below the 3× / 3-order threshold.</s-paragraph>
         <Form method="post">
           <input type="hidden" name="intent" value="sales" />
           <s-button type="submit">Check sales report</s-button>
         </Form>
       </s-section>
       <s-section>
-        <s-paragraph>Creates "Form Sofa (Tryora test)" with 25 colours (2 sold out) and turns Tryora on for it.</s-paragraph>
+        <s-paragraph>Creates "Form Sofa (Tryora test)" with 25 colours (2 sold out) and turns Visully on for it.</s-paragraph>
         <Form method="post">
           <s-button type="submit" variant="primary" loading={nav.state === "submitting" || undefined}>
             Create test sofa
