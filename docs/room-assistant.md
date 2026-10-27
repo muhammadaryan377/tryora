@@ -70,6 +70,14 @@ Buffers are bounded (3,000 events, 512 KB), bound to shop and visitor, expire 3 
 - Real Chrome against a local HTTP server running the real turn handlers: long-poll delivered at least 3 partial answer states over more than 750 ms before the final text, and SSE delivered at least 4 incremental states over one real chunked HTTP response.
 - **Not verified:** whether Shopify's app proxy forwards SSE chunks unbuffered. That needs a real store, which is why SSE is off by default. Long-polling doesn't depend on it.
 
+**ChatGPT-style live rendering**
+
+- The browser displays the real model's `delta` events as they arrive. Large network-coalesced chunks are gently paced (24 ms presentation ticks), while small chunks appear immediately; no invented text or duplicate AI requests.
+- The writing cursor appears only on an actively streaming response. `reset_text` clears a discarded tool-call draft, and `final` immediately commits the sanitised authoritative answer without leaving stale animation timers.
+- Existing verified product cards appear as soon as their server events arrive. They replace only the current assistant message node, not the whole conversation, preventing scroll jumps and chat flicker.
+- Stopping a turn, New Chat, Clear Conversation, changing pages or minimising the drawer cancels/avoids queued typing animations. The full latest true text is available on reopen. Users with reduced-motion preferences receive deltas instantly.
+- This is **real streaming through long polling**, not a synthetic response written ahead of time. First-token speed still depends on model/provider processing and Shopify network conditions.
+
 **Safety of streamed text**
 
 Recommendations are only shown as cards that the server has verified, and they arrive before the prose. The final message replaces the streamed draft, and any price the server never returned (and the shopper never typed) is removed from it. Stock and preview status appear only on cards.
