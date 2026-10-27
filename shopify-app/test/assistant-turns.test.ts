@@ -170,7 +170,9 @@ describe("app proxy turn handlers", () => {
     const text = await response.text();
     const events = text.split("\n\n").filter((block) => block.includes("data: ") && !block.includes("event: turn")).map((block) => JSON.parse(block.slice(block.indexOf("data: ") + 6)));
     expect(text).toMatch(/event: turn\ndata: \{"turnId":"[^"]+"\}/);
-    expect(events.filter((event) => event.type === "delta")).toHaveLength(4);
+    // Model fragments stay buffered until the answer passes store-grounding checks.
+    expect(events.filter((event) => event.type === "delta").map((event) => event.text).join("")).toBe("Yes, the Luna bed comes in grey.");
+    expect(events.filter((event) => event.type === "delta")).toHaveLength(1);
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 
