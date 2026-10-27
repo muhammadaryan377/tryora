@@ -200,6 +200,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   } catch (e) {
     const code = errorCode(e);
     if (path.startsWith("assistant/") && code === "RATE_LIMITED") logAssistant("rate_limited", { shop: shopId, reason: "request_window" });
+    if (path === "lead" && code === "UNEXPECTED") {
+      // Missing LeadDelivery columns / LeadVisit table are common after a backend-only Railway deployment.
+      // Log safe Prisma error categories only: raw exceptions can contain shopper emails or SQL arguments.
+      const rawCode = (e as { code?: unknown } | null)?.code;
+      const reason = rawCode === "P2021" || rawCode === "P2022" ? "migration_required"
+        : rawCode === "P1001" || rawCode === "P1002" ? "database_unreachable" : "persistence_failed";
+      logAssistant("lead_capture_failure", { shop: shopId, reason });
+      return json({ error: reason === "migration_required" ? "LEAD_DATABASE_UPDATE_REQUIRED" : "LEAD_STORAGE_UNAVAILABLE" }, 503);
+    }
     const status = code === "RATE_LIMITED" ? 429 :
       code === "PROVIDER_UNAVAILABLE" || code === "PROVIDER_TIMEOUT" ? 503 : 400;
     return json({ error: code }, status);

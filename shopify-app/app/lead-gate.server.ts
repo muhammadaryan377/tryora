@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import prisma from "./db.server";
 import { TryoraError } from "./core/index";
 
@@ -29,15 +30,19 @@ export async function leadPolicy(shopId: string, channel: LeadChannel) {
   return { mode, timing };
 }
 
-export async function markLeadCaptured(shopId: string, visitorId: string) {
+export async function markLeadCaptured(shopId: string, visitorId: string, tx?: Prisma.TransactionClient) {
   const hash = visitorHash(shopId, visitorId);
-  // Email was saved for this visitor: do not require the same email in the other enabled experience.
-  await prisma.$transaction(["popup", "assistant"].map(channel =>
-    prisma.leadVisit.upsert({
+  // A captured email satisfies both experiences, but each channel keeps its own skip policy.
+  // Reuse the surrounding lead transaction when provided; the contact and proof must commit together.
+  const client = tx ?? prisma;
+  const writes = ["popup", "assistant"].map(channel =>
+    client.leadVisit.upsert({
       where: { shopId_visitorHash_channel: { shopId, visitorHash: hash, channel } },
       create: { shopId, visitorHash: hash, channel, satisfied: true },
       update: { satisfied: true },
-    })));
+    }));
+  if (tx) await Promise.all(writes);
+  else await prisma.$transaction(writes);
 }
 
 export async function skipLead(shopId: string, visitorId: string, channel: LeadChannel) {

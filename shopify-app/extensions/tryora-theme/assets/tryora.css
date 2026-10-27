@@ -271,6 +271,18 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__message--assistant .tryora-assistant__bubble { border-bottom-left-radius: 4px; }
 .tryora-assistant__bubble.is-empty .tryora-assistant__text { display: none; }
 .tryora-assistant__text p + p, .tryora-assistant__text ul + p, .tryora-assistant__text p + ul { margin-top: 7px; }
+/* Streaming cursor only while actual model words are arriving. Hidden once final, stopped or cancelled. */
+.tryora-assistant__bubble[aria-busy="true"]:not(.is-empty) .tryora-assistant__text > p:last-child::after,
+.tryora-assistant__bubble[aria-busy="true"]:not(.is-empty) .tryora-assistant__text > ul:last-child > li:last-child::after {
+  content: ""; display: inline-block; width: 2px; height: .95em; margin-left: 3px;
+  vertical-align: -.12em; background: currentColor; opacity: .65;
+  animation: tryora-assistant-cursor 1s steps(1) infinite;
+}
+@keyframes tryora-assistant-cursor { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .tryora-assistant__bubble[aria-busy="true"] .tryora-assistant__text > p:last-child::after,
+  .tryora-assistant__bubble[aria-busy="true"] .tryora-assistant__text > ul:last-child > li:last-child::after { animation: none; opacity: .55; }
+}
 .tryora-assistant__text ul { padding-left: 18px; }
 .tryora-assistant__text li + li { margin-top: 3px; }
 .tryora-assistant__user-photo { width: 168px; max-width: 70%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 12px; border: 1px solid var(--ta-line); }
@@ -440,6 +452,10 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant-launch__dot { display: none; position: absolute; top: 4px; left: 32px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; background: #d9573f; }
 .tryora-assistant-launch.has-unread .tryora-assistant-launch__dot, .tryora-assistant-launch.has-conversation .tryora-assistant-launch__dot { display: block; }
 .tryora-assistant-launch.has-conversation:not(.has-unread) .tryora-assistant-launch__dot { background: #8fbf6a; }
+/* Shoppers can minimise the assistant and browse while its existing job continues. */
+.tryora-assistant-launch.is-generating:not(.is-hidden) .tryora-assistant-launch__dot { display: block; background: #deb65b; animation: tryora-assistant-dot 1.1s infinite; }
+.tryora-assistant__preview.is-loading { flex-wrap: wrap; }
+.tryora-assistant__preview.is-loading > .tryora-assistant__chip-button { flex: 0 0 auto; }
 .tryora-assistant-launch.is-hidden { opacity: 0; pointer-events: none; transform: scale(.92); }
 .tryora-assistant-launch--bottom-right { right: 20px; }
 .tryora-assistant-launch--bottom-left { left: 20px; }
@@ -600,9 +616,9 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant__card-choices .tryora-assistant__optrow.is-colour { gap:10px; }
 .tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch { width:auto; }
 .tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-dot { width:36px; height:36px; }
-/* Names stay visible in a row where any colour has no real sample, so plain samples are never ambiguous. */
-.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour:not(.has-plain) .tryora-assistant__swatch-name { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
-.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour.has-plain .tryora-assistant__swatch { width:54px; }
+/* Always show the actual colour name under each swatch, including when samples exist. */
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch { width:58px; }
+.tryora-assistant__card-choices .tryora-assistant__optrow.is-colour .tryora-assistant__swatch-name { position:static; width:auto; max-width:58px; height:auto; overflow:hidden; clip:auto; white-space:normal; }
 .tryora-assistant__card-choices .tryora-assistant__optgroup legend { color:var(--ta-ink); font-size:13px; font-weight:600; }
 .tryora-assistant__card-choices .tryora-assistant__optgroup legend strong { font-weight:400; color:var(--ta-muted); }
 .tryora-assistant__card-choices > .tryora-assistant__chip-button { border:1px solid var(--ta-line); background:var(--ta-bg); text-decoration:none; border-radius:999px; padding:6px 12px; }

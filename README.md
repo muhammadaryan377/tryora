@@ -35,6 +35,7 @@ Docker builds generate Prisma Client; startup only starts the server. `npm run s
 also only generates the client. Database creation and schema changes require a separate,
 explicitly authorized database operation; development startup does not apply migrations.
 See `docs/release-safety-review.md` for release gates and the migration/rollback plan.
+**Important for 27 October leads:** Lead Capture ON requires the reviewed `LeadDelivery` contact columns and `LeadVisit` table in the actual Railway database. After an authorized backup and baseline check, run `npm --prefix shopify-app run db:status`, apply approved pending changes with `npm --prefix shopify-app run db:deploy`, and verify status again before the backend release. Code-only deployment can leave the email step failing (HTTP 503 `LEAD_DATABASE_UPDATE_REQUIRED`). See `docs/lead-capture-dashboard.md` for details. No database migration is run automatically.
 
 ## Rules
 - Never store shopper photos or generated images. Preview lead contact details (email, optional first name and explicit marketing choice) are retained only in the authenticated merchant lead dashboard; Shopify customer sync is best-effort. Never put contact details in logs or browser storage. See docs/lead-capture-dashboard.md for retention and release details.

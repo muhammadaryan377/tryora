@@ -486,16 +486,22 @@ export async function captureLead(
   const tag = leadSettings.customerTag || "tryora-lead";
   const firstName = input.firstName?.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80) || null;
   const marketing = input.marketing && leadSettings.showOptIn !== false;
-  // Save the merchant's lead independently of optional Shopify customer sync.
-  // Contact data stays in this shop's authenticated dashboard, never in browser storage or logs.
-  const lead = await prisma.leadDelivery.create({
-    data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue,
-      email, firstName, marketingOptIn: marketing,
-      marketingWording: marketing ? (leadSettings.optInWording || input.wording).slice(0, 1000) : null,
-      status: "queued" },
+  // An accepted email and the server-side visitor proof must be committed atomically.
+  // Otherwise a failed LeadVisit write leaves duplicate "queued" contacts while previews stay blocked.
+  // A missing database migration must fail closed rather than silently bypassing Required capture.
+  // Contact details are retained only in this shop's authenticated dashboard, never in browser logs.
+  const lead = await prisma.$transaction(async (tx) => {
+    const saved = await tx.leadDelivery.create({
+      data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue,
+        email, firstName, marketingOptIn: marketing,
+        marketingWording: marketing ? (leadSettings.optInWording || input.wording).slice(0, 1000) : null,
+        status: "queued" },
+    });
+    if (input.visitorId) await markLeadCaptured(input.shopId, input.visitorId, tx);
+    return saved;
   });
-  if (input.visitorId) await markLeadCaptured(input.shopId, input.visitorId);
-  await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
+  // Analytics must never block a successfully persisted lead or a preview.
+  await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } }).catch(() => {});
   let customerRef: string | null = null;
   try {
     const res = await admin.graphql(
