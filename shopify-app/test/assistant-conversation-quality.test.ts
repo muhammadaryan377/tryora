@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { planShopperTurn } from "../app/assistant/intent.server";
-import { mergeShopperPreferences, recommendationIntro, type ShopperPreferences, type RoomObservations } from "../app/room-assistant.server";
+import { mergeShopperPreferences, recommendationIntro, simpleSocialReply, type ShopperPreferences, type RoomObservations } from "../app/room-assistant.server";
 
 const intent = (latest: string, previousUserMessages = ["Show me sofas"]) => planShopperTurn({
   latest, previousUserMessages, roomKnown: true, newRoomPhoto: false,
@@ -8,6 +8,15 @@ const intent = (latest: string, previousUserMessages = ["Show me sofas"]) => pla
 });
 
 describe("natural English conversation understanding", () => {
+  it("responds to simple greetings and reactions without inventing product claims", () => {
+    expect(simpleSocialReply("Hi!")).toContain("What are you looking for?");
+    expect(simpleSocialReply("Thanks")).toBe("You're welcome!");
+    expect(simpleSocialReply("Looks great!")).toBe("Glad you like it!");
+    expect(simpleSocialReply("What is the delivery price?")).toBeNull();
+    expect(simpleSocialReply("I like the second one")).toBeNull();
+  });
+
+
   it("treats which one is cheaper as a comparison, not a new catalogue search", () => {
     expect(intent("Which one is cheaper?").intent).toBe("comparison");
     expect(intent("Which one is better?").intent).toBe("comparison");
