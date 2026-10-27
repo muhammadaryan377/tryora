@@ -620,8 +620,8 @@ export class RoomAssistant {
       }
     }
     if (!chosen.previewAvailable || !chosen.variantId || !chosen.optionValue) return;
-    // One job per card at a time: a double click never starts (or charges for) a second preview.
-    if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating" && entry.item.id === chosen.id)) return;
+    // Keep exactly one in-flight paid preview per chat, even when another product is selected.
+    if (this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating")) return;
     const keepConversationChoice = this.state.selected?.source === "conversation" && this.state.selected.productRef === chosen.productRef && this.state.selected.variantRef === chosen.variantRef;
     this.state.selected = { productRef: chosen.productRef, variantRef: chosen.variantRef, source: keepConversationChoice ? "conversation" : "card" };
     if (this.attachment) {
@@ -646,7 +646,6 @@ export class RoomAssistant {
     const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
     entry.idempotencyKey = entry.id;
     this.originals.set(entry.id, this.roomPhoto.url);
-    await Promise.all([saveMedia(this.shop, "room", this.roomPhoto.blob), saveMedia(this.shop, `original:${entry.id}`, this.roomPhoto.blob)]);
     this.state.entries.push(entry);
     this.save();
     this.renderAll();
@@ -655,6 +654,8 @@ export class RoomAssistant {
     this.previews.set(entry.id, controller);
     this.syncLauncher();
     try {
+      await Promise.all([saveMedia(this.shop, "room", this.roomPhoto.blob), saveMedia(this.shop, `original:${entry.id}`, this.roomPhoto.blob)]);
+      if (controller.signal.aborted) return;
       const { url, acknowledge } = await generatePreview({
         item: chosen,
         photo: this.roomPhoto.blob,
@@ -736,9 +737,10 @@ export class RoomAssistant {
           entry.stage = stage; this.renderEntry(entry.id);
         },
       };
+      const original = entry.jobId ? null : await readMedia(this.shop, `original:${entry.id}`);
       const result = entry.jobId ? await resumePreview(entry.jobId, input)
-        : this.roomPhoto ? await generatePreview({
-          ...input, item: entry.item, photo: this.roomPhoto.blob, visitor: storedVisitorId(),
+        : original ? await generatePreview({
+          ...input, item: entry.item, photo: original, visitor: storedVisitorId(),
           leadDone: this.leadDoneFlag(), idempotencyKey: entry.idempotencyKey,
           onJobCreated: jobId => { entry.jobId = jobId; this.save(); },
         }) : null;
@@ -769,7 +771,12 @@ export class RoomAssistant {
       const response = await fetch(url);
       if (response.ok) await saveMedia(this.shop, `preview:${entry.id}`, await response.blob());
     } catch { /* The image still works on this page if browser storage is denied. */ }
-    if (controller.signal.aborted || !this.state.entries.includes(entry)) return;
+    if (controller.signal.aborted || !this.state.entries.includes(entry)) {
+      this.previewUrls.delete(entry.id);
+      URL.revokeObjectURL(url);
+      void removeMedia(this.shop, `preview:${entry.id}`);
+      return;
+    }
     entry.status = "ready"; entry.stage = undefined;
     this.state.previewsDelivered += 1;
     this.save();
@@ -1986,7 +1993,7 @@ export class RoomAssistant {
     if (!launcher) return;
     const generating = this.state.entries.some(entry => entry.kind === "preview" && entry.status === "generating");
     launcher.classList.toggle("is-generating", generating);
-    launcher.setAttribute("aria-label", generating ? "Room Assistant — preview generating, continue browsing" : "Room Assistant");
+    launcher.setAttribute("aria-label", generating ? `${this.config.launcher.label}: preview generating, continue browsing` : this.config.launcher.label);
     launcher.setAttribute("aria-expanded", String(this.visible));
     launcher.classList.toggle("is-hidden", this.visible);
     if (this.visible) launcher.classList.remove("has-unread");
