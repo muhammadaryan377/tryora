@@ -297,6 +297,32 @@ export function normalisePreferences(raw: unknown): ShopperPreferences | null {
   return Object.values(preferences).some((entry) => Array.isArray(entry) ? entry.length : entry !== null && entry !== "") ? preferences : null;
 }
 
+/**
+ * Merge the model's incremental preference update with the shopper's existing choices.
+ * Empty fields mean "not mentioned" rather than erasing a previously stated preference.
+ * Explicit "no/any colour" or "forget my budget" still clears that preference.
+ */
+export function mergeShopperPreferences(previous: ShopperPreferences | null, next: ShopperPreferences, latest: string): ShopperPreferences {
+  const original = previous ?? { budgetMin: null, budgetMax: null, colours: [], materials: [], sizes: [], furniture: [], roomDimensions: "", roomNotes: "" };
+  const cleared = (phrase: string) => new RegExp(`\\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\\s+(?:(?:particular|specific)\\s+)?(?:${phrase})\\b`, "i").test(latest);
+  const colours = cleared("colou?rs?|colou?r preference") ? [] : next.colours.length ? next.colours : original.colours;
+  const materials = cleared("materials?|fabrics?|fabric preference") ? [] : next.materials.length ? next.materials : original.materials;
+  const sizes = cleared("sizes?|size preference") ? [] : next.sizes.length ? next.sizes : original.sizes;
+  const furniture = next.furniture.length ? next.furniture : original.furniture;
+  const budgetRemoved = /\\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\\s+(?:budget|price limit)\\b/i.test(latest);
+  const roomNotes = !next.roomNotes ? original.roomNotes
+    : original.roomNotes && !next.roomNotes.toLowerCase().includes(original.roomNotes.toLowerCase()) &&
+        !original.roomNotes.toLowerCase().includes(next.roomNotes.toLowerCase())
+      ? `${original.roomNotes}; ${next.roomNotes}`.slice(0, 240) : next.roomNotes;
+  return {
+    budgetMin: budgetRemoved ? null : next.budgetMin ?? original.budgetMin,
+    budgetMax: budgetRemoved ? null : next.budgetMax ?? original.budgetMax,
+    colours, materials, sizes, furniture,
+    roomDimensions: next.roomDimensions || original.roomDimensions,
+    roomNotes,
+  };
+}
+
 const SOURCES = new Set<SelectionSource>(["card", "options", "conversation"]);
 
 /** The browser's selection. Only refs are trusted; every use re-verifies them against Shopify. */
@@ -1210,11 +1236,13 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
       ctx.photoNeedsAnalysis = false;
       ctx.emit({ type: "room", room: args });
       return { recorded: true };
-    case "update_shopper_context":
-      ctx.preferences = args;
-      ctx.activePreferences = args;
-      ctx.emit({ type: "preferences", preferences: args });
+    case "update_shopper_context": {
+      const merged = mergeShopperPreferences(ctx.activePreferences, args, ctx.latestMessage);
+      ctx.preferences = merged;
+      ctx.activePreferences = merged;
+      ctx.emit({ type: "preferences", preferences: merged });
       return { recorded: true };
+    }
   }
 }
 
@@ -1389,6 +1417,18 @@ export function cardReasonsDistinct(items: { reason?: unknown }[]): boolean {
   return keys.every(Boolean) && new Set(keys).size === keys.length;
 }
 /** The in-card description: at most about 30 words, ending on a whole word. */
+/** A grounded, human-readable introduction derived only from verified cards and saved room observations. */
+export function recommendationIntro(cards: number, request: string, room: RoomObservations | null): string {
+  const fallback = conciseAssistantReply("", cards, request);
+  const colour = room?.colours.find(value => /^[a-z][a-z -]{1,28}$/i.test(value) && !/^(unknown|none|unsure|n\/a)$/i.test(value));
+  const noun = cards === 1 ? "option" : "options";
+  if (colour) return `With the ${colour} tones in your room, here ${cards === 1 ? "is" : "are"} ${cards} ${noun} to consider.`;
+  const style = room?.style?.trim();
+  if (style && /^[a-z][a-z -]{1,28}$/i.test(style) && !/^(unknown|none|mixed|unsure|n\/a)$/i.test(style))
+    return `For your ${style.toLowerCase()} room, here ${cards === 1 ? "is" : "are"} ${cards} ${noun} to consider.`;
+  return fallback;
+}
+
 export function conciseAssistantReply(text: string, cards = 0, request = ""): string {
   if (cards) {
     const wanted = requestedProductCount(request);
@@ -2102,12 +2142,15 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
     : guarded.message), ctx.recommendations.length, ctx.latestMessage);
+  const groundedIntro = ctx.recommendations.length
+    ? recommendationIntro(ctx.recommendations.length, ctx.latestMessage, ctx.activeRoom)
+    : conciseMessage;
   // A count question must answer the verified quantity, even when a recommendation card is also shown.
   // Never trust a count merely written by the model: use the exact result of count_products.
   const countedNoun = ctx.latestMessage.match(/\b(beds?|sofas?|chairs?|tables?|products?|items?|pieces?)\b/i)?.[1]?.toLowerCase();
   const message = /\bhow many\b|\bnumber of\b/i.test(ctx.latestMessage) && ctx.verifiedCount !== null && countedNoun
-    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? conciseMessage : ""}`.trim()
-    : conciseMessage;
+    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? groundedIntro : ""}`.trim()
+    : groundedIntro;
   const reply: AssistantReply = {
     message,
     room: ctx.room,
