@@ -64,6 +64,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     });
   }
 
+  if (intent === "switch-free") {
+    const active = status.subscriptions.find(sub => sub.status === "ACTIVE" && sub.currentPeriodEnd &&
+      new Date(sub.currentPeriodEnd) > new Date());
+    if (!active) return { ok: false, errors: ["No active Shopify subscription to cancel."] };
+    // Shopify requires the merchant's authenticated billing permission.
+    await billing.cancel({ subscriptionId: active.id, prorate: false, isTest: status.developer === true });
+    return redirect("/app/billing");
+  }
+
   if (intent === "buy-topup") {
     try {
       const confirmationUrl = await createTopUpCheckout(
@@ -119,7 +128,14 @@ export default function Billing() {
           <h2>{FREE_PLAN.name}</h2>
           <p className={styles.price}><strong>$0</strong><span>/month</span></p>
           <ul className={styles.features}><li><span>✓</span>{FREE_PLAN.previews} previews/month</li></ul>
-          <button type="button" className={styles.select} disabled>{d.paid ? "Free tier" : "Current plan"}</button>
+          {d.paid ? (
+            <Form method="post" className={styles.planForm} onSubmit={e => {
+              if (!window.confirm("Cancel your paid Visully plan and switch to Free? Paid benefits will end when Shopify confirms cancellation.")) e.preventDefault();
+            }}>
+              <input type="hidden" name="intent" value="switch-free" />
+              <button type="submit" className={styles.select} disabled={saving}>Switch to Free</button>
+            </Form>
+          ) : <button type="button" className={styles.select} disabled>Current plan</button>}
         </section>
         {PLANS.map(plan => {
           const name = billingPlanName(plan, cycle);
