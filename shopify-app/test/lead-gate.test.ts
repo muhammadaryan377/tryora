@@ -14,7 +14,7 @@ vi.mock("../app/db.server", () => ({ default: {
     upsert: vi.fn(async ({ where, create, update }) => {
       const key = keyOf(where.shopId_visitorHash_channel);
       const current = fixture.visits.get(key);
-      const value = { ...(current ?? create), ...(current ? update : {}), updatedAt: new Date() };
+      const value = { satisfied: false, firstPreviewUsed: false, ...(current ?? create), ...(current ? update : {}), updatedAt: new Date() };
       fixture.visits.set(key, value);
       return value;
     }),
