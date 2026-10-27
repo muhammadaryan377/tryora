@@ -1399,9 +1399,14 @@ export function isConversationAcknowledgement(message: string): boolean {
 }
 
 function cardActionNotRequested(ctx: RequestContext): boolean {
-  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  // A question about count or about an already-shown item is not a request for new cards.
+  if (/^\s*(?:how many\b|what(?:'s| is) the number of\b)/i.test(ctx.latestMessage)) return true;
   if (isConversationAcknowledgement(ctx.latestMessage)) return true;
-  // Questions about the previous answer or catalogue count do not request a product selection.
+  const explicitNewCards = /\b(?:show|find|suggest|recommend|list|give me)\b/i.test(ctx.latestMessage);
+  if (!explicitNewCards && ctx.intentPlan &&
+      ["comparison", "product_question", "store_support", "acknowledgement"].includes(ctx.intentPlan.intent)) return true;
+  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  // Questions about the previous answer do not request another product selection.
   if (/^\s*(?:why\b.*\b(?:show|shown|only|two|three|[0-9]+)|how many\b)/i.test(ctx.latestMessage)) return true;
   const reference = ["named", "ordinal", "selected"].includes(ctx.resolution.kind);
   return reference && !wantsRoomPreview(ctx.latestMessage) && !wantsMoreOptions(ctx.latestMessage) &&
