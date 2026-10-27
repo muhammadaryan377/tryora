@@ -766,7 +766,7 @@ describe("conversation history", () => {
 });
 
 describe("product images in cards", () => {
-  it("never asks for fabric, colour or size on a product whose exact preview reference is unknown", async () => {
+  it("offers an options retry but never previews an unresolved product without verified Shopify data", async () => {
     makeAssistant({ productId: undefined, currentVariantId: () => null }).open();
     proxy.script([{ type: "recommendations", items: [card({ variantRef: null, variantId: null,
       previewAvailable: false, previewStatus: "choose_options", optionValue: null, hasOptions: true })] }], [{ type: "done" }]);
@@ -776,8 +776,8 @@ describe("product images in cards", () => {
     const item = $(".tryora-assistant__card")!;
     expect([...item.querySelectorAll(".tryora-assistant__card-actions > *")].map(e => e.textContent)).toEqual(["View details", "Preview in my room"]);
     expect((item.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
-    expect($(".tryora-assistant__options")).toBeNull();
-    expect(proxy.calls.some(c => c.url.includes("/assistant/options?"))).toBe(false);
+    expect($(".tryora-assistant__options [data-ta='options']")!.textContent).toContain("Retry loading options");
+    expect(proxy.calls.some(c => c.url.includes("/assistant/options?"))).toBe(true);
     expect(proxy.calls.some(c => c.url === "/apps/visully/preview")).toBe(false);
   });
 
@@ -984,18 +984,97 @@ describe("simple chat cards and safe direct previews", () => {
     return assistant;
   }
 
-  it("shows selected fabric and colour without a configuration picker or fabricated swatch inside a recommended card", async () => {
-    const item = card({ hasOptions: true, variantCount: 3, options: { Fabric: "Naples", Colour: "Cream" } });
-    await showCards([item]);
+  const selectableOptions = () => ({
+    productRef: "1", productId: "gid://shopify/Product/1", title: "Aria Bed", url: "/products/aria",
+    image: "https://cdn.shopify.com/aria.jpg", imageAlt: null, currencyCode: "GBP",
+    singleVariant: false, preview: { offered: true, reason: null },
+    attributes: [
+      { name: "Fabric", kind: "fabric", values: ["Plush", "Teddy"].map(value => ({ value, colour: null, image: null })) },
+      { name: "Colour", kind: "colour", values: [
+        { value: "Cream", colour: "#e6dac8", image: null }, { value: "Black", colour: "#151515", image: null },
+        { value: "Orange", colour: "#cc873e", image: null },
+      ] },
+      { name: "Size", kind: "size", values: [{ value: "King", colour: null, image: null }] },
+    ],
+    variants: [
+      { ref: "11", id: "gid://shopify/ProductVariant/11", values: { Fabric: "Plush", Colour: "Cream", Size: "King" },
+        options: { Fabric: "Plush", Colour: "Cream", Size: "King" }, price: "899.00", available: true,
+        image: "https://cdn.shopify.com/aria-11.jpg", previewOption: "Cream" },
+      { ref: "12", id: "gid://shopify/ProductVariant/12", values: { Fabric: "Plush", Colour: "Black", Size: "King" },
+        options: { Fabric: "Plush", Colour: "Black", Size: "King" }, price: "919.00", available: true,
+        image: "https://cdn.shopify.com/aria-12.jpg", previewOption: "Black" },
+      { ref: "13", id: "gid://shopify/ProductVariant/13", values: { Fabric: "Teddy", Colour: "Orange", Size: "King" },
+        options: { Fabric: "Teddy", Colour: "Orange", Size: "King" }, price: "939.00", available: true,
+        image: "https://cdn.shopify.com/aria-13.jpg", previewOption: "Orange" },
+    ],
+  });
+
+  it("shows real fabric chips and labelled colour swatches on a recommended product card", async () => {
+    proxy.options = selectableOptions();
+    await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
+    await settle(45);
     const element = $(".tryora-assistant__card")!;
-    expect(element.querySelector(".tryora-assistant__card-choices")).toBeNull();
-    expect(element.querySelectorAll("[data-ta='opt'], [data-ta='options'], .tryora-assistant__swatch, .tryora-assistant__tag")).toHaveLength(0);
-    expect(element.textContent).toContain("Fabric: Naples");
+    expect(element.querySelector(".tryora-assistant__card-choices")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Plush']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Cream']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Black']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Orange']")).toBeNull();
+    expect(element.querySelector(".tryora-assistant__swatch-name")?.textContent).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Size']")).toBeNull();
+    expect(element.textContent).toContain("Fabric: Plush");
     expect(element.textContent).toContain("Colour: Cream");
-    expect(element.querySelector(".tryora-assistant__selected-colour-swatch")).toBeNull();
-    expect(element.textContent).not.toMatch(/Select a fabric and colour|Show fabric/);
-    expect([...element.querySelectorAll(".tryora-assistant__card-actions > *")].map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
-    expect(proxy.calls.some((call) => call.url.startsWith("/apps/visully/assistant/options?"))).toBe(false);
+    expect(element.querySelectorAll(".tryora-assistant__card-actions > *")).toHaveLength(2);
+    expect(proxy.calls.some(call => call.url.startsWith("/apps/visully/assistant/options?"))).toBe(true);
+  });
+
+  it("switches dependent fabric and colour to the exact Shopify variant without silently previewing the old one", async () => {
+    proxy.options = selectableOptions();
+    const assistant = await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
+    await settle(45);
+    click("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']");
+    const inProgress = $(".tryora-assistant__card")!;
+    expect(inProgress.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Cream']")).toBeNull();
+    expect(inProgress.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Orange']")).not.toBeNull();
+    expect(inProgress.querySelector(".tryora-assistant__selected-colour")).toBeNull();
+    expect(inProgress.querySelector(".tryora-assistant__price")).toBeNull();
+    expect((inProgress.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
+    expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: null, source: "options" });
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+    click("[data-ta='opt'][data-attr='Colour'][data-value='Orange']");
+    await settle(60);
+    const chosen = $(".tryora-assistant__card")!;
+    expect(chosen.querySelector(".tryora-assistant__price")!.textContent).toMatch(/939\.00/);
+    expect(chosen.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/aria-13.jpg");
+    expect(chosen.querySelector("a[data-ta='view-details']")!.getAttribute("href")).toBe("/products/aria?variant=13");
+    expect(chosen.textContent).toContain("Colour: Orange");
+    expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "13", source: "options" });
+    expect(proxy.calls.some(call => call.url.includes("/assistant/preview-check?") && call.url.includes("ProductVariant%2F13"))).toBe(true);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+  });
+
+  it("keeps Preview disabled for a selected colour rejected by the exact-variant check", async () => {
+    proxy.options = selectableOptions();
+    proxy.check = { variantId: "gid://shopify/ProductVariant/13", previewAvailable: false,
+      previewStatus: "unavailable", previewReason: "The merchant hasn't approved this colour.", optionValue: null };
+    await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
+    await settle(45);
+    click("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']");
+    click("[data-ta='opt'][data-attr='Colour'][data-value='Orange']");
+    await settle(60);
+    expect(($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
+    expect($(".tryora-assistant__card")!.textContent).toContain("The merchant hasn't approved this colour.");
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+  });
+
+  it("retries a failed card option request when Shopify data becomes available", async () => {
+    await showCards([card({ hasOptions: true, variantCount: 3 })]);
+    await settle(35);
+    expect($(".tryora-assistant__options [data-ta='options']")).not.toBeNull();
+    proxy.options = selectableOptions();
+    click(".tryora-assistant__options [data-ta='options']");
+    await settle(50);
+    expect($(".tryora-assistant__card [data-ta='opt'][data-attr='Fabric'][data-value='Plush']")).not.toBeNull();
   });
 
   it("previews the exact clicked card rather than silently using a different product-page variant", async () => {
