@@ -145,6 +145,13 @@ const ORDINALS: [RegExp, number][] = [
   [/\b(first|1st|option (?:1|one)|number (?:1|one)|no\.? ?1)\b/i, 0],
   [/\b(second|2nd|option (?:2|two)|number (?:2|two)|no\.? ?2)\b/i, 1],
   [/\b(third|3rd|option (?:3|three)|number (?:3|three)|no\.? ?3)\b/i, 2],
+  [/\b(fourth|4th|option (?:4|four)|number (?:4|four)|no\.? ?4)\b/i, 3],
+  [/\b(fifth|5th|option (?:5|five)|number (?:5|five)|no\.? ?5)\b/i, 4],
+  [/\b(sixth|6th|option (?:6|six)|number (?:6|six)|no\.? ?6)\b/i, 5],
+  [/\b(seventh|7th|option (?:7|seven)|number (?:7|seven)|no\.? ?7)\b/i, 6],
+  [/\b(eighth|8th|option (?:8|eight)|number (?:8|eight)|no\.? ?8)\b/i, 7],
+  [/\b(ninth|9th|option (?:9|nine)|number (?:9|nine)|no\.? ?9)\b/i, 8],
+  [/\b(tenth|10th|option (?:10|ten)|number (?:10|ten)|no\.? ?10)\b/i, 9],
   [/\b(last one|the last)\b/i, -1],
 ];
 const DEMONSTRATIVE = /\b(this|that|tha|thi|it|these|those|this one|that one|the bed|same one|selected one)\b/i;
