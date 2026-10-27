@@ -59,7 +59,7 @@ reuse the existing composer. No new upload backend or camera dependency was adde
 HEIC decoding and native camera capture remain browser/device dependent.
 
 Privacy wording accurately states that the photo is sent to the AI provider and that
-Tryora retains photo bytes in page memory. It does not claim provider zero retention.
+Visully retains photo bytes in page memory. It does not claim provider zero retention.
 Image bytes are not written to sessionStorage.
 
 ## Verification
@@ -119,7 +119,7 @@ Nothing has been pushed, merged, deployed or released, and no production setting
 ## Local follow-up: popup result routing (24 October 2026)
 
 The welcome preview card now opens the existing product-preview UI using a separate
-Tryora instance. Only this instance hands its decoded generated result to the chat.
+Visully instance. Only this instance hands its decoded generated result to the chat.
 The ordinary product launcher, window.Tryora.open, #tryora links and "Use product preview
 instead" retain their normal popup-result behavior.
 
