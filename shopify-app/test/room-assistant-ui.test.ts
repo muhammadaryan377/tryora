@@ -766,6 +766,50 @@ describe("product images in cards", () => {
     expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
   });
 
+
+  it("shows the exact selected colour on product cards without changing preview actions", async () => {
+    await showCards([card({ options: { Colour: "Cream", Fabric: "Velvet", Size: "King" } })]);
+    const summary = $(".tryora-assistant__selected-colour")!;
+    expect(summary.textContent).toContain("Fabric: Velvet");
+    expect(summary.textContent).toContain("Colour: Cream");
+    expect(summary.textContent).not.toContain("King");
+    expect($(".tryora-assistant__card-actions > *").map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
+    // Without a real sample it must not invent a swatch colour.
+    expect(summary.querySelector(".tryora-assistant__selected-colour-swatch")).toBeNull();
+  });
+
+  it("omits colour when none is selected and escapes colour names", async () => {
+    await showCards([
+      card({ options: { Size: "King" } }),
+      card({ id: "2:22", productRef: "2", options: { Color: "<img src=x onerror=alert(1)>" } }),
+    ]);
+    expect($(".tryora-assistant__selected-colour")).toHaveLength(1);
+    expect($(".tryora-assistant__selected-colour")!.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect($(".tryora-assistant__selected-colour img")).toBeNull();
+  });
+
+  it("uses a real dependent fabric-colour sample and clears stale colour when fabric changes", async () => {
+    const assistant = await showCards([card({ options: { Fabric: "Velvet", Colour: "Oat" } })]);
+    const entry = assistant.state.entries.find((item: any) => item.kind === "assistant" && item.recommendations.length)!;
+    const key = `${entry.id}:0`;
+    const data = {
+      attributes: [
+        { name: "Fabric", kind: "fabric", values: [] },
+        { name: "Colour", kind: "colour", values: [{ value: "Oat", colour: null, image: null,
+          samples: { Velvet: { colour: "#ccbbaa", image: null } } }] },
+      ],
+    };
+    const panel = { productId: "gid://shopify/Product/1", data, selections: { Fabric: "Velvet", Colour: "Oat" },
+      loading: false, error: "" };
+    assistant.cardOptions.set(key, panel);
+    assistant.renderAll();
+    expect($(".tryora-assistant__selected-colour-swatch")!.getAttribute("style")).toContain("#ccbbaa");
+    expect($(".tryora-assistant__selected-colour")!.textContent).toContain("Colour: Oat");
+    delete (panel.selections as Record<string, string>).Colour;
+    assistant.renderAll();
+    expect($(".tryora-assistant__selected-colour")).toBeNull();
+  });
+
   it("shows the supplied store currency on genuine product cards", async () => {
     await showCards([card({ price: "649.00", currencyCode: "EUR" })]);
     expect($(".tryora-assistant__card")!.textContent).toContain("649");
