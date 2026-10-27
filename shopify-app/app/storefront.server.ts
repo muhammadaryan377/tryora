@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "./db.server";
-import { leadPolicy, markLeadCaptured, reserveLeadPermission, type LeadChannel } from "./lead-gate.server";
+import { leadPolicy, markLeadCaptured, precheckLeadPermission, reserveLeadPermission, type LeadChannel } from "./lead-gate.server";
 import { tryora } from "./tryora.server";
 import { ensureBillingAllowance } from "./billing-status.server";
 import {
@@ -295,6 +295,14 @@ export async function startPreview(input: {
   if (!input.idempotencyKey || input.idempotencyKey.length > 128) throw new TryoraError("BAD_REQUEST");
   if (input.productId.length > 256 || input.optionValue.length > 4096 ||
     (input.variantId?.length ?? 0) > 128 || (input.sourceVariantId?.length ?? 0) > 128 || (input.mappingRevision?.length ?? 0) > 128) throw new TryoraError("BAD_REQUEST");
+  // Same-idempotency-key retries reuse the original job, even after the one free
+  // first-preview allowance has been claimed. Never return another visitor's job.
+  const repeated = await prisma.previewJob.findFirst({
+    where: { shopId: input.shopId, visitorId: input.visitorId, idempotencyKey: input.idempotencyKey },
+    select: { id: true },
+  });
+  if (repeated) return { jobId: repeated.id };
+  await precheckLeadPermission(input.shopId, input.visitorId, input.assistantPreview ? "assistant" : "popup");
   const config = await configuredProduct(input.admin, input.shopId, input.productId);
   const setting = await loadProviderSetting(input.shopId, config.productId);
   const product = await resolveConfiguredPreview({ admin: input.admin, config, setting, sourceVariantId: input.sourceVariantId }, input.optionValue, input.variantId, input.mappingRevision);
