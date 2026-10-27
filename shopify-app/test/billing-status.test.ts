@@ -130,7 +130,14 @@ describe("authenticated store classification and credits", () => {
     now = new Date("2026-11-01T00:00:00Z");
     vi.setSystemTime(now);
     await ensureBillingAllowance(admin(true, [subscription]), shop);
-    expect((await fixture.service.balance(shop)).availableTotal).toBe(200);
+    // The October monthly bucket expired at the month boundary. November adds a new
+    // 100-credit bucket, not a carried balance of 200. Annual prepayment never grants
+    // all twelve months up front.
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
+    const monthGrants = await store.transaction({ shopId: shop }, tx =>
+      tx.ledger(shop).filter(entry => entry.type === "GRANT" && entry.reference.startsWith("grant:period:")));
+    expect(monthGrants).toHaveLength(2);
+    expect(new Set(monthGrants.map(entry => entry.reference)).size).toBe(2);
     } finally { vi.useRealTimers(); }
   });
 
