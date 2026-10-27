@@ -6,11 +6,18 @@ const fixture = vi.hoisted(() => ({ service: null as any, admin: null as any, sh
 vi.mock("../app/tryora.server", () => ({ tryora: {
   grantMonthlyAllowance: (...args: any[]) => fixture.service.grantMonthlyAllowance(...args),
   balance: (...args: any[]) => fixture.service.balance(...args),
+  ensureSettings: (...args: any[]) => fixture.service.ensureSettings(...args),
+  updateSettings: (...args: any[]) => fixture.service.updateSettings(...args),
+  grantPeriodCredits: (...args: any[]) => fixture.service.grantPeriodCredits(...args),
 } }));
 vi.mock("../app/shopify.server", () => ({ authenticate: { admin: vi.fn(async () => ({ session: { shop: "test-sofa.myshopify.com" }, admin: fixture.admin })) } }));
 vi.mock("../app/db.server", () => ({ default: {
   shop: { findUnique: async () => fixture.shop },
-  billingEntitlement: { findUnique: async () => fixture.entitlement },
+  billingEntitlement: {
+    findUnique: async () => fixture.entitlement,
+    upsert: async ({ create, update }: any) => { fixture.entitlement = { ...(fixture.entitlement ?? create), ...update }; return fixture.entitlement; },
+    update: async ({ data }: any) => { fixture.entitlement = { ...fixture.entitlement, ...data }; return fixture.entitlement; },
+  },
 } }));
 import { billingPresentation, BILLING_STATUS_QUERY, ensureBillingAllowance, testCreditAllowance } from "../app/billing-status.server";
 import { loader } from "../app/routes/app.billing";
@@ -94,7 +101,8 @@ describe("authenticated store classification and credits", () => {
     await fixture.service.grantPeriodCredits(shop, "paid-oct", 300, new Date("2026-11-01"));
     await ensureBillingAllowance(admin(true), shop);
     expect((await fixture.service.balance(shop)).availableTotal).toBe(300);
-    expect(fixture.entitlement).toEqual({ plan: "growth", status: "active", subscriptionId: "existing" });
+    expect(fixture.entitlement).toMatchObject({ plan: "growth", status: "cancelled", subscriptionId: "existing" });
+    expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(false);
   });
 
   it("shows actual Shopify test subscription status separately from store status", async () => {
@@ -102,6 +110,35 @@ describe("authenticated store classification and credits", () => {
     expect(billingPresentation(status, "trial", false)).toMatchObject({ storeStatus: "DEVELOPER", subscriptionStatus: "Starter: ACTIVE (test)" });
     expect((await fixture.service.balance(shop)).availableTotal).toBe(0);
     expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(false);
+  });
+
+  it("grants a verified annual subscriber only one monthly allowance and never repeats it on refresh", async () => {
+    const subscription = {
+      id: "gid://shopify/AppSubscription/annual-1", name: "Starter Annual",
+      status: "ACTIVE", test: true, currentPeriodEnd: "2027-10-27T12:00:00Z",
+    };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(now);
+    try {
+    const status = await ensureBillingAllowance(admin(true, [subscription]), shop);
+    expect(status.verified).toBe(true);
+    expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(true);
+    expect(fixture.entitlement).toMatchObject({ plan: "starter", subscriptionId: subscription.id, status: "active" });
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
+    await ensureBillingAllowance(admin(true, [subscription]), shop);
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
+    now = new Date("2026-11-01T00:00:00Z");
+    vi.setSystemTime(now);
+    await ensureBillingAllowance(admin(true, [subscription]), shop);
+    // The October monthly bucket expired at the month boundary. November adds a new
+    // 100-credit bucket, not a carried balance of 200. Annual prepayment never grants
+    // all twelve months up front.
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
+    const monthGrants = await store.transaction({ shopId: shop }, tx =>
+      tx.ledger(shop).filter(entry => entry.type === "GRANT" && entry.reference.startsWith("grant:period:")));
+    expect(monthGrants).toHaveLength(2);
+    expect(new Set(monthGrants.map(entry => entry.reference)).size).toBe(2);
+    } finally { vi.useRealTimers(); }
   });
 
   it("does not replace a live Shopify subscription with Free credits", async () => {
@@ -161,8 +198,11 @@ describe("authenticated store classification and credits", () => {
     expect(PLANS.map(({ price, previews }) => [price, previews])).toEqual([[29, 100], [69, 300], [159, 800]]);
     expect(Object.values(billingPlans).map((p) => p.lineItems[0])).toEqual([
       { amount: 29, currencyCode: "USD", interval: "EVERY_30_DAYS" },
+      { amount: 290, currencyCode: "USD", interval: "ANNUAL" },
       { amount: 69, currencyCode: "USD", interval: "EVERY_30_DAYS" },
+      { amount: 690, currencyCode: "USD", interval: "ANNUAL" },
       { amount: 159, currencyCode: "USD", interval: "EVERY_30_DAYS" },
+      { amount: 1590, currencyCode: "USD", interval: "ANNUAL" },
     ]);
   });
 });
