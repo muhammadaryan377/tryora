@@ -369,6 +369,8 @@ describe("preview lifecycle", () => {
 describe("lead delivery", () => {
   const lead = { shopId, productId, email: "shopper@example.com", marketing: true, wording: "Offers" };
   it("atomically saves the email and both visitor lead proofs before Shopify customer sync", async () => {
+    vi.mocked(prisma.$transaction).mockClear();
+    vi.mocked(prisma.leadDelivery.create).mockClear();
     const { markLeadCaptured } = await import("../app/lead-gate.server");
     await captureLead(admin, { ...lead, visitorId: "123e4567-e89b-42d3-a456-426614174000", channel: "popup" });
     expect(prisma.$transaction).toHaveBeenCalledOnce();
@@ -376,12 +378,14 @@ describe("lead delivery", () => {
     expect(prisma.leadDelivery.create).toHaveBeenCalledOnce();
   });
   it("never runs Shopify customer sync or marks a lead successful if database migration is missing", async () => {
+    vi.mocked(prisma.event.create).mockClear();
     vi.mocked(prisma.$transaction).mockRejectedValueOnce(Object.assign(new Error("sensitive contact must not appear in logs"), { code: "P2021" }));
     await expect(captureLead(admin, { ...lead, visitorId: "123e4567-e89b-42d3-a456-426614174000" })).rejects.toThrow();
     expect(admin.graphql).not.toHaveBeenCalled();
     expect(prisma.event.create).not.toHaveBeenCalled();
   });
   it("does not block saved leads when optional analytics storage is unavailable", async () => {
+    vi.mocked(prisma.leadDelivery.create).mockClear();
     vi.mocked(prisma.event.create).mockRejectedValueOnce(new Error("Analytics down"));
     await expect(captureLead(admin, lead)).resolves.toEqual({ ok: true });
     expect(prisma.leadDelivery.create).toHaveBeenCalledOnce();
