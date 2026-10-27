@@ -112,6 +112,23 @@ describe("authenticated store classification and credits", () => {
     expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(false);
   });
 
+  it("grants a verified annual subscriber only one monthly allowance and never repeats it on refresh", async () => {
+    const subscription = {
+      id: "gid://shopify/AppSubscription/annual-1", name: "Starter Annual",
+      status: "ACTIVE", test: true, currentPeriodEnd: "2027-10-27T12:00:00Z",
+    };
+    const status = await ensureBillingAllowance(admin(true, [subscription]), shop);
+    expect(status.verified).toBe(true);
+    expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(true);
+    expect(fixture.entitlement).toMatchObject({ plan: "starter", subscriptionId: subscription.id, status: "active" });
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
+    await ensureBillingAllowance(admin(true, [subscription]), shop);
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(100);
+    now = new Date("2026-11-01T00:00:00Z");
+    await ensureBillingAllowance(admin(true, [subscription]), shop);
+    expect((await fixture.service.balance(shop)).availableTotal).toBe(200);
+  });
+
   it("does not replace a live Shopify subscription with Free credits", async () => {
     const status = await ensureBillingAllowance(admin(false, [{ id: "gid://shopify/AppSubscription/2", name: "Growth", status: "ACTIVE", test: false }]), shop);
     expect(billingPresentation(status, "free", false)).toMatchObject({ storeStatus: "LIVE", plan: "Growth", subscriptionStatus: "Growth: ACTIVE" });
