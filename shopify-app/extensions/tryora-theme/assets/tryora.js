@@ -75,7 +75,7 @@ ${a.content}`.slice(-2e3)}:a}else o.push(a);return o.slice(-12)}var ge=(s,t,e)=>
         <div class="tryora-assistant__room-art" aria-hidden="true">${_e(t)}</div>
         ${this.photoActionsHtml()}
       </div>
-      <p class="tryora-assistant__photo-privacy">Your photo is sent to our AI provider to ${t?"prepare your preview":"provide recommendations"}. Tryora keeps photo bytes only in memory for this page.</p>
+      <p class="tryora-assistant__photo-privacy">Your photo is sent to our AI provider to ${t?"prepare your preview":"provide recommendations"}. Visully keeps photo bytes only in memory for this page.</p>
       <p class="tryora-assistant__camera-help">Camera capture depends on your device and browser. If permission is denied or capture is unavailable, choose Upload photo.</p>
     </div>`}renderPhotoScreen(){this.photoScreen&&this.scroller()&&(this.scroller().innerHTML=this.photoScreenHtml())}welcomeHtml(){let t=r=>`<span class="tryora-assistant__action-icon">${r}<i>${_.camera}</i></span>`,e=this.context.productId&&(this.context.openAssistantPreview||this.context.openCurrentPreview)?'<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>':"";return`<div class="tryora-assistant__welcome">
       <span class="tryora-assistant__welcome-icon">${_.spark}</span>
@@ -147,7 +147,7 @@ ${a.content}`.slice(-2e3)}:a}else o.push(a);return o.slice(-12)}var ge=(s,t,e)=>
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${u(t.title)}</h4>
-        <p class="tryora-assistant__fineprint">${this.roomPhoto?"Uses your room photo.":"You'll be asked for a room photo."} Tryora places the item automatically.</p>
+        <p class="tryora-assistant__fineprint">${this.roomPhoto?"Uses your room photo.":"You'll be asked for a room photo."} Visully places the item automatically.</p>
         <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${u(t.id)}" ${this.generating(t)?"disabled":""}>${this.generating(t)?"Creating preview\u2026":this.roomPhoto?"Generate preview":"Upload room photo"}</button>
       </div>
     </div>`}previewHtml(t){let e=u(t.id),r=t.item.title;if(t.status==="generating")return`<div class="tryora-assistant__message tryora-assistant__message--preview" data-entry="${e}">
