@@ -40,9 +40,9 @@ export default function Products() {
 
   return (
     <s-page heading="Products">
-      <s-section heading="Where Tryora appears">
+      <s-section heading="Where Visully appears">
         <s-paragraph>
-          All eligible furniture products can show Tryora automatically, including newly added products.
+          All eligible furniture products can show Visully automatically, including newly added products.
           Active products need a Shopify photo. Gift cards, bedding accessories and other products are excluded.
           You can still turn off or customise any individual product below.
         </s-paragraph>
