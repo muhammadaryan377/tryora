@@ -643,6 +643,7 @@ interface RequestContext {
   room: RoomObservations | null;
   /** Saved active room or freshly analysed photo; an unanalysed new photo never reuses old observations. */
   activeRoom: RoomObservations | null;
+  activePreferences: ShopperPreferences | null;
   intentPlan: IntentPlan | null;
   preferences: ShopperPreferences | null;
   /** The product page the shopper is on, read fresh from Shopify (null if unknown or unverifiable). */
@@ -1041,7 +1042,7 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   // Real room fit outranks AI-preview configuration. Preview eligibility matters
   // when the shopper explicitly asks for a preview, not during discovery.
   const roomRanked = rankRoomRecommendations(valid,
-    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.preferences);
+    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.activePreferences);
   const fitting = roomRanked.filter((item) => {
     if (distinctProducts.has(item.productRef)) return false;
     distinctProducts.add(item.productRef);
@@ -1192,6 +1193,7 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
       return { recorded: true };
     case "update_shopper_context":
       ctx.preferences = args;
+      ctx.activePreferences = args;
       ctx.emit({ type: "preferences", preferences: args });
       return { recorded: true };
   }
@@ -1320,7 +1322,7 @@ async function completeRequestedCards(ctx: RequestContext, history: { role: stri
   });
   if (!fitting.length) return;
   const ranked = rankRoomRecommendations(fitting,
-    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.preferences);
+    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.activePreferences);
   ctx.recommendations = [...ctx.recommendations, ...ranked].slice(0, desired);
   ctx.recommendations.forEach(item => { ctx.explored.add(item.productRef); notePrices(ctx, item.price, item.maxPrice); });
   ctx.emit({ type: "recommendations", items: ctx.recommendations });
@@ -1872,6 +1874,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     selectionSource: null,
     room: null,
     activeRoom: input.roomPhoto ? null : room,
+    activePreferences: preferences,
     intentPlan: null,
     preferences: null,
     currentProduct: current,
