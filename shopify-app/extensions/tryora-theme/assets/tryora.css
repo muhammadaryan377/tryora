@@ -272,14 +272,16 @@ html.tryora-open { overflow: hidden; }
 .tryora-assistant__bubble.is-empty .tryora-assistant__text { display: none; }
 .tryora-assistant__text p + p, .tryora-assistant__text ul + p, .tryora-assistant__text p + ul { margin-top: 7px; }
 /* Streaming cursor only while actual model words are arriving. Hidden once final, stopped or cancelled. */
-.tryora-assistant__bubble[aria-busy="true"]:not(.is-empty) .tryora-assistant__text::after {
+.tryora-assistant__bubble[aria-busy="true"]:not(.is-empty) .tryora-assistant__text > p:last-child::after,
+.tryora-assistant__bubble[aria-busy="true"]:not(.is-empty) .tryora-assistant__text > ul:last-child > li:last-child::after {
   content: ""; display: inline-block; width: 2px; height: .95em; margin-left: 3px;
   vertical-align: -.12em; background: currentColor; opacity: .65;
   animation: tryora-assistant-cursor 1s steps(1) infinite;
 }
 @keyframes tryora-assistant-cursor { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .tryora-assistant__bubble[aria-busy="true"] .tryora-assistant__text::after { animation: none; opacity: .55; }
+  .tryora-assistant__bubble[aria-busy="true"] .tryora-assistant__text > p:last-child::after,
+  .tryora-assistant__bubble[aria-busy="true"] .tryora-assistant__text > ul:last-child > li:last-child::after { animation: none; opacity: .55; }
 }
 .tryora-assistant__text ul { padding-left: 18px; }
 .tryora-assistant__text li + li { margin-top: 3px; }
