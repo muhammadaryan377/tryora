@@ -1398,6 +1398,20 @@ export function isConversationAcknowledgement(message: string): boolean {
   return /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|good|thanks|thank you|alright|got it)|(?:(?:that|this|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)|i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that))(?:\s+(?:thanks|thank you|a lot|so much))?[.! ,]*$/i.test(message.trim());
 }
 
+/** Answer only unambiguous social turns locally; factual shopping questions still use verified tools. */
+export function simpleSocialReply(message: string): string | null {
+  const text = message.trim();
+  if (/^(?:hi|hello|hey|hiya|good (?:morning|afternoon|evening))[!. ]*$/i.test(text))
+    return "Hi! I can help you find furniture or preview a product in your room. What are you looking for?";
+  if (/^(?:thanks|thank you|thank you very much|cheers)[!. ]*$/i.test(text))
+    return "You're welcome!";
+  if (/^(?:(?:this|that|it|the room|the preview)\\s+)?(?:looks?|sounds?)\\s+(?:really\\s+)?(?:good|great|nice|lovely|perfect)[!. ]*$/i.test(text) ||
+      /^i\\s+(?:really\\s+)?(?:like|love)\\s+(?:it|this|that)[!. ]*$/i.test(text))
+    return "Glad you like it!";
+  if (/^(?:ok(?:ay)?|got it|alright|perfect|great)[!. ]*$/i.test(text)) return "Got it!";
+  return null;
+}
+
 function cardActionNotRequested(ctx: RequestContext): boolean {
   // A question about count or about an already-shown item is not a request for new cards.
   if (/^\s*(?:how many\b|what(?:'s| is) the number of\b)/i.test(ctx.latestMessage)) return true;
@@ -1922,6 +1936,21 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const client = input.client ?? clientOverride?.() ?? openAIClient(env);
   const model = env.OPENAI_ASSISTANT_MODEL?.trim() || "gpt-4.1-mini";
   const history = normaliseAssistantHistory(input.history);
+  // Greetings and simple reactions need no catalogue lookup, model call or paid preview.
+  // Preserve the structured selection and constraints already established in the chat.
+  const social = !input.roomPhoto ? simpleSocialReply(history.at(-1)!.content) : null;
+  if (social) {
+    const reply: AssistantReply = {
+      message: social,
+      room: null, preferences: null, recommendations: [], visualise: null, selected: null,
+      selection: normaliseSelection(input.selected),
+      constraints: nextConstraints(normaliseConstraints(input.constraints), history.at(-1)!.content),
+      model: "local-social",
+    };
+    await emitVerifiedReply(social, emit, input.signal);
+    emit({ type: "final", reply });
+    return;
+  }
   // A newly uploaded image must never reuse the previous room's observations while being analysed.
   const room = input.roomPhoto ? null : normaliseRoomContext(input.room);
   const preferences = normalisePreferences(input.preferences);
