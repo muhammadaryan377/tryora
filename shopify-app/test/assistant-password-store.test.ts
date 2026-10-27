@@ -81,7 +81,7 @@ describe("password-protected development store", () => {
     expect(toolOutputs(requests, "call-search_products")[0].results.map((result: any) => result.title).sort()).toEqual([...BEDS].sort());
     expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain('"Egerie Curved Headboard Beige Boucle Bed"');
     expect(reply.recommendations[0]).toMatchObject({ title: "Egerie Curved Headboard Beige Boucle Bed", url: expect.stringMatching(/^\/products\/egerie-curved-headboard-beige-boucle-bed-\d+$/) });
-    expect(reply.message).toBe("We have 4 beds. Option 1 is the Egerie.");
+    expect(reply.message).toBe("We have 4 beds. Here is one option to consider.");
   });
 
   it("explains the missing onlineStoreUrl in the merchant diagnostics", async () => {
