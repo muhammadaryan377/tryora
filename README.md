@@ -1,9 +1,13 @@
 # Visully
 
-> Previously Tryora. Internal API routes (`/apps/tryora`), the theme asset filenames,
-> legacy Shopify client configuration, CSS classes, and environment variables keep
-> their original identifiers for compatibility. Deploy the public app with
-> `npx shopify app deploy --config visully` from `shopify-app/`.
+> Previously Tryora. Visully's storefront app proxy uses `/apps/visully`.
+> Existing CSS selectors, theme asset filenames (`tryora.js`/`tryora.css`), legacy
+> Shopify client configuration, and environment-variable identifiers are retained for compatibility.
+> From `shopify-app/`, deploy the public app explicitly with
+> `npx shopify app deploy --config visully`; never deploy the legacy Tryora config by accident.
+> The local storefront build defaults to `/apps/visully`; if `VISULLY_PROXY_PATH` or
+> legacy `TRYORA_PROXY_PATH` is set in the build environment, it overrides this default.
+> Existing merchant-configured app proxy URLs must match the compiled storefront path.
 
 Shopify app: shoppers see a merchant's product in a photo of their own room. Merchant admin, storefront popup,
 credits, limits, lead capture and sales tracking are built; real AI images, billing and App Store submission are next.
