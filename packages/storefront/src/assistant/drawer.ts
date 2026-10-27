@@ -1389,7 +1389,7 @@ export class RoomAssistant {
     if (item.hasOptions && !panel && entryId && entryId === this.latestCardsEntry()) queueMicrotask(() => void this.loadOptions(key));
     const choices = item.hasOptions ? panel ? this.optionsPanelHtml(key, panel)
       : `<button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${escapeHtml(key)}">Show fabric &amp; colour options</button>` : "";
-    const incomplete = !!(panel?.data && !resolveVariant(panel.data, panel.selections));
+    const incomplete = !!(panel?.data && Array.isArray(panel.data.variants) && !resolveVariant(panel.data, panel.selections));
     const id = escapeHtml(item.id);
     // Do not show the old variant's photo or price as the newly selected appearance while it is incomplete.
     const generalPhoto = incomplete || (item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false);
@@ -1807,7 +1807,7 @@ export class RoomAssistant {
   private optionsPanelHtml(key: string, panel: CardOptionsState) {
     const card = escapeHtml(key);
     if (panel.loading) return `<div class="tryora-assistant__options" role="status"><span class="tryora-assistant__spinner" aria-hidden="true"></span> Loading options…</div>`;
-    if (panel.error || !panel.data) return `<div class="tryora-assistant__options"><p class="tryora-assistant__composer-error" role="alert">${escapeHtml(panel.error || "Options are unavailable.")}</p><button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${card}">Retry loading options</button></div>`;
+    if (panel.error || !panel.data || !Array.isArray(panel.data.variants)) return `<div class="tryora-assistant__options"><p class="tryora-assistant__composer-error" role="alert">${escapeHtml(panel.error || "Options are unavailable.")}</p><button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${card}">Retry loading options</button></div>`;
     const data = panel.data;
     // Size stays locked to the verified Shopify configuration; never invent a size choice.
     const groups = data.attributes.filter((attribute) => attribute.kind !== "size").map((attribute) => {
