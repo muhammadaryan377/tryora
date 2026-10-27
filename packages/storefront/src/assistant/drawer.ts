@@ -124,7 +124,6 @@ export class RoomAssistant {
   private roomPhoto: PreparedPhoto | null = null;
   private readonly photoUrls = new Map<string, string>();
   private readonly previewUrls = new Map<string, string>();
-  private readonly pendingAcks = new Map<string, () => void>();
   private restoreEpoch = 0;
   private readonly originals = new Map<string, string>();
   private readonly comparisons = new Map<string, string>();
@@ -176,7 +175,6 @@ export class RoomAssistant {
     this.syncLauncher();
     this.syncLock();
     this.renderAll();
-    this.acknowledgeVisiblePreviews();
     if (this.state.entries.length) this.scrollToEnd(false);
     else if (this.scroller()) this.scroller()!.scrollTop = 0;
     this.textarea()?.focus();
@@ -238,7 +236,6 @@ export class RoomAssistant {
     this.state.constraints = null;
     this.state.preferences = null;
     this.cardOptions.clear();
-    this.pendingAcks.clear();
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
     this.previewUrls.clear();
     this.originals.clear();
@@ -272,7 +269,6 @@ export class RoomAssistant {
     this.cardOptions.clear();
     this.leadDrafts.clear();
     this.restoreEpoch++;
-    this.pendingAcks.clear();
     void clearMedia(this.shop);
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
     this.previewUrls.clear();
@@ -786,20 +782,11 @@ export class RoomAssistant {
     this.state.previewsDelivered += 1;
     this.save();
     this.renderEntry(entry.id);
-    this.pendingAcks.set(entry.id, acknowledge);
-    this.acknowledgeVisiblePreviews();
+    // Existing preview job settles at most one credit once its decoded image reaches the browser.
+    acknowledge();
     void tagBasket(entry.item.productId);
     if (this.leadNeeded()) this.openLeadForm(entry.item, true);
     this.announce(`Your AI room preview of the ${entry.item.title} is ready.`);
-  }
-
-  private acknowledgeVisiblePreviews() {
-    if (!this.visible || !this.root) return;
-    for (const [id, acknowledgement] of this.pendingAcks) {
-      if (!this.root.querySelector(`[data-entry="${CSS.escape(id)}"] .tryora-assistant__preview img`)) continue;
-      this.pendingAcks.delete(id);
-      acknowledgement();
-    }
   }
 
   private abortAll() {
@@ -807,7 +794,6 @@ export class RoomAssistant {
     this.active = null;
     for (const controller of this.previews.values()) controller.abort();
     this.previews.clear();
-    this.pendingAcks.clear();
     this.syncLauncher();
   }
 
