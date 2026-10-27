@@ -129,6 +129,8 @@ export class RoomAssistant {
   private readonly comparisons = new Map<string, string>();
   private active: { controller: AbortController; entryId: string } | null = null;
   private readonly previews = new Map<string, AbortController>();
+  /** Only presentation is animated; reply.text always contains the exact real model deltas. */
+  private readonly typing = new Map<string, { visible: string; timer: ReturnType<typeof setTimeout> | null }>();
   /** Blocks duplicate clicks while the selected product variant is being verified. */
   private readonly previewChecks = new Set<string>();
   private pendingPreview: Recommendation | null = null;
@@ -420,6 +422,7 @@ export class RoomAssistant {
         this.fail(reply, error instanceof TurnError ? error.code : "NETWORK");
       }
     } finally {
+      this.clearTyping(reply.id);
       if (this.active?.entryId === reply.id) this.active = null;
       this.save();
       if (this.state.entries.includes(reply)) this.renderEntry(reply.id);
@@ -428,6 +431,7 @@ export class RoomAssistant {
   }
 
   private fail(reply: AssistantEntry, code: string) {
+    this.clearTyping(reply.id);
     reply.status = "error";
     reply.stage = undefined;
     reply.error = errorMessage(code);
@@ -444,12 +448,17 @@ export class RoomAssistant {
         this.renderStatus(reply);
         this.announce(STAGE_LABELS[reply.stage] ?? "");
         return;
-      case "delta":
-        reply.text += String(event.text ?? "");
+      case "delta": {
+        const delta = String(event.text ?? "");
+        if (!delta) return;
+        // Never fabricate text: animate only genuine streamed model deltas.
+        reply.text += delta;
         reply.stage = "writing";
-        this.updateText(reply);
+        this.streamText(reply);
         return;
+      }
       case "reset_text":
+        this.clearTyping(reply.id);
         reply.text = "";
         this.updateText(reply);
         return;
@@ -510,6 +519,7 @@ export class RoomAssistant {
         if (final.preferences) this.state.preferences = final.preferences;
         reply.status = "done";
         reply.stage = undefined;
+        this.clearTyping(reply.id);
         this.save();
         this.renderEntry(reply.id);
         this.renderRoomChip();
@@ -519,10 +529,12 @@ export class RoomAssistant {
         return;
       }
       case "error":
+        this.clearTyping(reply.id);
         this.fail(reply, String(event.code ?? "PROVIDER_UNAVAILABLE"));
         this.renderEntry(reply.id);
         return;
       case "cancelled":
+        this.clearTyping(reply.id);
         reply.status = "stopped";
         reply.stage = undefined;
         this.renderEntry(reply.id);
@@ -790,6 +802,7 @@ export class RoomAssistant {
   }
 
   private abortAll() {
+    for (const id of this.typing.keys()) this.clearTyping(id);
     this.active?.controller.abort();
     this.active = null;
     for (const controller of this.previews.values()) controller.abort();
@@ -1298,14 +1311,62 @@ export class RoomAssistant {
     else this.renderEntry(entry.id);
   }
 
+  /** Keep accurate model text separately from the gently paced, presentation-only text. */
+  private visibleText(entry: AssistantEntry) {
+    return entry.status === "streaming" ? this.typing.get(entry.id)?.visible ?? entry.text : entry.text;
+  }
+
+  private clearTyping(id: string) {
+    const state = this.typing.get(id);
+    if (state?.timer) clearTimeout(state.timer);
+    this.typing.delete(id);
+  }
+
+  private streamText(entry: AssistantEntry) {
+    // Minimized chats and reduced-motion users should see the complete latest streamed delta
+    // when reopened; no invisible queues or timers should accumulate while browsing.
+    if (!this.visible || reducedMotion()) {
+      this.clearTyping(entry.id);
+      this.updateText(entry);
+      return;
+    }
+    if (!this.typing.has(entry.id)) this.typing.set(entry.id, { visible: "", timer: null });
+    const state = this.typing.get(entry.id)!;
+    if (!state.timer) this.advanceTyping(entry.id);
+  }
+
+  private advanceTyping(id: string) {
+    const state = this.typing.get(id);
+    const entry = this.state.entries.find((candidate): candidate is AssistantEntry =>
+      candidate.kind === "assistant" && candidate.id === id);
+    if (!state || !entry || entry.status !== "streaming" || !this.visible) {
+      this.clearTyping(id);
+      return;
+    }
+    state.timer = null;
+    const codepoints = Array.from(entry.text);
+    const shown = Array.from(state.visible).length;
+    const remaining = codepoints.length - shown;
+    if (remaining <= 0) return;
+    // Small token deltas appear immediately; larger network-coalesced batches are paced
+    // in adaptive increments, without artificially delaying a long response for minutes.
+    const advance = remaining <= 30 ? remaining : Math.min(120, Math.max(8, Math.ceil(remaining / 9)));
+    state.visible = codepoints.slice(0, shown + advance).join("");
+    this.updateText(entry);
+    if (shown + advance < codepoints.length) {
+      state.timer = setTimeout(() => this.advanceTyping(id), 24);
+    }
+  }
+
   private updateText(entry: AssistantEntry) {
     const node = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(entry.id)}"] [data-ta-text]`);
     if (!node) return this.renderEntry(entry.id);
     const near = this.nearBottom();
-    node.innerHTML = formatText(entry.text);
-    node.closest(".tryora-assistant__bubble")?.classList.toggle("is-empty", !entry.text);
+    const displayed = this.visibleText(entry);
+    node.innerHTML = formatText(displayed);
+    node.closest(".tryora-assistant__bubble")?.classList.toggle("is-empty", !displayed);
     const status = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(entry.id)}"] [data-ta-status]`);
-    if (status) status.hidden = !!entry.text;
+    if (status) status.hidden = !!displayed;
     if (near) this.scrollToEnd(false);
   }
 
@@ -1411,11 +1472,12 @@ export class RoomAssistant {
     if (entry.kind === "preview") return this.previewHtml(entry);
     if (entry.kind === "lead") return this.leadHtml(entry);
     const streaming = entry.status === "streaming";
-    const status = streaming ? `<p class="tryora-assistant__status" data-ta-status ${entry.text ? "hidden" : ""}><span class="tryora-assistant__dots" aria-hidden="true"><i></i><i></i><i></i></span>${escapeHtml(this.stageLabel(entry.stage))}</p>` : "";
+    const shownText = this.visibleText(entry);
+    const status = streaming ? `<p class="tryora-assistant__status" data-ta-status ${shownText ? "hidden" : ""}><span class="tryora-assistant__dots" aria-hidden="true"><i></i><i></i><i></i></span>${escapeHtml(this.stageLabel(entry.stage))}</p>` : "";
     const error = entry.status === "error" || entry.status === "stopped"
       ? `<div class="tryora-assistant__failed" role="${entry.status === "error" ? "alert" : "status"}"><span>${escapeHtml(entry.status === "stopped" ? "Stopped." : entry.error ?? errorMessage(""))}</span>
           <button type="button" class="tryora-assistant__chip-button" data-ta="retry" data-id="${id}">Retry</button></div>` : "";
-    const text = entry.text || streaming ? `<div class="tryora-assistant__bubble ${entry.text ? "" : "is-empty"}" aria-busy="${streaming}">${status}<div class="tryora-assistant__text" data-ta-text>${formatText(entry.text)}</div></div>` : "";
+    const text = shownText || streaming ? `<div class="tryora-assistant__bubble ${shownText ? "" : "is-empty"}" aria-busy="${streaming}">${status}<div class="tryora-assistant__text" data-ta-text>${formatText(shownText)}</div></div>` : "";
     return `<div class="tryora-assistant__message tryora-assistant__message--assistant" data-entry="${id}">
       ${text}${error}
       ${entry.recommendations.length ? `<div class="tryora-assistant__cards">${entry.recommendations.map((item, index) => this.cardHtml(item, index, entry.id)).join("")}</div>` : ""}
