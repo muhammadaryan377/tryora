@@ -98,6 +98,8 @@ export interface ChatState {
   updatedAt: number;
   entries: Entry[];
   room: RoomNotes | null;
+  /** True only when the shopper explicitly supplied a photo in this session. */
+  roomMedia?: boolean;
   preferences: Preferences | null;
   shown: Ref[];
   /** Every product shown in this chat's recommendation batches, so "show more" never repeats one (optional for older sessions). */
@@ -120,7 +122,7 @@ const LEGACY_KEY = "tryora_assistant_context";
 export const sessionKey = (shop: string) => `tryora_assistant_v2:${shop}`;
 
 export function emptyState(shop: string, view: "side" | "fullscreen" = "side", now = Date.now()): ChatState {
-  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, preferences: null, shown: [], explored: [], selected: null, constraints: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
+  return { v: 2, shop, createdAt: now, updatedAt: now, entries: [], room: null, roomMedia: false, preferences: null, shown: [], explored: [], selected: null, constraints: null, ui: { open: false, view }, lead: { done: false }, previewsDelivered: 0 };
 }
 
 function storage(): Storage | null {
