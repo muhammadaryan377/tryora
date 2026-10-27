@@ -163,7 +163,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     style: { template, accent: tokens.accent, useThemeFont: tokens.useThemeFont },
     launcher: { ...launcher, wording: launcher.wording || DEFAULT_WORDING },
     lead: {
-      mode: (shop?.leadCapture ?? "required") as "required" | "skippable" | "off",
+      mode: (shop?.leadCapture ?? "off") as "required" | "skippable" | "off",
       timing: (shop?.leadTiming === "after" ? "after" : "before") as "before" | "after",
       showOptIn: lead.showOptIn,
       optInWording: lead.optInWording || `Email me offers and updates from ${shopName}. I can unsubscribe at any time.`,
