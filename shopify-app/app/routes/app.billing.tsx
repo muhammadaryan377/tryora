@@ -78,7 +78,7 @@ export default function Billing() {
               <p className={styles.price}><strong>${p.price}</strong><span>/month</span></p>
               <ul className={styles.features}>
                 {["AI room previews", "Furniture recommendations", p.id === "free" ? "Basic analytics" : "Advanced analytics", p.id === "free" ? "Community support" : p.id === "starter" ? "Email support" : "Priority support"].map((feature) => <li key={feature}><span aria-hidden="true">&#10003;</span>{feature}</li>)}
-                <li><span aria-hidden="true">&#10003;</span><div><strong>{p.previews} previews/month</strong>{p.id === "free" && <small className={styles.watermark}>with a small Tryora mark</small>}</div></li>
+                <li><span aria-hidden="true">&#10003;</span><div><strong>{p.previews} previews/month</strong>{p.id === "free" && <small className={styles.watermark}>with a small Visully mark</small>}</div></li>
               </ul>
               <button className={styles.select} disabled>Select</button>
             </section>
@@ -92,7 +92,7 @@ export default function Billing() {
       </section>
       <section className={styles.help}>
         <div><h2>Need help?</h2><p>Have questions about our plans or need a custom solution?</p></div>
-        <a href="mailto:support@visully.io?subject=Tryora%20Support%20Request" target="_top">Contact support <span aria-hidden="true">&#8599;</span></a>
+        <a href="mailto:support@visully.io?subject=Visully%20Support%20Request" target="_top">Contact support <span aria-hidden="true">&#8599;</span></a>
       </section>
     </s-page>
   );
