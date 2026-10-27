@@ -223,6 +223,7 @@ export class RoomAssistant {
 
   /** Starts a new conversation but keeps the room analysis and photo. */
   newChat() {
+    this.restoreEpoch++;
     this.conversationEpoch++;
     this.abortAll();
     this.photoScreen = null;
@@ -237,6 +238,12 @@ export class RoomAssistant {
     this.state.preferences = null;
     this.cardOptions.clear();
     this.pendingAcks.clear();
+    for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
+    this.previewUrls.clear();
+    this.originals.clear();
+    this.comparisons.clear();
+    for (const url of this.photoUrls.values()) if (url !== this.roomPhoto?.url) URL.revokeObjectURL(url);
+    this.photoUrls.clear();
     // New chat intentionally keeps only the current room, not old generated previews.
     void (async () => { await clearMedia(this.shop); if (this.roomPhoto) await saveMedia(this.shop, "room", this.roomPhoto.blob); })();
     this.save();
@@ -276,6 +283,7 @@ export class RoomAssistant {
 
   /** Drops the room notes and the in-memory room photo. Messages stay. */
   forgetRoom(render = true) {
+    this.abortAll();
     this.restoreEpoch++;
     void removeMedia(this.shop, "room");
     for (const entry of this.state.entries) {
