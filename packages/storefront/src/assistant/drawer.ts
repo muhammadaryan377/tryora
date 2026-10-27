@@ -5,17 +5,18 @@ import type { PopupPreviewDelivery, PopupPreviewHandoff } from "../preview-hando
  *
  * The shell is rendered once; streaming updates touch only the affected message, so the composer, focus and
  * scroll position are never reset mid-answer. Conversation state lives in session.ts (sessionStorage, per shop);
- * photos and generated images exist only as in-memory object URLs.
+ * image blobs may survive same-tab page navigation through expiring local IndexedDB.
  */
 import { errorMessage, escapeHtml, formatText, money, STAGE_LABELS } from "./format.js";
 import { runTurn, TurnError, type TurnEvent } from "./transport.js";
-import { generatePreview, PREVIEW_STAGES, PreviewError, previewErrorMessage } from "./preview.js";
+import { generatePreview, resumePreview, PREVIEW_STAGES, PreviewError, previewErrorMessage } from "./preview.js";
 import { PhotoError, prepareRoomPhoto, type PreparedPhoto } from "./photo.js";
 import { earlierFor, historyFor, loadState, saveState, type ChatState, type Entry, type Recommendation, type SelectionSource } from "./session.js";
 import { cardForVariant, resolveVariant, selectionsFor, valuesFor, type ProductOptions } from "./options.js";
 import { PROXY } from "./transport.js";
 import { tagBasket } from "../attribution.js";
 import { applyAssistantTheme, storefrontAssistantTheme } from "./theme.js";
+import { saveMedia, readMedia, removeMedia, clearMedia } from "./media-cache.js";
 
 export interface AssistantConfig {
   enabled: boolean;
@@ -123,6 +124,8 @@ export class RoomAssistant {
   private roomPhoto: PreparedPhoto | null = null;
   private readonly photoUrls = new Map<string, string>();
   private readonly previewUrls = new Map<string, string>();
+  private readonly pendingAcks = new Map<string, () => void>();
+  private restoreEpoch = 0;
   private readonly originals = new Map<string, string>();
   private readonly comparisons = new Map<string, string>();
   private active: { controller: AbortController; entryId: string } | null = null;
@@ -151,6 +154,8 @@ export class RoomAssistant {
     }
     // Keep lead prompts only for channels that are currently enabled; never persist contact text.
     if (!config.lead || config.lead.mode === "off") this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
+    // Initialise recovery even while minimised: browsing other pages must not require an open drawer.
+    void this.restoreMedia();
   }
 
   get isOpen() { return this.visible; }
@@ -170,6 +175,7 @@ export class RoomAssistant {
     this.syncLauncher();
     this.syncLock();
     this.renderAll();
+    this.acknowledgeVisiblePreviews();
     if (this.state.entries.length) this.scrollToEnd(false);
     else if (this.scroller()) this.scroller()!.scrollTop = 0;
     this.textarea()?.focus();
@@ -230,6 +236,9 @@ export class RoomAssistant {
     this.state.constraints = null;
     this.state.preferences = null;
     this.cardOptions.clear();
+    this.pendingAcks.clear();
+    // New chat intentionally keeps only the current room, not old generated previews.
+    void (async () => { await clearMedia(this.shop); if (this.roomPhoto) await saveMedia(this.shop, "room", this.roomPhoto.blob); })();
     this.save();
     this.menu = "none";
     this.renderAll();
@@ -254,6 +263,9 @@ export class RoomAssistant {
     this.state.previewsDelivered = 0;
     this.cardOptions.clear();
     this.leadDrafts.clear();
+    this.restoreEpoch++;
+    this.pendingAcks.clear();
+    void clearMedia(this.shop);
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url);
     this.previewUrls.clear();
     this.comparisons.clear();
@@ -264,6 +276,12 @@ export class RoomAssistant {
 
   /** Drops the room notes and the in-memory room photo. Messages stay. */
   forgetRoom(render = true) {
+    this.restoreEpoch++;
+    void removeMedia(this.shop, "room");
+    for (const entry of this.state.entries) {
+      if (entry.kind === "user" && entry.photo) void removeMedia(this.shop, `user:${entry.id}`);
+      if (entry.kind === "preview") void removeMedia(this.shop, `original:${entry.id}`);
+    }
     this.conversationEpoch++;
     this.photoEpoch++;
     this.preparing = false;
@@ -302,6 +320,8 @@ export class RoomAssistant {
     if (photo) {
       this.photoUrls.set(user.id, photo.url);
       this.roomPhoto = photo;
+      // Persist compressed browser-local photo before the request so another storefront page can restore it.
+      await Promise.all([saveMedia(this.shop, "room", photo.blob), saveMedia(this.shop, `user:${user.id}`, photo.blob)]);
       this.attachment = null;
       // A newly uploaded room supersedes earlier visual observations. Never send
       // the previous room's walls, colours or lighting with the new photograph.
@@ -599,6 +619,7 @@ export class RoomAssistant {
     if (this.attachment) {
       const previous = this.roomPhoto;
       this.roomPhoto = this.attachment; this.attachment = null;
+      void saveMedia(this.shop, "room", this.roomPhoto.blob);
       if (previous?.url !== this.roomPhoto.url) {
         this.state.room = null;
         if (previous && ![...this.photoUrls.values(), ...this.originals.values()].includes(previous.url)) URL.revokeObjectURL(previous.url);
@@ -608,40 +629,35 @@ export class RoomAssistant {
     if (!this.roomPhoto) {
       this.pendingPreview = chosen;
       this.composerError = "";
-      this.addNotice("Add a room photo to create the preview. Photos aren't kept after the page reloads.");
+      this.addNotice("Add a room photo to create the preview. Photos are temporarily kept in this browser, if storage is available.");
       this.openPicker("upload");
       return;
     }
     await this.refreshLeadStatus();
     if (this.leadNeeded()) { this.openLeadForm(chosen, false); return; }
     const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
+    entry.idempotencyKey = entry.id;
     this.originals.set(entry.id, this.roomPhoto.url);
+    await Promise.all([saveMedia(this.shop, "room", this.roomPhoto.blob), saveMedia(this.shop, `original:${entry.id}`, this.roomPhoto.blob)]);
     this.state.entries.push(entry);
     this.save();
     this.renderAll();
     this.scrollToEnd(true);
     const controller = new AbortController();
     this.previews.set(entry.id, controller);
+    this.syncLauncher();
     try {
       const { url, acknowledge } = await generatePreview({
         item: chosen,
         photo: this.roomPhoto.blob,
         visitor: storedVisitorId(),
         signal: controller.signal,
+        idempotencyKey: entry.idempotencyKey,
+        onJobCreated: (jobId) => { entry.jobId = jobId; this.save(); },
         onStage: (stage) => { entry.stage = stage; this.renderEntry(entry.id); },
         leadDone: this.leadDoneFlag(),
       });
-      if (controller.signal.aborted || !this.state.entries.includes(entry)) { URL.revokeObjectURL(url); return; }
-      this.previewUrls.set(entry.id, url);
-      entry.status = "ready";
-      entry.stage = undefined;
-      this.renderEntry(entry.id);
-      // The image is now on screen: acknowledge delivery and tag the basket, exactly as the product popup does.
-      acknowledge();
-      void tagBasket(chosen.productId);
-      this.state.previewsDelivered += 1;
-      if (this.leadNeeded()) this.openLeadForm(chosen, true);
-      this.announce(`Your AI room preview of the ${chosen.title} is ready.`);
+      await this.finishPreview(entry, url, acknowledge, controller);
     } catch (error) {
       if (controller.signal.aborted) {
         entry.status = "failed"; entry.stage = undefined; entry.error = "Preview cancelled. You can retry when ready.";
@@ -661,8 +677,108 @@ export class RoomAssistant {
     } finally {
       this.previews.delete(entry.id);
       this.save();
+      this.syncLauncher();
       // Re-enable the card's preview button (it shows "Creating preview…" while the job runs).
       this.renderAll();
+    }
+  }
+
+  /** Rehydrate only this shop/tab's local images and reattach to the same server preview job. */
+  private async restoreMedia() {
+    const epoch = this.restoreEpoch;
+    const room = await readMedia(this.shop, "room");
+    if (epoch !== this.restoreEpoch) return;
+    if (room && !this.roomPhoto) this.roomPhoto = { blob: room, url: URL.createObjectURL(room), name: "Room photo" };
+    for (const entry of this.state.entries) {
+      if (epoch !== this.restoreEpoch) return;
+      if (entry.kind === "user" && entry.photo && !this.photoUrls.has(entry.id)) {
+        const blob = await readMedia(this.shop, `user:${entry.id}`);
+        if (blob && epoch === this.restoreEpoch) this.photoUrls.set(entry.id, URL.createObjectURL(blob));
+      }
+      if (entry.kind === "preview") {
+        const [original, image] = await Promise.all([
+          readMedia(this.shop, `original:${entry.id}`),
+          entry.status === "ready" ? readMedia(this.shop, `preview:${entry.id}`) : Promise.resolve(null),
+        ]);
+        if (epoch !== this.restoreEpoch) return;
+        if (original) this.originals.set(entry.id, URL.createObjectURL(original));
+        if (image) this.previewUrls.set(entry.id, URL.createObjectURL(image));
+      }
+    }
+    if (this.visible) this.renderAll();
+    for (const entry of this.state.entries) {
+      if (epoch !== this.restoreEpoch) return;
+      if (entry.kind === "preview" && entry.status === "generating" && entry.idempotencyKey && !this.previews.has(entry.id)) {
+        void this.resumePendingPreview(entry, epoch);
+      }
+    }
+    this.syncLauncher();
+  }
+
+  /** Reuse the exact job ID, or POST the same idempotency key if navigation interrupted its creation. */
+  private async resumePendingPreview(entry: PreviewEntry, epoch: number) {
+    const controller = new AbortController();
+    this.previews.set(entry.id, controller);
+    this.syncLauncher();
+    try {
+      const input = {
+        signal: controller.signal,
+        onStage: (stage: string) => {
+          if (epoch !== this.restoreEpoch) return;
+          entry.stage = stage; this.renderEntry(entry.id);
+        },
+      };
+      const result = entry.jobId ? await resumePreview(entry.jobId, input)
+        : this.roomPhoto ? await generatePreview({
+          ...input, item: entry.item, photo: this.roomPhoto.blob, visitor: storedVisitorId(),
+          leadDone: this.leadDoneFlag(), idempotencyKey: entry.idempotencyKey,
+          onJobCreated: jobId => { entry.jobId = jobId; this.save(); },
+        }) : null;
+      if (!result) throw new PreviewError("PHOTO_UNAVAILABLE");
+      if (controller.signal.aborted || epoch !== this.restoreEpoch) { URL.revokeObjectURL(result.url); return; }
+      await this.finishPreview(entry, result.url, result.acknowledge, controller);
+    } catch (error) {
+      if (controller.signal.aborted || epoch !== this.restoreEpoch) return;
+      entry.status = "failed"; entry.stage = undefined;
+      const code = error instanceof PreviewError ? error.code : "FAILED";
+      entry.error = code === "PHOTO_UNAVAILABLE"
+        ? "Your room photo is no longer available on this device. Please upload it again."
+        : code === "EXPIRED" ? "This preview expired while changing pages. Please try again." : previewErrorMessage(code);
+      this.renderEntry(entry.id);
+    } finally {
+      this.previews.delete(entry.id);
+      this.save();
+      this.syncLauncher();
+      if (this.visible) this.renderAll();
+    }
+  }
+
+  private async finishPreview(entry: PreviewEntry, url: string, acknowledge: () => void, controller: AbortController) {
+    if (controller.signal.aborted || !this.state.entries.includes(entry)) { URL.revokeObjectURL(url); return; }
+    this.previewUrls.set(entry.id, url);
+    // Save to local browser storage BEFORE acknowledging delivery; server drops result bytes on acknowledgement.
+    try {
+      const response = await fetch(url);
+      if (response.ok) await saveMedia(this.shop, `preview:${entry.id}`, await response.blob());
+    } catch { /* The image still works on this page if browser storage is denied. */ }
+    if (controller.signal.aborted || !this.state.entries.includes(entry)) return;
+    entry.status = "ready"; entry.stage = undefined;
+    this.state.previewsDelivered += 1;
+    this.save();
+    this.renderEntry(entry.id);
+    this.pendingAcks.set(entry.id, acknowledge);
+    this.acknowledgeVisiblePreviews();
+    void tagBasket(entry.item.productId);
+    if (this.leadNeeded()) this.openLeadForm(entry.item, true);
+    this.announce(`Your AI room preview of the ${entry.item.title} is ready.`);
+  }
+
+  private acknowledgeVisiblePreviews() {
+    if (!this.visible || !this.root) return;
+    for (const [id, acknowledgement] of this.pendingAcks) {
+      if (!this.root.querySelector(`[data-entry="${CSS.escape(id)}"] .tryora-assistant__preview img`)) continue;
+      this.pendingAcks.delete(id);
+      acknowledgement();
     }
   }
 
@@ -671,6 +787,8 @@ export class RoomAssistant {
     this.active = null;
     for (const controller of this.previews.values()) controller.abort();
     this.previews.clear();
+    this.pendingAcks.clear();
+    this.syncLauncher();
   }
 
   private addNotice(text: string) {
@@ -800,6 +918,8 @@ export class RoomAssistant {
     const userId = uid();
     this.photoUrls.set(userId, roomUrl);
     this.originals.set(id, roomUrl);
+    void Promise.all([saveMedia(this.shop, "room", result.room), saveMedia(this.shop, `user:${userId}`, result.room), saveMedia(this.shop, `original:${id}`, result.room)]);
+    void saveMedia(this.shop, `preview:${id}`, result.image);
     this.roomPhoto = { blob: result.room, url: roomUrl, name: "Room photo" };
     this.state.entries.push({ id: userId, kind: "user", text: `Preview ${result.title}${result.selectionLabel ? ` / ${result.selectionLabel}` : ""} in my room.`, photo: true, at: Date.now() });
     this.previewUrls.set(id, URL.createObjectURL(result.image));
@@ -1447,6 +1567,7 @@ export class RoomAssistant {
       return `<div class="tryora-assistant__message tryora-assistant__message--preview" data-entry="${id}">
         <div class="tryora-assistant__preview is-loading"><span class="tryora-assistant__spinner" aria-hidden="true"></span>
           <div><strong>${escapeHtml(label)}</strong><p data-ta-status>${escapeHtml(PREVIEW_STAGES[entry.stage ?? ""] ?? "Working on your preview…")}</p></div>
+          <button type="button" class="tryora-assistant__chip-button" data-ta="minimise">Continue browsing</button>
           <button type="button" class="tryora-assistant__chip-button" data-ta="cancel-preview" data-id="${id}">Cancel</button></div></div>`;
     }
     const url = this.previewUrls.get(entry.id);
@@ -1474,7 +1595,7 @@ export class RoomAssistant {
           </div>
         </figure></div>`;
     }
-    const message = entry.status === "ready" ? "This preview was shown earlier; images are not kept after the page reloads." : entry.error ?? previewErrorMessage("");
+    const message = entry.status === "ready" ? "This preview is no longer available in this browser. Generate again if needed." : entry.error ?? previewErrorMessage("");
     return `<div class="tryora-assistant__message tryora-assistant__message--preview" data-entry="${id}">
       <div class="tryora-assistant__failed" role="${entry.status === "failed" ? "alert" : "status"}"><span>${escapeHtml(message)}</span>
       ${entry.handoff ? `<a class="tryora-assistant__chip-button" href="${escapeHtml(entry.handoff)}">Continue on product page</a>`
@@ -1855,6 +1976,9 @@ export class RoomAssistant {
   private syncLauncher() {
     const launcher = this.context.launcher;
     if (!launcher) return;
+    const generating = this.state.entries.some(entry => entry.kind === "preview" && entry.status === "generating");
+    launcher.classList.toggle("is-generating", generating);
+    launcher.setAttribute("aria-label", generating ? "Room Assistant — preview generating, continue browsing" : "Room Assistant");
     launcher.setAttribute("aria-expanded", String(this.visible));
     launcher.classList.toggle("is-hidden", this.visible);
     if (this.visible) launcher.classList.remove("has-unread");
