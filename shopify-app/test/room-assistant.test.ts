@@ -275,6 +275,28 @@ describe("store-wide grounding", () => {
     expect(shown.shown).toEqual([expect.objectContaining({ option: 1, title: "Oslo Couch", availableToBuy: true, aiRoomPreview: "AI room preview isn't offered for this product." })]);
   });
 
+  it("reranks a broader verified Shopify shortlist before returning the first room suggestion", async () => {
+    const roomPhoto = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#ede3d5" } }).jpeg().toBuffer();
+    const darker = fixtureProduct({
+      id: 41, title: "A Dark Charcoal Couch", productType: "Sofa",
+      options: { Colour: ["Charcoal"], Fabric: ["Leather"] }, price: 500,
+    });
+    const cream = fixtureProduct({
+      id: 42, title: "Z Cream Velvet Couch", productType: "Sofa",
+      options: { Colour: ["Cream"], Fabric: ["Velvet"] }, price: 600,
+    });
+    const { client, requests } = scriptedModel([
+      observeRoom({ colours: ["cream"], walls: "warm white", style: "modern", lighting: "soft" }),
+      search({ query: "sofa", limit: 1 }),
+      finalAnswer("I found a suitable option."),
+    ]);
+    await ask(fixtureAdmin([darker, cream]), client, "What sofa would suit my room?", { roomPhoto });
+    const [result] = toolOutputs(requests, "call-search_products");
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].productRef).toBe(ref(cream.id));
+    expect(result.results[0].title).toBe("Z Cream Velvet Couch");
+  });
+
   it("uses a transient vision request, records room notes, and validates the exact preview reference", async () => {
     const room = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#ddd5c8" } }).jpeg().toBuffer();
     const cream = variantOf(aria, { Colour: "Cream", Size: "King" });
