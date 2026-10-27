@@ -84,10 +84,10 @@ function setup(options: Page) {
   vi.stubGlobal("fetch", vi.fn(async (url: string) => {
     fetches.push(url);
     const respond = (value: unknown) => value === "error" ? Promise.reject(new Error("offline")) : Promise.resolve(Response.json(value));
-    if (url.startsWith("/apps/tryora/assistant/config")) {
+    if (url.startsWith("/apps/visully/assistant/config")) {
       return options.assistant === null ? Response.json({ error: "NOT_FOUND" }, { status: 404 }) : respond(options.assistant ?? { enabled: false });
     }
-    if (url.startsWith("/apps/tryora/config")) return respond(options.preview ?? { enabled: false });
+    if (url.startsWith("/apps/visully/config")) return respond(options.preview ?? { enabled: false });
     throw new Error(`Unexpected fetch ${url}`);
   }));
   page = { body, picker, media, fetches };
@@ -166,7 +166,7 @@ describe("each feature initialises independently", () => {
       vi.resetModules();
       setup({ pageType, assistant: assistantConfig() });
       await boot();
-      expect(page.fetches.some((url) => url.startsWith("/apps/tryora/config"))).toBe(false);
+      expect(page.fetches.some((url) => url.startsWith("/apps/visully/config"))).toBe(false);
       expect(assistantLaunchers()).toHaveLength(1);
       expect(previewLaunchers()).toHaveLength(0);
     }

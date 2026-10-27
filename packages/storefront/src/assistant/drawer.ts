@@ -149,8 +149,8 @@ export class RoomAssistant {
       this.state.selected = { productRef: numeric(context.productId), variantRef: numeric(context.currentVariantId?.()) || null, source: "options" };
       this.pendingIntent = "visualise";
     }
-    // Legacy chat sessions may still contain an old lead form. Never reopen it.
-    this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
+    // Keep lead prompts only for channels that are currently enabled; never persist contact text.
+    if (!config.lead || config.lead.mode === "off") this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
   }
 
   get isOpen() { return this.visible; }
@@ -612,6 +612,8 @@ export class RoomAssistant {
       this.openPicker("upload");
       return;
     }
+    await this.refreshLeadStatus();
+    if (this.leadNeeded()) { this.openLeadForm(chosen, false); return; }
     const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
     this.originals.set(entry.id, this.roomPhoto.url);
     this.state.entries.push(entry);
@@ -627,7 +629,7 @@ export class RoomAssistant {
         visitor: storedVisitorId(),
         signal: controller.signal,
         onStage: (stage) => { entry.stage = stage; this.renderEntry(entry.id); },
-        leadDone: "1",
+        leadDone: this.leadDoneFlag(),
       });
       if (controller.signal.aborted || !this.state.entries.includes(entry)) { URL.revokeObjectURL(url); return; }
       this.previewUrls.set(entry.id, url);
@@ -638,6 +640,7 @@ export class RoomAssistant {
       acknowledge();
       void tagBasket(chosen.productId);
       this.state.previewsDelivered += 1;
+      if (this.leadNeeded()) this.openLeadForm(chosen, true);
       this.announce(`Your AI room preview of the ${chosen.title} is ready.`);
     } catch (error) {
       if (controller.signal.aborted) {
@@ -648,8 +651,9 @@ export class RoomAssistant {
       entry.status = "failed";
       entry.stage = undefined;
       if (code === "LEAD_REQUIRED") {
-        entry.error = "Chat previews are not configured for direct generation yet. No credit was used.";
+        entry.error = "This store requires the email step before another preview. No credit was used.";
         this.renderEntry(entry.id);
+        if (this.config.lead && this.config.lead.mode !== "off") this.openLeadForm(chosen, false);
         return;
       }
       entry.error = previewErrorMessage(code);
@@ -762,6 +766,7 @@ export class RoomAssistant {
       deliver: (result) => this.receivePopupPreview(result, epoch),
       closed: () => { if (epoch === this.conversationEpoch) this.open(); },
       leadDone: () => epoch === this.conversationEpoch && this.state.lead.done,
+      lead: this.config.lead ?? { mode: "off", timing: "before", showOptIn: false, optInWording: "" },
     });
   }
 
@@ -1228,7 +1233,7 @@ export class RoomAssistant {
         <div class="tryora-assistant__room-art" aria-hidden="true">${roomIllustration(preview)}</div>
         ${this.photoActionsHtml()}
       </div>
-      <p class="tryora-assistant__photo-privacy">Your photo is sent to our AI provider to ${preview ? "prepare your preview" : "provide recommendations"}. Tryora keeps photo bytes only in memory for this page.</p>
+      <p class="tryora-assistant__photo-privacy">Your photo is sent to our AI provider to ${preview ? "prepare your preview" : "provide recommendations"}. Visully keeps photo bytes only in memory for this page.</p>
       <p class="tryora-assistant__camera-help">Camera capture depends on your device and browser. If permission is denied or capture is unavailable, choose Upload photo.</p>
     </div>`;
   }
@@ -1348,6 +1353,30 @@ export class RoomAssistant {
     return item.variantRef ? null : "Choose the product options to preview.";
   }
 
+  private cardColourHtml(item: Recommendation, key: string) {
+    const panel = this.cardOptions.get(key);
+    const colourAttribute = panel?.data?.attributes.find(attribute => attribute.kind === "colour");
+    const colourKey = colourAttribute?.name ?? Object.keys(item.options).find(name => /\bcolou?r\b/i.test(name));
+    if (!colourKey) return "";
+    // A pending/incomplete selection must not show the last variant's stale colour.
+    const colour = panel?.data && colourAttribute ? panel.selections[colourKey] : item.options[colourKey];
+    if (typeof colour !== "string" || !colour.trim() || colour.trim() === "Default Title") return "";
+    const fabricAttribute = panel?.data?.attributes.find(attribute => attribute.kind === "fabric");
+    const fabricKey = fabricAttribute?.name ?? Object.keys(item.options).find(name => /\bfabric\b/i.test(name));
+    const fabric = fabricKey ? (panel?.data && fabricAttribute ? panel.selections[fabricKey] : item.options[fabricKey]) : undefined;
+    const option = colourAttribute?.values.find(value => value.value === colour);
+    const sample = fabric && option?.samples?.[fabric] ? option.samples[fabric] : option;
+    // Show a dot only for an actual Shopify/merchant sample, never an invented approximate colour.
+    const validHex = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+    const hex = typeof sample?.colour === "string" && validHex.test(sample.colour) ? sample.colour
+      : validHex.test(colour) ? colour : null;
+    const image = !hex && typeof sample?.image === "string" && /^https:\/\//i.test(sample.image) ? sample.image : null;
+    const swatch = hex ? `<i class="tryora-assistant__selected-colour-swatch" style="background-color:${escapeHtml(hex)}" aria-hidden="true"></i>`
+      : image ? `<img class="tryora-assistant__selected-colour-swatch" src="${escapeHtml(image)}" alt="" loading="lazy">` : "";
+    const fabricLabel = typeof fabric === "string" && fabric.trim() ? `<span>Fabric: ${escapeHtml(fabric)}</span><span aria-hidden="true">·</span>` : "";
+    return `<p class="tryora-assistant__selected-colour">${fabricLabel}${swatch}<span>Colour: ${escapeHtml(colour)}</span></p>`;
+}
+
   private cardHtml(raw: Recommendation, index: number, entryId = "") {
     const item = this.effective(raw);
     const key = `${entryId}:${index}`;
@@ -1373,6 +1402,7 @@ export class RoomAssistant {
         <span class="tryora-assistant__eyebrow">${label}</span>
         <h4>${escapeHtml(item.title)}</h4>
         ${this.priceHtml(item)}
+        ${this.cardColourHtml(item, key)}
         ${item.reason ? `<p class="tryora-assistant__card-reason">${escapeHtml(shortReason(item.reason))}</p>` : ""}
         ${generalPhoto && !item.previewAvailable ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
 
@@ -1393,7 +1423,7 @@ export class RoomAssistant {
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${escapeHtml(item.title)}</h4>
-        <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Tryora places the item automatically.</p>
+        <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Visully places the item automatically.</p>
         <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : this.roomPhoto ? "Generate preview" : "Upload room photo"}</button>
       </div>
     </div>`;
@@ -1441,6 +1471,22 @@ export class RoomAssistant {
   }
 
   // ---------- email step (the merchant's lead capture) ----------
+
+  private async refreshLeadStatus() {
+    if (this.state.lead.done || !this.config.lead || this.config.lead.mode === "off") return;
+    try {
+      const response = await fetch(`${PROXY}/lead/status?visitor=${encodeURIComponent(storedVisitorId())}&channel=assistant`, { credentials: "same-origin" });
+      if (response.ok) {
+        const status = await response.json();
+        if (status.satisfied === true) this.state.lead.done = true;
+        else if (status.hasPreviewed === true && this.config.lead?.timing === "after") {
+          // A preview may have been delivered by the separate popup in this visit.
+          this.state.previewsDelivered = Math.max(1, this.state.previewsDelivered);
+        }
+        this.save();
+      }
+    } catch { /* Keep the merchant's required step when verification is unavailable. */ }
+  }
 
   /** True when the merchant's email step must be completed before the next preview, mirroring the popup's rules. */
   private leadNeeded(): boolean {
@@ -1500,10 +1546,12 @@ export class RoomAssistant {
     form.set("wording", this.config.lead?.showOptIn ? this.config.lead.optInWording : "");
     form.set("product", entry.item.productId);
     form.set("option", entry.item.optionValue ?? "");
+    form.set("visitor", storedVisitorId());
+    form.set("channel", "assistant");
     try {
       const response = await fetch(`${PROXY}/lead`, { method: "POST", body: form, credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw Object.assign(new Error(body.error ?? "REQUEST_FAILED"), { code: body.error ?? "REQUEST_FAILED" });
+      if (!response.ok || body.ok !== true) throw Object.assign(new Error(body.error ?? "REQUEST_FAILED"), { code: body.error ?? "REQUEST_FAILED" });
     } catch (error: any) {
       entry.status = "open";
       entry.error = error?.code === "BAD_EMAIL" ? "Please enter a valid email address." : "We couldn't save your email just now. Please try again.";
@@ -1518,12 +1566,22 @@ export class RoomAssistant {
     if (!entry.after) void this.startPreview(entry.item);
   }
 
-  skipLead(id: string) {
+  async skipLead(id: string) {
     const entry = this.state.entries.find((candidate): candidate is LeadEntry => candidate.id === id && candidate.kind === "lead");
     if (!entry || entry.status !== "open") return;
-    // Before a preview only a "skippable" store allows skipping; after one, declining simply closes the prompt.
-    if (!entry.after && this.config.lead?.mode !== "skippable") return;
-    if (this.config.lead?.mode === "skippable" || !entry.after) this.state.lead.done = true;
+    if (this.config.lead?.mode !== "skippable") return;
+    try {
+      const form = new FormData();
+      form.set("visitor", storedVisitorId());
+      form.set("channel", "assistant");
+      const response = await fetch(`${PROXY}/lead/skip`, { method: "POST", body: form, credentials: "same-origin" });
+      if (!response.ok) throw new Error("REQUEST_FAILED");
+    } catch {
+      entry.error = "We couldn\u0027t save your choice. Please try again.";
+      this.renderEntry(id);
+      return;
+    }
+    this.state.lead.done = true;
     entry.status = "skipped";
     this.leadDrafts.delete(id);
     this.save();
@@ -1540,7 +1598,7 @@ export class RoomAssistant {
     const lead = this.config.lead;
     const draft = this.leadDrafts.get(entry.id) ?? { email: "", firstName: "", marketing: false };
     const sending = entry.status === "sending";
-    const canSkip = entry.after || lead?.mode === "skippable";
+    const canSkip = lead?.mode === "skippable";
     return `<div class="tryora-assistant__lead" data-entry="${id}" role="group" aria-labelledby="ta-lead-${id}">
       <h4 id="ta-lead-${id}">${entry.after ? "Enter your email to keep previewing" : "Enter your email to create your preview"}</h4>
       <p>Your name and email are saved for this store. Marketing emails require your opt-in. Your image is never emailed.</p>

@@ -131,7 +131,7 @@ export interface AssistantRecommendation {
    * reference for this exact variant. "product": the product's featured image, which may show a different option.
    */
   imageSource: ImageSource;
-  /** The approved reference Tryora's preview pipeline validated for this exact variant; null when not previewable. */
+  /** The approved reference Visully's preview pipeline validated for this exact variant; null when not previewable. */
   referenceImage: string | null;
   price: string | null;
   maxPrice: string | null;
@@ -139,7 +139,7 @@ export interface AssistantRecommendation {
   options: Record<string, string>;
   /** Verified from fresh Shopify data in this request. */
   purchaseAvailable: boolean;
-  /** True only after Tryora's strict preview validation passed for this exact variant. */
+  /** True only after Visully's strict preview validation passed for this exact variant. */
   previewAvailable: boolean;
   previewStatus: PreviewStatus;
   /** One shopper-facing explanation when previewAvailable is false; the model receives the same text. */
@@ -210,12 +210,12 @@ export async function assistantStorefrontConfig(shopId: string, page: AssistantP
     Promise.resolve().then(() => prisma.shop.findUnique({ where: { id: shopId } })).catch(() => null),
     Promise.resolve().then(() => tryora.balance(shopId)).catch(() => null),
   ]) : [null, null];
-  const lead = { showOptIn: true, optInWording: "", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string };
+  const lead = { showOptIn: true, optInWording: "", chatLeadCapture: "off", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string; chatLeadCapture: string };
   const shopName = shopId.replace(".myshopify.com", "").replace(/-/g, " ");
   return {
-    // The merchant's email step for previews, exactly as the product-page popup applies it.
+    // Chatbot lead choice is independent of the product popup; both default off.
     lead: {
-      mode: (shop?.leadCapture ?? "required") as "required" | "skippable" | "off",
+      mode: (["required", "skippable"].includes(lead.chatLeadCapture) ? lead.chatLeadCapture : "off") as "required" | "skippable" | "off",
       timing: (shop?.leadTiming === "after" ? "after" : "before") as "before" | "after",
       showOptIn: lead.showOptIn !== false,
       optInWording: lead.optInWording || `Email me offers and updates from ${shopName}. I can unsubscribe at any time.`,
@@ -644,6 +644,8 @@ interface RequestContext {
   currentProduct: CatalogueProduct | null;
   /** True only when a complete catalogue check proved that nothing matched. Gates any "the store has none" claim. */
   zeroVerified: boolean;
+  /** Exact catalogue count last verified for this shopper turn, never from model prose. */
+  verifiedCount: number | null;
 }
 
 const priceKey = (value: number | string) => Number(value).toFixed(2);
@@ -794,6 +796,7 @@ async function runCount(ctx: RequestContext, args: { query: string; colour: stri
   if (ctx.snapshot?.complete) {
     const matches = countCatalogue(ctx.snapshot, args);
     if (!matches.length) ctx.zeroVerified = true;
+    ctx.verifiedCount = matches.length;
     matches.slice(0, 5).forEach((product) => ctx.allowed.add(product.ref));
     return {
       verified: true,
@@ -811,6 +814,7 @@ async function runCount(ctx: RequestContext, args: { query: string; colour: stri
     if (!Number.isFinite(count)) throw new Error("count");
     const precision = String(data.productsCount?.precision ?? "EXACT");
     if (count === 0 && precision === "EXACT" && words.length) ctx.zeroVerified = true;
+    if (precision === "EXACT") ctx.verifiedCount = count;
     return {
       verified: true,
       count,
@@ -1136,7 +1140,7 @@ async function runVisualise(ctx: RequestContext, args: { productRef: string; var
     ...(overBudget ? { budgetNote: `This is above the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${ctx.constraints.budgetMax}; mention the difference once.` } : {}),
     needsPhoto: !ctx.hasPhoto,
     note: ctx.hasPhoto
-      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Tryora places the item automatically; do not promise exact positions."
+      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Visully places the item automatically; do not promise exact positions."
       : "A preview card is shown. Ask the shopper to attach a room photo, then confirm the card.",
   };
 }
@@ -1209,7 +1213,7 @@ export interface PreviewCheck {
 }
 
 /**
- * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
+ * "Available for AI preview" means Visully's existing strict validation passed for this exact variant, through the
  * same provider adapter chain that startPreview uses. Anything less is reported as not available, with the reason.
  */
 export async function exactPreviewStatus(ctx: PreviewCheckContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<PreviewCheck> {
@@ -1850,6 +1854,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     preferences: null,
     currentProduct: current,
     zeroVerified: false,
+    verifiedCount: null,
   };
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
   ctx.exploring = ctx.explored.size > 0 && (wantsMoreOptions(ctx.latestMessage) || requestedProductCount(ctx.latestMessage) !== null);
@@ -2004,11 +2009,17 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   // Prefer a concise grounded introduction over contradicting what was actually returned.
   const contradictsCards = ctx.recommendations.length > 0 &&
     /\b(?:found no|couldn['’]t find|cannot find|no (?:matching|suitable|available)|nothing matches|no beds|no sofas)\b/i.test(guarded.message);
-  const message = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
+  const conciseMessage = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
     ? (ctx.recommendations.length === 1
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
     : guarded.message), ctx.recommendations.length, ctx.latestMessage);
+  // A count question must answer the verified quantity, even when a recommendation card is also shown.
+  // Never trust a count merely written by the model: use the exact result of count_products.
+  const countedNoun = ctx.latestMessage.match(/\b(beds?|sofas?|chairs?|tables?|products?|items?|pieces?)\b/i)?.[1]?.toLowerCase();
+  const message = /\bhow many\b|\bnumber of\b/i.test(ctx.latestMessage) && ctx.verifiedCount !== null && countedNoun
+    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? conciseMessage : ""}`.trim()
+    : conciseMessage;
   const reply: AssistantReply = {
     message,
     room: ctx.room,

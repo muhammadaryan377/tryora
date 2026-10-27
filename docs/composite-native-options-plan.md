@@ -34,7 +34,7 @@ Prefer a read-only authenticated Admin product export containing:
 - Shop domain, product GID/handle and all exact option names and complete values.
 - Every variant GID, its complete selectedOptions tuple, assigned image/media
   identity and URL, and `availableForSale`. Read every page and check completeness.
-- Product media IDs/URLs and existing Tryora configuration/VisualChoice approvals.
+- Product media IDs/URLs and existing Visully configuration/VisualChoice approvals.
 - Product-specific swatch images and their verified fabric/colour associations,
   including the source of those associations.
 

@@ -16,7 +16,7 @@ import { compileFabricDocument, draftFromMapping } from "../app/customization/fa
 import { resolveConfiguredPreview } from "../app/customization/registry.server";
 import { resolvePreviewProduct } from "../app/preview-product.server";
 import { ensureAutoProductConfig } from "../app/auto-products.server";
-import { referenceChoices, sampleChoices, SAMPLE_ALT_PREFIX } from "../app/customization/media-roles";
+import { isSampleMedia, referenceChoices, sampleChoices, SAMPLE_ALT_PREFIX } from "../app/customization/media-roles";
 import { loader } from "../app/routes/app.fabrics";
 
 const gid = (n: number) => `gid://shopify/MediaImage/${n}`;
@@ -38,6 +38,15 @@ const bareDraft = () => { const d = draftFromMapping(providerFixture().mapping, 
 const legacyWithSwatch = (swatch: string) => { const f = providerFixture(); f.mapping.entries[0]!.swatchMediaId = swatch; return f.mapping; };
 
 beforeEach(() => { state.rows = []; state.upserts = []; vi.stubEnv("TRYORA_CUSTOMIZATION_PROVIDERS_ENABLED", "true"); });
+
+describe("Visully sample marker migration", () => {
+  it("recognises old Tryora samples and newly uploaded Visully samples without reclassifying product photos", () => {
+    expect(SAMPLE_ALT_PREFIX).toBe("Visully fabric sample ");
+    expect(isSampleMedia({ alt: "Tryora fabric sample 123" })).toBe(true);
+    expect(isSampleMedia({ alt: "Visully fabric sample 456" })).toBe(true);
+    expect(isSampleMedia({ alt: "Product bed in beige bedroom" })).toBe(false);
+  });
+});
 
 describe("product photos never become fabric or colour swatches", () => {
   it("offers no sample at all when the product has five furniture photos and no uploaded samples", () => {

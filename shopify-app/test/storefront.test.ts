@@ -11,6 +11,7 @@ vi.mock("../app/image-provider.server", async () => {
 });
 vi.mock("../app/db.server", () => ({ default: {
   productPreviewConfig: { findUnique: vi.fn(async () => fixture.config) },
+  previewJob: { findFirst: vi.fn(async () => null) },
   customizationConfig: { findMany: vi.fn(async () => fixture.providerSettings) },
   visualChoice: { findMany: vi.fn(async () => fixture.config.choices ?? []) },
   providerUsage: { create: vi.fn(async ({ data }) => { fixture.usages.push(data); return data; }) },
@@ -21,8 +22,15 @@ vi.mock("../app/db.server", () => ({ default: {
   leadDelivery: { create: vi.fn(async () => ({ id: "lead" })), update: vi.fn(async ({ data }) => { fixture.leadUpdates.push(data); }) },
 } }));
 vi.mock("../app/tryora.server", () => ({ tryora: new Proxy({}, { get: (_, key) => fixture.service[key].bind(fixture.service) }) }));
+vi.mock("../app/lead-gate.server", () => ({
+  leadPolicy: vi.fn(async () => ({ mode: "required", timing: "before" })),
+  markLeadCaptured: vi.fn(async () => {}),
+  reserveLeadPermission: vi.fn(async () => async () => {}),
+  precheckLeadPermission: vi.fn(async () => {}),
+}));
 import { acknowledge, captureLead, checkPhoto, cleanupStalePreviews, pollLocalPreview, provider, startPreview, storefrontConfig } from "../app/storefront.server";
 import prisma from "../app/db.server";
+import { leadPolicy } from "../app/lead-gate.server";
 import { providerFixture } from "./fixtures/provider-mapping";
 
 const shopId = "test.myshopify.com";
@@ -378,6 +386,7 @@ describe("lead delivery", () => {
   });
   it("does not capture or sync contacts when the merchant has switched leads off", async () => {
     vi.mocked(prisma.shop.findUnique).mockResolvedValueOnce({ leadCapture: "off", leadSettings: {} } as any);
+    vi.mocked(leadPolicy).mockResolvedValueOnce({ mode: "off", timing: "before" });
     vi.mocked(prisma.leadDelivery.create).mockClear();
     await captureLead(admin, lead);
     expect(prisma.leadDelivery.create).not.toHaveBeenCalled();

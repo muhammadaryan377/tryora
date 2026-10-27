@@ -18,6 +18,7 @@ describe("merchant lead dashboard", () => {
     const data = await loader(request());
     expect(data).toMatchObject({ leadsTotal: 3, leadsFailed: 2, leadsPending: 1, consentFailed: 1 });
     expect(data.leads[0]).toMatchObject({ email: "shopper@example.com", firstName: "Sam", status: "failed" });
+    expect(data.lead.chatLeadCapture).toBe("off");
     expect(state.count.mock.calls[0][0].where).toEqual({ shopId: "demo.myshopify.com", OR: [{ email: { not: null } }, { customerRef: { not: null } }] });
     expect(state.rows.mock.calls[0][0].where).toEqual({ shopId: "demo.myshopify.com" });
   });
@@ -38,5 +39,14 @@ describe("merchant lead dashboard", () => {
     const data = await action({ request: new Request("https://app.example/app/leads", { method: "POST", body: form }) } as ActionFunctionArgs);
     expect(data.ok).toBe(true);
     expect(state.settingsUpdate).toHaveBeenCalledWith(expect.objectContaining({ leadCapture: "off" }));
+    expect(state.shopUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ leadSettings: expect.objectContaining({ chatLeadCapture: "off" }) }) }));
   });
+  it("independently enables chatbot leads without enabling product popup leads", async () => {
+    const form = new URLSearchParams({ leadCapture: "off", chatLeadCapture: "required", leadTiming: "before", customerTag: "tryora-lead" });
+    const data = await action({ request: new Request("https://app.example/app/leads", { method: "POST", body: form }) } as ActionFunctionArgs);
+    expect(data.ok).toBe(true);
+    expect(state.settingsUpdate).toHaveBeenCalledWith(expect.objectContaining({ leadCapture: "off" }));
+    expect(state.shopUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ leadSettings: expect.objectContaining({ chatLeadCapture: "required" }) }) }));
+  });
+
 });

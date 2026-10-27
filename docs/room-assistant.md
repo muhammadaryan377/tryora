@@ -4,7 +4,7 @@ The Room Assistant is an opt-in storefront chat for Shopify furniture merchants.
 
 ## Merchant controls
 
-The assistant is disabled by default. Merchants configure it in **Tryora > Room assistant**:
+The assistant is disabled by default. Merchants configure it in **Visully > Room assistant**:
 
 - page visibility (product, collection, home, other), plus exact product and collection exclusions. Exclusions control where the launcher appears; they do not hide products from search.
 - greeting, launcher label, launcher side (left or right) and accent colour.
@@ -34,7 +34,7 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 - **Welcome screen:** *Visualise in my room*, *Find furniture for my room* and *Ask about products*, all real actions, plus suggestion chips. On a preview-enabled product page, *Use product preview instead* opens the existing popup.
 - **Composer:** a ＋ menu with *Upload photo* and *Take photo* (camera, shown on touch devices). The photo appears as a thumbnail with Replace and Remove, with validation and preparation errors and upload progress (percentage while sending). Enter sends, and Shift+Enter starts a new line.
 - **Answers:** status steps ("Analysing your room…", "Searching store products…", "Checking variants and availability…", "Preparing recommendations…"), then the model's text appears as it is generated. Stop cancels on the server too; Retry re-sends the same question once. Model text is escaped; only bold, bullets and paragraphs are rendered.
-- **Cards:** image, options, verified price, *Available to buy* or *Currently sold out*, AI preview status, the reason, *View product*, and *See it in my room* only when the exact variant passes Tryora's preview checks.
+- **Cards:** image, options, verified price, *Available to buy* or *Currently sold out*, AI preview status, the reason, *View product*, and *See it in my room* only when the exact variant passes Visully's preview checks.
 - Motion is subtle, and `prefers-reduced-motion` disables it.
 
 ## Conversation history
@@ -44,7 +44,7 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 | Messages, cards, preview offers, room observations, stated preferences, selected product | `sessionStorage` key `tryora_assistant_v2:<shop>` | 4 h idle or 24 h total; ~100 KB and 60 entries (oldest dropped first) |
 | Room photo and generated preview images | In-memory object URLs only | Gone on reload; the transcript then shows "not kept after the page reloads" |
 
-- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Tryora's database, Shopify or analytics.
+- History follows the shopper across pages and refreshes in the same tab, and the drawer reopens if it was open. It is not shared with other tabs and is never sent to Visully's database, Shopify or analytics.
 - Each message sends a bounded slice to the server: the last 12 completed turns, up to 6 numbered recommendations, the selected product, room observations and preferences. The server re-validates every reference against fresh Shopify data.
 - The key and stored shop are checked on load, so one store's context can't appear in another. The v1 shared key `tryora_assistant_context` is deleted.
 - **New chat** clears messages, recommendations and preferences but keeps the room. **Forget room** removes the room notes and photo but keeps messages. **Clear conversation** removes everything.
@@ -54,16 +54,16 @@ Every model call uses the Responses API with `store: false` and `stream: true`. 
 
 **Default transport: long-polling a server-side turn buffer**
 
-1. `POST /apps/tryora/assistant/turn` starts the turn and returns `turnId`. A newer question from the same visitor aborts their previous turn.
+1. `POST /apps/visully/assistant/turn` starts the turn and returns `turnId`. A newer question from the same visitor aborts their previous turn.
 2. The server runs the agent loop and appends events: `status`, `delta` (real model output deltas from the streamed Responses API), `reset_text`, `recommendations`, `visualise`, `room`, `preferences`, then `final` (the authoritative message) and `done`, `error` or `cancelled`.
-3. `GET /apps/tryora/assistant/turn/<id>?visitor=&after=n` returns new events as soon as they exist, waiting up to 8 s. Text therefore arrives incrementally even if Shopify's app proxy buffers each response.
+3. `GET /apps/visully/assistant/turn/<id>?visitor=&after=n` returns new events as soon as they exist, waiting up to 8 s. Text therefore arrives incrementally even if Shopify's app proxy buffers each response.
 4. `POST …/turn/<id>/cancel` aborts the model call.
 
 Buffers are bounded (3,000 events, 512 KB), bound to shop and visitor, expire 3 minutes after a turn ends, and hold no photos. Turn IDs carry the worker ID, so with `TRYORA_WORKER_ORIGINS` configured, reads are routed to the instance that owns the turn. The client reconnects through short network drops and resumes from the last event.
 
 **Optional SSE transport (`TRYORA_ASSISTANT_TRANSPORT=sse`)**
 
-`POST /apps/tryora/assistant/stream` returns `text/event-stream` (2 KB padding, `X-Accel-Buffering: no`, keep-alives). If the stream breaks, the browser continues the same turn by polling, without duplicates.
+`POST /apps/visully/assistant/stream` returns `text/event-stream` (2 KB padding, `X-Accel-Buffering: no`, keep-alives). If the stream breaks, the browser continues the same turn by polling, without duplicates.
 
 **What was verified, and what wasn't**
 
@@ -107,7 +107,7 @@ Catalogue awareness, search (synonyms, BM25, constraints, live Shopify fallback)
 - **Absence guard:** any final-message sentence claiming the store has none of a product kind is replaced unless a complete check proved it. The replacement says the range could not be verified and mentions the viewed product. Policy sentences such as "no delivery charge" are left alone.
 - **Logging:** Shopify failures are logged with Shopify's own error code (`MAX_COST_EXCEEDED`, `ACCESS_DENIED`, `THROTTLED`) and the requested cost when Shopify reports it.
 
-**Real-store verification:** in the Shopify admin, open **Tryora › Room assistant › Check catalogue connection** (`/app/assistant-diagnostics?q=bed&handle=<product-handle>`). This read-only page runs the assistant's own queries against the store and shows:
+**Real-store verification:** in the Shopify admin, open **Visully › Room assistant › Check catalogue connection** (`/app/assistant-diagnostics?q=bed&handle=<product-handle>`). This read-only page runs the assistant's own queries against the store and shows:
 - the shop and granted scopes
 - active and total product counts
 - whether the catalogue query succeeds, with Shopify's reported cost
@@ -129,7 +129,7 @@ Root causes found for the real-store issues:
 | Card's preview button stuck on "Creating preview…" after a preview | Only the preview message re-rendered | Cards re-render when a job ends |
 
 Also:
-- **Option selector on cards:** "Choose options" or "Change options" opens fabric family chips, circular colour swatches and size, headboard and storage chips. These are built from real Shopify variants (`/apps/tryora/assistant/options`). Composite values such as `Plush Velvet: Cream | Headboard: 50 inches | Storage: No Storage` are split for display only when every value shares one exact shape. A selection resolves to exactly one variant and updates price, stock, image and preview eligibility. Preview eligibility per variant comes from `storefrontConfig`, the product page's own model. Cloudlift and manual mappings point to the product page; no provider is enabled automatically.
+- **Option selector on cards:** "Choose options" or "Change options" opens fabric family chips, circular colour swatches and size, headboard and storage chips. These are built from real Shopify variants (`/apps/visully/assistant/options`). Composite values such as `Plush Velvet: Cream | Headboard: 50 inches | Storage: No Storage` are split for display only when every value shares one exact shape. A selection resolves to exactly one variant and updates price, stock, image and preview eligibility. Preview eligibility per variant comes from `storefrontConfig`, the product page's own model. Cloudlift and manual mappings point to the product page; no provider is enabled automatically.
 - **Memory:**
   - `select_product` remembers "I like the first one".
   - `request_visualisation` uses the selected product, including single-variant products with `variantRef: null`.
@@ -166,7 +166,7 @@ The resolution is written into the developer context as **Authoritative conversa
 
 A *See it in my room* or *Generate preview* button appears only when the server's strict check passed for that exact variant. That check is the same `loadProviderSetting` → adapter → `resolveConfiguredPreview` chain that `startPreview` uses. Cloudlift and manual-mapping products show "choose options on the product page" instead.
 
-Generation calls the existing `/apps/tryora/preview` → `/preview/<job>` → `/ack` endpoints with the exact product, variant and option value. The server therefore re-applies every existing check: reference images, photo analysis, quotas, lead capture and credits. Following the popup's rule, the acknowledgement that consumes a credit is sent only after the image is displayed. If the store requires an email before previews, the chat hands off to the product page popup (`#tryora`).
+Generation calls the existing `/apps/visully/preview` → `/preview/<job>` → `/ack` endpoints with the exact product, variant and option value. The server therefore re-applies every existing check: reference images, photo analysis, quotas, lead capture and credits. Following the popup's rule, the acknowledgement that consumes a credit is sent only after the image is displayed. If the store requires an email before previews, the chat hands off to the product page popup (`#tryora`).
 
 Refinements such as "Show it in cream" or "Try another option" are new verified requests. Placement can't be steered: the instructions forbid promising exact positions, moving furniture, or colours that aren't real variants.
 
@@ -192,7 +192,7 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
 
 1. Re-run `npm test`, `npm run typecheck`, `npm run build`, `git diff --check` and the browser suite (`TRYORA_E2E=1`).
 2. Deploy the app server to a **staging** environment with `TRYORA_ASSISTANT_TRANSPORT` unset (poll).
-3. `shopify app deploy` the theme extension to a **development store** only, and enable the Tryora app embed.
+3. `shopify app deploy` the theme extension to a **development store** only, and enable the Visully app embed.
 4. In the development store, enable the assistant for product pages and add test Store notes. Confirm the notes persist after saving.
 5. Verify on desktop and a real phone:
    - launcher placement next to the product preview button and any chat widget
@@ -203,7 +203,7 @@ Refinements such as "Show it in cream" or "Try another option" are new verified 
    - Stop, Retry, New chat, Clear and Forget room work
    - refresh keeps history
 6. Check the new Admin queries (`TryoraAssistantCatalogue`, `…ProductDetail`, `…StoreInfo`, `…Pages`) succeed against the real store and watch `room-assistant` logs for `shopify_failure`.
-7. Optional: set `TRYORA_ASSISTANT_TRANSPORT=sse` on staging and confirm in browser devtools that `/apps/tryora/assistant/stream` events arrive incrementally through the app proxy. If they arrive all at once, keep `poll`.
+7. Optional: set `TRYORA_ASSISTANT_TRANSPORT=sse` on staging and confirm in browser devtools that `/apps/visully/assistant/stream` events arrive incrementally through the app proxy. If they arrive all at once, keep `poll`.
 8. Only then consider a production release and merchant enablement.
 
 The storefront bundle `shopify-app/extensions/tryora-theme/assets/tryora.js` is generated by `npm run build` and must not be edited by hand.

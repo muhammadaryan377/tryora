@@ -188,10 +188,10 @@ export default function AssistantSettings() {
 
       <s-section slot="aside" heading="Data and safety">
         <s-paragraph>
-          Room photos are normalized in memory and sent to the configured AI provider for the active request. Tryora
+          Room photos are normalized in memory and sent to the configured AI provider for the active request. Visully
           does not write photos or chat messages to its database. The assistant can recommend any active product
           published to your Online Store, using live Shopify prices and availability. A recommendation offers an AI
-          room preview only when that exact variant passes Tryora's preview checks.
+          room preview only when that exact variant passes Visully's preview checks.
         </s-paragraph>
       </s-section>
     </s-page>

@@ -16,4 +16,6 @@ export interface PopupPreviewHandoff {
   deliver: (result: PopupPreviewDelivery) => boolean;
   closed: () => void;
   leadDone: () => boolean;
+  /** The initiating chatbot\u0027s independent lead setting, not the product-page popup\u0027s setting. */
+  lead?: { mode: "off" | "required" | "skippable"; timing: "before" | "after"; showOptIn: boolean; optInWording: string };
 }

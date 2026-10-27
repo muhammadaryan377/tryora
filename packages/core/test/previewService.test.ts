@@ -342,14 +342,15 @@ describe("shopper limits", () => {
 });
 
 describe("lead capture", () => {
-  it("required by default: generation is refused until the email step is done", async () => {
+  it("merchant-enabled required lead capture blocks generation until confirmed", async () => {
     const { svc } = setup();
     await svc.grantTrial(SHOP);
+    await svc.updateSettings({ ...(await svc.ensureSettings(SHOP)), leadCapture: "required" });
     await expectCode(svc.createPreview(input({ leadStepDone: false })), "LEAD_REQUIRED");
     await svc.createPreview(input({ leadStepDone: true }));
   });
 
-  it("merchants can switch lead capture off", async () => {
+  it("lead collection defaults off and merchants can keep it off", async () => {
     const { svc } = setup();
     await svc.grantTrial(SHOP);
     await svc.updateSettings({ ...(await svc.ensureSettings(SHOP)), leadCapture: "off" });

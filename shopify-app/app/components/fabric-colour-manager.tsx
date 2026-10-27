@@ -93,7 +93,7 @@ function RemoveButton({ label, onConfirm, disabled }: { label: string; onConfirm
   const [asking, setAsking] = useState(false);
   if (!asking) return <button type="button" className="fm-link fm-danger" disabled={disabled} onClick={() => setAsking(true)}>{label}</button>;
   return <span className="fm-confirm" role="group" aria-label={label}>
-    <span>Remove from Tryora? Shopify images and variants are kept.</span>
+    <span>Remove from Visully? Shopify images and variants are kept.</span>
     <button type="button" className="fm-btn fm-btn--danger" onClick={() => { setAsking(false); onConfirm(); }}>Remove</button>
     <button type="button" className="fm-link" onClick={() => setAsking(false)}>Keep</button>
   </span>;
@@ -300,7 +300,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
         {p.warning && <s-banner heading="Saved mapping needs attention" tone="warning"><p>{p.warning}</p></s-banner>}
         {p.sampleNotice && <s-banner heading="Some samples need real sample images" tone="warning"><p>{p.sampleNotice}</p></s-banner>}
         {!!p.legacyGallerySamples && <s-banner heading="Older fabric samples are still in the product gallery" tone="warning">
-          <p>{p.legacyGallerySamples} previously uploaded sample image(s) are attached to this Shopify product. New sample uploads use Shopify Files and will not be added to the product gallery. Review existing samples and remove their product-media copies only after confirming any saved references are updated; Tryora does not delete product images automatically.</p>
+          <p>{p.legacyGallerySamples} previously uploaded sample image(s) are attached to this Shopify product. New sample uploads use Shopify Files and will not be added to the product gallery. Review existing samples and remove their product-media copies only after confirming any saved references are updated; Visully does not delete product images automatically.</p>
         </s-banner>}
         {p.providerId === "cloudlift" && <p className="fm-muted">Existing reviewed Cloudlift native-linked mapping is preserved under Manual Setup. Saving does not create an automatic third-party integration.</p>}
 
@@ -477,7 +477,7 @@ export function FabricColourManager({ data, save, upload, selectProduct, error, 
                 <option value="">Not mapped</option>{p.options.map((o) => <option key={o.name} value={o.name}>{o.name}</option>)}</select></label>)}</div></details>
           </section>
           </details>}
-          <footer className="fm-muted fm-footnote fm-footer"><span>Fabric textures and colour samples are saved to Shopify Files, not the product gallery. <a href={link}>Refresh from Shopify</a></span><span>Removing selections from Tryora never deletes Shopify images or variants.</span></footer>
+          <footer className="fm-muted fm-footnote fm-footer"><span>Fabric textures and colour samples are saved to Shopify Files, not the product gallery. <a href={link}>Refresh from Shopify</a></span><span>Removing selections from Visully never deletes Shopify images or variants.</span></footer>
         </fieldset>}
         <p className="fm-footnote"><s-link href={`/app/customization?product=${encodeURIComponent(p.productId)}`}>Inspect existing integration settings</s-link></p>
       </>}
@@ -536,7 +536,7 @@ function KeyValues({ label, values, change }: { label: string; values: Record<st
   </fieldset>;
 }
 
-/* Polaris-aligned surfaces, type and spacing; Tryora's deep green stays the single accent. */
+/* Polaris-aligned surfaces, type and spacing; Visully's deep green stays the single accent. */
 const STYLES = `
 .fabric-manager{--fm-surface:#fff;--fm-subtle:#f7f7f7;--fm-text:#303030;--fm-muted:#616161;--fm-line:#e3e3e3;--fm-line-strong:#c9c9c9;--fm-accent:#303d2f;--fm-accent-soft:#eef1ea;
   --fm-success:#0c5132;--fm-success-bg:#cdfee1;--fm-attention:#5e4200;--fm-attention-bg:#ffeb78;--fm-warning:#8e1f0b;--fm-warning-bg:#fedad9;--fm-neutral-bg:#ebebeb;
@@ -636,7 +636,7 @@ const STYLES = `
 }
 
 
-/* Fabrics workspace: the approved Tryora reference design. */
+/* Fabrics workspace: the approved Visully reference design. */
 .fm-shell{display:grid;grid-template-columns:minmax(0,1fr);min-height:100vh;background:#f7f7f4;color:#171b2a;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .fm-shell *{box-sizing:border-box}.fm-shell a{color:inherit}.fm-icon{width:22px;height:22px;flex:none;vertical-align:middle}
 
