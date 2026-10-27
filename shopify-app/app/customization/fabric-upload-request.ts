@@ -8,7 +8,7 @@ export async function requestFabricUpload(input: { productId: string; revision: 
   if (!(response.headers.get("content-type") ?? "").includes("application/json")) {
     throw new Error(response.status === 401 || response.status === 403 || response.status === 302
       ? "Your Shopify session expired. Refresh the page, then upload the image again."
-      : "The upload didn't reach Tryora. Refresh the page and try again; nothing was changed.");
+      : "The upload didn't reach Visully. Refresh the page and try again; nothing was changed.");
   }
   const result = await response.json();
   if (!response.ok || result.error) throw new Error(result.error ?? "Upload failed. Please try again.");
