@@ -440,6 +440,10 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant-launch__dot { display: none; position: absolute; top: 4px; left: 32px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; background: #d9573f; }
 .tryora-assistant-launch.has-unread .tryora-assistant-launch__dot, .tryora-assistant-launch.has-conversation .tryora-assistant-launch__dot { display: block; }
 .tryora-assistant-launch.has-conversation:not(.has-unread) .tryora-assistant-launch__dot { background: #8fbf6a; }
+/* Shoppers can minimise the assistant and browse while its existing job continues. */
+.tryora-assistant-launch.is-generating:not(.is-hidden) .tryora-assistant-launch__dot { display: block; background: #deb65b; animation: tryora-assistant-dot 1.1s infinite; }
+.tryora-assistant__preview.is-loading { flex-wrap: wrap; }
+.tryora-assistant__preview.is-loading > .tryora-assistant__chip-button { flex: 0 0 auto; }
 .tryora-assistant-launch.is-hidden { opacity: 0; pointer-events: none; transform: scale(.92); }
 .tryora-assistant-launch--bottom-right { right: 20px; }
 .tryora-assistant-launch--bottom-left { left: 20px; }
