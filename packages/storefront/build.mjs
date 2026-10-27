@@ -1,10 +1,10 @@
 // Bundles the shopper popup into the theme app extension. Run: npm run build -w @tryora/storefront
 import { build } from "esbuild";
 
-// Production uses /apps/tryora. Only an isolated staging build sets TRYORA_PROXY_PATH (e.g. /apps/tryora-staging),
+// Visully production uses /apps/visully. Isolated staging builds may set VISULLY_PROXY_PATH (e.g. /apps/visully-staging),
 // and should write to a separate checkout so the committed bundle is never replaced by a staging build.
-const proxy = process.env.TRYORA_PROXY_PATH ?? "/apps/tryora";
-if (!/^\/(apps|a|community|tools)\/[a-z0-9-]{1,30}$/.test(proxy)) throw new Error(`Invalid TRYORA_PROXY_PATH: ${proxy}`);
+const proxy = process.env.VISULLY_PROXY_PATH ?? process.env.TRYORA_PROXY_PATH ?? "/apps/visully";
+if (!/^\/(apps|a|community|tools)\/[a-z0-9-]{1,30}$/.test(proxy)) throw new Error(`Invalid app proxy path: ${proxy}`);
 
 await build({
   entryPoints: ["src/main.ts"],
