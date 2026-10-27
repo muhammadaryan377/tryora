@@ -1842,7 +1842,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const client = input.client ?? clientOverride?.() ?? openAIClient(env);
   const model = env.OPENAI_ASSISTANT_MODEL?.trim() || "gpt-4.1-mini";
   const history = normaliseAssistantHistory(input.history);
-  const room = normaliseRoomContext(input.room);
+  // A newly uploaded image must never reuse the previous room's observations while being analysed.
+  const room = input.roomPhoto ? null : normaliseRoomContext(input.room);
   const preferences = normalisePreferences(input.preferences);
   const shown = normaliseShownRecommendations(input.shown);
   const selection = normaliseSelection(input.selected);
