@@ -124,7 +124,7 @@ An output that merely changes lighting, colour, fabric texture, pillows, or smal
 the old furniture while keeping the old item's design is a FAILED replacement.`
     : `Follow the specified placement rule. Do not remove an unrelated existing item.`;
 
-  return `You are Tryora, a photorealistic furniture visualization and image-editing system.
+  return `You are Visully, a photorealistic furniture visualization and image-editing system.
 Edit IMAGE 1, the customer's original room photograph and environmental source of truth.
 IMAGE 2 is the selected Shopify product appearance reference, never a room template.
 The selected product category is: ${category}.
