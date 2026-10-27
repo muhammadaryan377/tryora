@@ -1348,6 +1348,30 @@ export class RoomAssistant {
     return item.variantRef ? null : "Choose the product options to preview.";
   }
 
+  private cardColourHtml(item: Recommendation, key: string) {
+  const panel = this.cardOptions.get(key);
+  const colourAttribute = panel?.data?.attributes.find(attribute => attribute.kind === "colour");
+  const colourKey = colourAttribute?.name ?? Object.keys(item.options).find(name => /\bcolou?r\b/i.test(name));
+  if (!colourKey) return "";
+  // A pending/incomplete selection must not show the last variant's stale colour.
+  const colour = panel?.data && colourAttribute ? panel.selections[colourKey] : item.options[colourKey];
+  if (typeof colour !== "string" || !colour.trim() || colour.trim() === "Default Title") return "";
+  const fabricAttribute = panel?.data?.attributes.find(attribute => attribute.kind === "fabric");
+  const fabricKey = fabricAttribute?.name ?? Object.keys(item.options).find(name => /\bfabric\b/i.test(name));
+  const fabric = fabricKey ? (panel?.data && fabricAttribute ? panel.selections[fabricKey] : item.options[fabricKey]) : undefined;
+  const option = colourAttribute?.values.find(value => value.value === colour);
+  const sample = fabric && option?.samples?.[fabric] ? option.samples[fabric] : option;
+  // Show a dot only for an actual Shopify/merchant sample, never an invented approximate colour.
+  const validHex = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+  const hex = typeof sample?.colour === "string" && validHex.test(sample.colour) ? sample.colour
+    : validHex.test(colour) ? colour : null;
+  const image = !hex && typeof sample?.image === "string" && /^https:\/\//i.test(sample.image) ? sample.image : null;
+  const swatch = hex ? `<i class="tryora-assistant__selected-colour-swatch" style="background-color:${escapeHtml(hex)}" aria-hidden="true"></i>`
+    : image ? `<img class="tryora-assistant__selected-colour-swatch" src="${escapeHtml(image)}" alt="" loading="lazy">` : "";
+  const fabricLabel = typeof fabric === "string" && fabric.trim() ? `<span>Fabric: ${escapeHtml(fabric)}</span><span aria-hidden="true">·</span>` : "";
+  return `<p class="tryora-assistant__selected-colour">${fabricLabel}${swatch}<span>Colour: ${escapeHtml(colour)}</span></p>`;
+}
+
   private cardHtml(raw: Recommendation, index: number, entryId = "") {
     const item = this.effective(raw);
     const key = `${entryId}:${index}`;
@@ -1373,6 +1397,7 @@ export class RoomAssistant {
         <span class="tryora-assistant__eyebrow">${label}</span>
         <h4>${escapeHtml(item.title)}</h4>
         ${this.priceHtml(item)}
+        ${this.cardColourHtml(item, key)}
         ${item.reason ? `<p class="tryora-assistant__card-reason">${escapeHtml(shortReason(item.reason))}</p>` : ""}
         ${generalPhoto && !item.previewAvailable ? `<p class="tryora-assistant__image-note">Photo shows the product; your selected option may look different.</p>` : ""}
 
