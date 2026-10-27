@@ -1,0 +1,18 @@
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "f59dcb317c21249eb8f5c801fb6fa5ce"
+name = "Visully"
+application_url = "https://tryoracore-production.up.railway.app"
+embedded = true
+
+[access_scopes]
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = ""
+optional_scopes = [ ]
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = ["https://tryoracore-production.up.railway.app/auth/callback"]
+
+[webhooks]
+api_version = "2026-10"

@@ -1,0 +1,41 @@
+
+client_id = "f59dcb317c21249eb8f5c801fb6fa5ce"
+name = "Visully"
+application_url = "https://tryoracore-production.up.railway.app"
+embedded = true
+
+[access_scopes]
+scopes = "read_orders,write_customers,write_products,write_metaobjects,write_metaobject_definitions,write_files"
+use_legacy_install_flow = false
+
+[auth]
+redirect_urls = [
+  "https://tryoracore-production.up.railway.app/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-10"
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/app/uninstalled"
+topics = ["app/uninstalled"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/app/scopes_update"
+topics = ["app/scopes_update"]
+
+[[webhooks.subscriptions]]
+uri = "/webhooks/compliance"
+compliance_topics = [
+  "customers/data_request",
+  "customers/redact",
+  "shop/redact"
+]
+
+[build]
+automatically_update_urls_on_dev = false
+
+[app_proxy]
+url = "https://tryoracore-production.up.railway.app/proxy"
+subpath = "tryora"
+prefix = "apps"
