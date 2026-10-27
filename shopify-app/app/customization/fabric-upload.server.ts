@@ -41,7 +41,7 @@ export async function handleFabricUpload(admin: AdminGraphql, shopId: string, pr
     logUploadFailure(step, e);
     const detail = shopifyMessages(e).join(" ");
     return { error: step === "product" ? `This product could not be read from Shopify${detail ? `: ${detail}` : "."} Refresh the page and try again.`
-      : step === "settings" ? "Tryora's settings could not be read just now. Try again in a moment; no configuration was changed."
+      : step === "settings" ? "Visully's settings could not be read just now. Try again in a moment; no configuration was changed."
         : `The image could not be uploaded to Shopify${detail ? `: ${detail}` : "."} Refresh the product and try again; no configuration was changed.` };
   }
 }
