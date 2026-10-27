@@ -149,8 +149,8 @@ export class RoomAssistant {
       this.state.selected = { productRef: numeric(context.productId), variantRef: numeric(context.currentVariantId?.()) || null, source: "options" };
       this.pendingIntent = "visualise";
     }
-    // Legacy chat sessions may still contain an old lead form. Never reopen it.
-    this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
+    // Keep lead prompts only for channels that are currently enabled; never persist contact text.
+    if (!config.lead || config.lead.mode === "off") this.state.entries = this.state.entries.filter((entry) => entry.kind !== "lead");
   }
 
   get isOpen() { return this.visible; }
@@ -612,6 +612,7 @@ export class RoomAssistant {
       this.openPicker("upload");
       return;
     }
+    if (this.leadNeeded()) { this.openLeadForm(chosen, false); return; }
     const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
     this.originals.set(entry.id, this.roomPhoto.url);
     this.state.entries.push(entry);
@@ -627,7 +628,7 @@ export class RoomAssistant {
         visitor: storedVisitorId(),
         signal: controller.signal,
         onStage: (stage) => { entry.stage = stage; this.renderEntry(entry.id); },
-        leadDone: "1",
+        leadDone: this.leadDoneFlag(),
       });
       if (controller.signal.aborted || !this.state.entries.includes(entry)) { URL.revokeObjectURL(url); return; }
       this.previewUrls.set(entry.id, url);
@@ -638,6 +639,7 @@ export class RoomAssistant {
       acknowledge();
       void tagBasket(chosen.productId);
       this.state.previewsDelivered += 1;
+      if (this.leadNeeded()) this.openLeadForm(chosen, true);
       this.announce(`Your AI room preview of the ${chosen.title} is ready.`);
     } catch (error) {
       if (controller.signal.aborted) {
@@ -648,8 +650,9 @@ export class RoomAssistant {
       entry.status = "failed";
       entry.stage = undefined;
       if (code === "LEAD_REQUIRED") {
-        entry.error = "Chat previews are not configured for direct generation yet. No credit was used.";
+        entry.error = "This store requires the email step before another preview. No credit was used.";
         this.renderEntry(entry.id);
+        if (this.config.lead?.mode !== "off") this.openLeadForm(chosen, false);
         return;
       }
       entry.error = previewErrorMessage(code);
@@ -762,6 +765,7 @@ export class RoomAssistant {
       deliver: (result) => this.receivePopupPreview(result, epoch),
       closed: () => { if (epoch === this.conversationEpoch) this.open(); },
       leadDone: () => epoch === this.conversationEpoch && this.state.lead.done,
+      lead: this.config.lead ?? { mode: "off", timing: "before", showOptIn: false, optInWording: "" },
     });
   }
 
@@ -1525,10 +1529,12 @@ export class RoomAssistant {
     form.set("wording", this.config.lead?.showOptIn ? this.config.lead.optInWording : "");
     form.set("product", entry.item.productId);
     form.set("option", entry.item.optionValue ?? "");
+    form.set("visitor", storedVisitorId());
+    form.set("channel", "assistant");
     try {
       const response = await fetch(`${PROXY}/lead`, { method: "POST", body: form, credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw Object.assign(new Error(body.error ?? "REQUEST_FAILED"), { code: body.error ?? "REQUEST_FAILED" });
+      if (!response.ok || body.ok !== true) throw Object.assign(new Error(body.error ?? "REQUEST_FAILED"), { code: body.error ?? "REQUEST_FAILED" });
     } catch (error: any) {
       entry.status = "open";
       entry.error = error?.code === "BAD_EMAIL" ? "Please enter a valid email address." : "We couldn't save your email just now. Please try again.";
@@ -1543,12 +1549,22 @@ export class RoomAssistant {
     if (!entry.after) void this.startPreview(entry.item);
   }
 
-  skipLead(id: string) {
+  async skipLead(id: string) {
     const entry = this.state.entries.find((candidate): candidate is LeadEntry => candidate.id === id && candidate.kind === "lead");
     if (!entry || entry.status !== "open") return;
-    // Before a preview only a "skippable" store allows skipping; after one, declining simply closes the prompt.
-    if (!entry.after && this.config.lead?.mode !== "skippable") return;
-    if (this.config.lead?.mode === "skippable" || !entry.after) this.state.lead.done = true;
+    if (this.config.lead?.mode !== "skippable") return;
+    try {
+      const form = new FormData();
+      form.set("visitor", storedVisitorId());
+      form.set("channel", "assistant");
+      const response = await fetch(`${PROXY}/lead/skip`, { method: "POST", body: form, credentials: "same-origin" });
+      if (!response.ok) throw new Error("REQUEST_FAILED");
+    } catch {
+      entry.error = "We couldn\u0027t save your choice. Please try again.";
+      this.renderEntry(id);
+      return;
+    }
+    this.state.lead.done = true;
     entry.status = "skipped";
     this.leadDrafts.delete(id);
     this.save();
@@ -1565,7 +1581,7 @@ export class RoomAssistant {
     const lead = this.config.lead;
     const draft = this.leadDrafts.get(entry.id) ?? { email: "", firstName: "", marketing: false };
     const sending = entry.status === "sending";
-    const canSkip = entry.after || lead?.mode === "skippable";
+    const canSkip = lead?.mode === "skippable";
     return `<div class="tryora-assistant__lead" data-entry="${id}" role="group" aria-labelledby="ta-lead-${id}">
       <h4 id="ta-lead-${id}">${entry.after ? "Enter your email to keep previewing" : "Enter your email to create your preview"}</h4>
       <p>Your name and email are saved for this store. Marketing emails require your opt-in. Your image is never emailed.</p>
