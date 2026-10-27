@@ -526,7 +526,7 @@ describe("chat image upload", () => {
     expect(assistant.typing.size).toBe(0);
   });
 
-  it("does not queue a typing animation while minimised or when reduced motion is preferred", async () => {
+  it("does not queue a typing animation while minimised", async () => {
     const assistant = makeAssistant();
     const sentence = "These pieces complement your room without obscuring the existing furniture. ".repeat(10);
     proxy.script([{ type: "delta", text: sentence }], [{ type: "final", reply: { message: sentence, recommendations: [] } }, { type: "done" }]);
@@ -546,6 +546,29 @@ describe("chat image upload", () => {
     expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(sentence.trim());
     release();
     await settle(60);
+    expect(assistant.typing.size).toBe(0);
+  });
+
+  it("honours reduced-motion preference by showing incoming model deltas without delayed characters", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const assistant = makeAssistant();
+    const answer = "A real model-generated recommendation for your bright room. ".repeat(12).trim();
+    proxy.script([{ type: "delta", text: answer }], [{ type: "final", reply: { message: answer, recommendations: [] } }, { type: "done" }]);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = proxy.fetcher.getMockImplementation()!;
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=1")) await gate;
+      return original(url, init);
+    });
+    assistant.open();
+    await type("Which furniture would fit?");
+    click("[data-ta='send']");
+    await settle(40);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(answer);
+    expect(assistant.typing.size).toBe(0);
+    release();
+    await settle(50);
     expect(assistant.typing.size).toBe(0);
   });
 
