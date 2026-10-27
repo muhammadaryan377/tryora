@@ -75,7 +75,7 @@ Core runtime files have synchronized app copies for shopify-app-only deployments
 
 Real-store validation remains required for Aria/Aspen and other merchants:
 
-1. Read-only authorized native product/options/variants/media and saved Tryora settings.
+1. Read-only authorized native product/options/variants/media and saved Visully settings.
 2. Identify the actual external/theme provider, its schema, permissions, dependency
    rules and reliable current-selection mechanism. Never infer these from a catalogue.
 3. Verify native variant images actually depict the assigned combination. Shopify
