@@ -309,7 +309,7 @@ export function mergeShopperPreferences(previous: ShopperPreferences | null, nex
   const materials = cleared("materials?|fabrics?|fabric preference") ? [] : next.materials.length ? next.materials : original.materials;
   const sizes = cleared("sizes?|size preference") ? [] : next.sizes.length ? next.sizes : original.sizes;
   const furniture = next.furniture.length ? next.furniture : original.furniture;
-  const budgetRemoved = /\\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\\s+(?:budget|price limit)\\b/i.test(latest);
+  const budgetRemoved = /\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\s+(?:budget|price limit)\b/i.test(latest);
   const roomNotes = !next.roomNotes ? original.roomNotes
     : original.roomNotes && !next.roomNotes.toLowerCase().includes(original.roomNotes.toLowerCase()) &&
         !original.roomNotes.toLowerCase().includes(next.roomNotes.toLowerCase())
@@ -1405,8 +1405,8 @@ export function simpleSocialReply(message: string): string | null {
     return "Hi! I can help you find furniture or preview a product in your room. What are you looking for?";
   if (/^(?:thanks|thank you|thank you very much|cheers)[!. ]*$/i.test(text))
     return "You're welcome!";
-  if (/^(?:(?:this|that|it|the room|the preview)\\s+)?(?:looks?|sounds?)\\s+(?:really\\s+)?(?:good|great|nice|lovely|perfect)[!. ]*$/i.test(text) ||
-      /^i\\s+(?:really\\s+)?(?:like|love)\\s+(?:it|this|that)[!. ]*$/i.test(text))
+  if (/^(?:(?:this|that|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)[!. ]*$/i.test(text) ||
+      /^i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that)[!. ]*$/i.test(text))
     return "Glad you like it!";
   if (/^(?:ok(?:ay)?|got it|alright|perfect|great)[!. ]*$/i.test(text)) return "Got it!";
   return null;
