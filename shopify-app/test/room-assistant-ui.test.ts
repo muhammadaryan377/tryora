@@ -26,6 +26,8 @@ function fakeProxy() {
     const url = String(input);
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     calls.push({ method: init.method ?? "GET", url, body: init.body as FormData });
+    if (url.startsWith("/apps/tryora/lead/status?")) return respond({ satisfied: proxy.leadSatisfied });
+    if (url === "/apps/tryora/lead/skip") { proxy.leadSatisfied = true; return respond({ ok: true }); }
     if (url.startsWith("/apps/tryora/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions, recommendation: proxy.recommendation });
     if (url === "/apps/tryora/assistant/turn") { forms.push(init.body as FormData); return respond({ turnId: `turn${forms.length}` }); }
     const poll = url.match(/assistant\/turn\/turn(\d+)\?visitor=[^&]+&after=(\d+)/);
@@ -58,12 +60,14 @@ function fakeProxy() {
     }
     if (url === "/apps/tryora/lead") {
       const email = String((init.body as FormData).get("email") ?? "");
-      return email.includes("@") ? respond({ ok: true }) : respond({ error: "BAD_EMAIL" }, 400);
+      if (email.includes("@")) { proxy.leadSatisfied = true; return respond({ ok: true }); }
+      return respond({ error: "BAD_EMAIL" }, 400);
     }
     if (url.startsWith("data:")) return new Response(new Blob(["a"], { type: "image/jpeg" }));
     throw new Error(`Unexpected request ${url}`);
   });
   const proxy = {
+    leadSatisfied: false,
     suggestions: [] as string[],
     recommendation: null as any,
     fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any, checkGate: null as Promise<void> | null,
@@ -566,23 +570,30 @@ describe("recommendation cards and previews", () => {
     expect(previewStarts()[0]!.body!.get("leadDone")).toBe("1");
   });
 
-  it("generates directly from the saved room without email, name or marketing consent", async () => {
+  it("requires the merchant's email in chatbot before generation, then reuses the proof", async () => {
     await cardWithPhoto({ lead: { mode: "required", timing: "before", showOptIn: true, optInWording: "Email me offers." } });
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
     click("[data-ta='confirm-preview']");
+    await settle(100);
+    expect(previewStarts()).toHaveLength(0);
+    expect($(".tryora-assistant__lead")).toHaveLength(1);
+    expect($(".tryora-assistant__lead [data-ta='lead-skip']")).toBeNull();
+    const email = $(".tryora-assistant__lead input[name='ta-lead-email']") as HTMLInputElement;
+    email.value = "shopper@example.com";
+    email.dispatchEvent(new Event("input", { bubbles: true }));
+    click("[data-ta='lead-submit']");
     await settle(1500);
+    expect(proxy.calls.some(call => call.url === "/apps/tryora/lead")).toBe(true);
     expect(previewStarts()).toHaveLength(1);
     expect(previewStarts()[0]!.body!.get("channel")).toBe("assistant");
     expect(previewStarts()[0]!.body!.get("leadDone")).toBe("1");
-    expect(proxy.calls.some((call) => call.url === "/apps/tryora/lead")).toBe(false);
-    expect($$(".tryora-assistant__lead")).toHaveLength(0);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
     click(".tryora-assistant__card [data-ta='preview']");
     click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(2);
-    expect($$(".tryora-assistant__lead")).toHaveLength(0);
+    expect($(".tryora-assistant__lead")).toHaveLength(0);
   });
 
   it("fails safely when an outdated server still requires email, without displaying a lead form", async () => {
@@ -594,19 +605,23 @@ describe("recommendation cards and previews", () => {
     await settle(80);
     expect(previewStarts()).toHaveLength(1);
     expect($$(".tryora-assistant__lead")).toHaveLength(0);
-    expect(document.body.textContent).toContain("Chat previews are not configured for direct generation yet");
+    expect(document.body.textContent).toContain("This store requires the email step before another preview");
     expect(proxy.calls.some((call) => call.url === "/apps/tryora/lead")).toBe(false);
   });
 
-  it("does not interrupt a successful preview with an after-preview email prompt", async () => {
+  it("asks after the first chatbot preview and lets skippable leads decline", async () => {
     await cardWithPhoto({ lead: { mode: "skippable", timing: "after", showOptIn: true, optInWording: "" } });
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
     click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(1);
-    expect($$(".tryora-assistant__lead")).toHaveLength(0);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
+    expect($(".tryora-assistant__lead")).toHaveLength(1);
+    click("[data-ta='lead-skip']");
+    await settle(70);
+    expect(proxy.calls.some(c => c.url === "/apps/tryora/lead/skip")).toBe(true);
+    expect($(".tryora-assistant__lead [data-ta='lead-submit']")).toHaveLength(0);
   });
 
   it("never starts a second job while one is generating", async () => {
