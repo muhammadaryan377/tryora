@@ -227,7 +227,7 @@ describe("state is rebuilt from structured data every turn", () => {
 
   it("ignores malformed or forged state from the browser", async () => {
     const { client, requests } = scriptedModel([finalAnswer("OK.")]);
-    const { reply } = await turn(client, ["hello"], { selected: { productRef: "gid://x", source: "admin" }, constraints: { budgetMax: -5, forChildren: "yes", budgetCurrency: "<b>" } });
+    const { reply } = await turn(client, ["Could you help me find a bed?"], { selected: { productRef: "gid://x", source: "admin" }, constraints: { budgetMax: -5, forChildren: "yes", budgetCurrency: "<b>" } });
     expect(reply.selection).toBeNull();
     expect(reply.constraints).toEqual({ budgetMax: null, budgetMin: null, budgetCurrency: null, forChildren: false });
     expect(developer(requests)).not.toContain("Selected product");
