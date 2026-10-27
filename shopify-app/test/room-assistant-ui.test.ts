@@ -465,6 +465,90 @@ describe("chat image upload", () => {
     expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Looking at beds now.");
   });
 
+  it("paces larger real model chunks while recommendation cards arrive without resetting the typing state", async () => {
+    const assistant = makeAssistant();
+    const answer = "The bright walls and warm wood floor give your room a calm foundation. ".repeat(15).trim();
+    proxy.script(
+      [{ type: "delta", text: answer }],
+      [{ type: "recommendations", items: [card()] }],
+      [{ type: "final", reply: { message: answer, recommendations: [] } }, { type: "done" }],
+    );
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = proxy.fetcher.getMockImplementation()!;
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=2")) await gate;
+      return original(url, init);
+    });
+    assistant.open();
+    await type("Which bed would suit this room?");
+    click("[data-ta='send']");
+    await settle(45);
+    const first = $(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent!;
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThan(answer.length);
+    expect($(".tryora-assistant__card h4")!.textContent).toBe("Aria Bed");
+    expect($(".tryora-assistant__bubble[aria-busy='true'] .tryora-assistant__text")).not.toBeNull();
+    await settle(55);
+    const progressed = $(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent!;
+    expect(progressed.length).toBeGreaterThan(first.length);
+    expect(progressed.length).toBeLessThanOrEqual(answer.length);
+    release();
+    await settle(60);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(answer);
+    expect($(".tryora-assistant__bubble[aria-busy='true']")).toBeNull();
+    expect(assistant.typing.size).toBe(0);
+  });
+
+  it("clears an obsolete streamed draft on reset and never types stale content into the final reply", async () => {
+    const assistant = makeAssistant();
+    proxy.script(
+      [{ type: "delta", text: "Unverified draft that must disappear. ".repeat(14) }],
+      [{ type: "reset_text" }, { type: "delta", text: "Verified recommendation." }],
+      [{ type: "final", reply: { message: "Verified recommendation.", recommendations: [] } }, { type: "done" }],
+    );
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = proxy.fetcher.getMockImplementation()!;
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=3")) await gate;
+      return original(url, init);
+    });
+    assistant.open();
+    await type("Help?");
+    click("[data-ta='send']");
+    await settle(65);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Verified recommendation.");
+    expect(assistant.typing.size).toBeLessThanOrEqual(1);
+    release();
+    await settle(45);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Verified recommendation.");
+    expect(assistant.typing.size).toBe(0);
+  });
+
+  it("does not queue a typing animation while minimised or when reduced motion is preferred", async () => {
+    const assistant = makeAssistant();
+    const sentence = "These pieces complement your room without obscuring the existing furniture. ".repeat(10);
+    proxy.script([{ type: "delta", text: sentence }], [{ type: "final", reply: { message: sentence, recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    const original = proxy.fetcher.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=1")) await gate;
+      return original(url, init);
+    });
+    assistant.minimise();
+    await assistant.send("Suggest a sofa");
+    await settle(45);
+    expect(assistant.typing.size).toBe(0);
+    assistant.open();
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(sentence.trim());
+    release();
+    await settle(60);
+    expect(assistant.typing.size).toBe(0);
+  });
+
   it("escapes model output instead of rendering markup", async () => {
     const assistant = makeAssistant();
     proxy.script([{ type: "final", reply: { message: "**Great** <img src=x onerror=alert(1)>\n- one\n- two", recommendations: [] } }, { type: "done" }]);
