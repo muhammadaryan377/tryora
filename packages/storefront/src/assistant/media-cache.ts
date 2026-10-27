@@ -77,3 +77,17 @@ export function clearMedia(shop: string): Promise<void> {
     };
   }, undefined);
 }
+
+/** Opportunistically delete expired bytes whenever this shop's assistant starts again. */
+export function pruneExpiredMedia(shop: string): Promise<void> {
+  return transact<void>(shop, "", "readwrite", (store, id, done) => {
+    const req = store.openCursor();
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (!cursor) return done();
+      const record = cursor.value as Saved | undefined;
+      if (typeof cursor.key === "string" && cursor.key.startsWith(id) && (!record || record.expires <= Date.now())) cursor.delete();
+      cursor.continue();
+    };
+  }, undefined);
+}
