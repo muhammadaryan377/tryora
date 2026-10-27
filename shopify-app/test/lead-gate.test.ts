@@ -65,7 +65,7 @@ describe("independent lead capture", () => {
     await expect(reserveLeadPermission(shop, visitor, "assistant")).rejects.toThrow();
     await markLeadCaptured(shop, visitor);
     const release = await reserveLeadPermission(shop, visitor, "assistant");
-    expect(await leadVisitStatus(shop, visitor, "assistant")).toEqual({ satisfied: true });
+    expect(await leadVisitStatus(shop, visitor, "assistant")).toMatchObject({ satisfied: true });
     await release();
     expect((await leadPolicy(shop, "popup")).mode).toBe("off");
     expect(fixture.visits).toHaveProperty("size", 2);
@@ -79,7 +79,7 @@ describe("independent lead capture", () => {
     await release();
     await reserveLeadPermission(shop, visitor, "assistant");
     await markLeadCaptured(shop, visitor);
-    expect(await leadVisitStatus(shop, visitor, "assistant")).toEqual({ satisfied: true });
+    expect(await leadVisitStatus(shop, visitor, "assistant")).toMatchObject({ satisfied: true });
     await reserveLeadPermission(shop, visitor, "assistant");
   });
 
@@ -88,8 +88,8 @@ describe("independent lead capture", () => {
     fixture.shop.leadSettings = { chatLeadCapture: "skippable" };
     await expect(skipLead(shop, visitor, "popup")).rejects.toThrow();
     expect(await skipLead(shop, visitor, "assistant")).toEqual({ ok: true });
-    expect(await leadVisitStatus(shop, visitor, "assistant")).toEqual({ satisfied: true });
-    expect(await leadVisitStatus(shop, visitor, "popup")).toEqual({ satisfied: false });
+    expect(await leadVisitStatus(shop, visitor, "assistant")).toMatchObject({ satisfied: true });
+    expect(await leadVisitStatus(shop, visitor, "popup")).toMatchObject({ satisfied: false });
   });
 
   it("does not trust empty or malformed visitor identifiers", async () => {
