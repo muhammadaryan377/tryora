@@ -33,7 +33,7 @@ vi.mock("../app/db.server", () => ({ default: {
   $transaction: async (queries: Promise<any>[]) => Promise.all(queries),
 } }));
 
-import { leadPolicy, leadVisitStatus, markLeadCaptured, reserveLeadPermission, skipLead } from "../app/lead-gate.server";
+import { leadPolicy, leadVisitStatus, markLeadCaptured, precheckLeadPermission, reserveLeadPermission, skipLead } from "../app/lead-gate.server";
 
 const shop = "demo.myshopify.com";
 const visitor = "123e4567-e89b-42d3-a456-426614174000";
@@ -51,6 +51,13 @@ describe("independent lead capture", () => {
     expect((await leadPolicy(shop, "assistant")).mode).toBe("off");
     fixture.shop.leadSettings = { chatLeadCapture: "skippable" };
     expect((await leadPolicy(shop, "assistant")).mode).toBe("skippable");
+  });
+
+  it("rejects required-email requests before expensive photo analysis", async () => {
+    fixture.shop.leadCapture = "required";
+    await expect(precheckLeadPermission(shop, visitor, "popup")).rejects.toThrow();
+    await markLeadCaptured(shop, visitor);
+    await expect(precheckLeadPermission(shop, visitor, "popup")).resolves.toBeUndefined();
   });
 
   it("requires real server lead proof for a required first preview", async () => {
