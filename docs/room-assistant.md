@@ -82,6 +82,16 @@ Buffers are bounded (3,000 events, 512 KB), bound to shop and visitor, expire 3 
 
 Recommendations are only shown as cards that the server has verified, and they arrive before the prose. The final message replaces the streamed draft, and any price the server never returned (and the shopper never typed) is removed from it. Stock and preview status appear only on cards.
 
+## English conversation intelligence and room-fit ranking
+
+The customer-facing chatbot remains **English**. Its latest question is authoritative. A conservative per-turn `intent.server.ts` plan detects whether the shopper wants a product answer, recommendations, a comparison, more options, a preview, store support, an acknowledgement, or analysis of a freshly uploaded room. Short follow-ups such as "what about grey?" can inherit an earlier explicit furniture category; verified selected/numbered products remain controlled by `references.server.ts`. The internal standalone interpretation is passed into the model's verified conversation state and is not displayed to the shopper or treated as permission to invent missing facts. Existing session history retains previous AI answers, Shopify card references, selections and completed previews.
+
+A freshly uploaded room photo **must** be analysed before search or recommendations; it must never inherit a different room's saved observations. For room-based discovery, the backend retrieves a broader shortlist of up to ten real Shopify candidates, then sorts by a transparent internal room-fit score using merchant-reported options, product descriptions and the active room's colours/style plus explicit customer preferences. The verified final cards are reranked by the same evidence; the first search hit and AI-preview availability are no longer automatic top-pick signals. These are **soft aesthetic signals** only, not certainty scores, invented variant colours or guarantees of physical fit. Existing mandatory category, audience, budget, stock and exact-variant checks remain in force; compare/price requests retain their verified ordering, and no unrelated cards should be generated for ordinary follow-up questions.
+
+The English system prompt now explicitly distinguishes the product card's verified **Fabric / Colour** controls from unsolicited chat questions asking shoppers to configure products. The controls continue to work, and no AI image is generated without the existing exact-variant check and shopper confirmation.
+
+Regression coverage: `test/assistant-intent-room-fit.test.ts` checks follow-up intents, missing context, shopper preferences and stable reranking; `test/room-assistant.test.ts` checks broader initial retrieval chooses a room-compatible product rather than the first Shopify result. Run full CI and real-store conversation smoke tests before release.
+
 ## Agent and tools
 
 Tools are read-only and allowlisted, with argument validation:
