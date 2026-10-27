@@ -1,0 +1,29 @@
+name: Temporary exact storefront bundle export
+on:
+  pull_request:
+    branches:
+      - fix/selected-colour-on-product-cards-20261027
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install root dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Generate checked-in storefront asset
+        run: npm run build --workspace=@tryora/storefront
+      - name: Export exact generated JS as safe text chunks
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const body = fs.readFileSync('shopify-app/extensions/tryora-theme/assets/tryora.js', 'utf8');
+          const step = 6000;
+          console.log('SYNC_BUNDLE_START ' + body.length);
+          for (let i = 0; i < body.length; i += step) console.log('SYNC_BUNDLE_CHUNK ' + (i / step) + ' ' + JSON.stringify(body.slice(i, i + step)));
+          console.log('SYNC_BUNDLE_END');
+          NODE
