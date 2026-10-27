@@ -52,7 +52,7 @@ export function saveMedia(shop: string, name: string, blob: Blob): Promise<boole
   }, false);
 }
 export function readMedia(shop: string, name: string): Promise<Blob | null> {
-  return transact(shop, name, "readonly", (store, id, done) => {
+  return transact<Blob | null>(shop, name, "readonly", (store, id, done) => {
     const req = store.get(id);
     req.onsuccess = () => {
       const v = req.result as Saved | undefined;
