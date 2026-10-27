@@ -105,7 +105,7 @@ export default function Appearance() {
   const [autoSwatch, setAutoSwatch] = useState(d.swatchAutoFill);
   const val = (e: any) => e.currentTarget.value as string;
   const checked = (e: any) => !!e.currentTarget.checked;
-  const showTryoraButton = mode !== "own";
+  const showVisullyButton = mode !== "own";
 
   return (
     <s-page heading="Appearance">
@@ -183,18 +183,18 @@ export default function Appearance() {
             label="Fill missing swatches automatically"
             checked={autoSwatch || undefined}
             onChange={(e: any) => setAutoSwatch(checked(e))}
-            details="For colours with no swatch in Shopify, Tryora uses the colour of that variant's photo, or guesses from the name (e.g. Navy, Oatmeal). Check them on each product and change any that look wrong. When off, those colours show as their name."
+            details="For colours with no swatch in Shopify, Visully uses the colour of that variant's photo, or guesses from the name (e.g. Navy, Oatmeal). Check them on each product and change any that look wrong. When off, those colours show as their name."
           />
         </s-section>
 
-        <s-section heading="How shoppers open Tryora">
+        <s-section heading="How shoppers open Visully">
           <s-select label="Launch method" value={mode} onChange={(e: any) => setMode(val(e) as typeof mode)}>
-            <s-option value="tryora">Tryora button</s-option>
+            <s-option value="tryora">Visully button</s-option>
             <s-option value="own">My own button only</s-option>
             <s-option value="both">Both</s-option>
           </s-select>
 
-          {showTryoraButton && (
+          {showVisullyButton && (
             <s-stack gap="base">
               <s-select label="Button type" value={type} onChange={(e: any) => setType(val(e) as typeof type)}>
                 <s-option value="overlay">On the product image</s-option>
@@ -226,7 +226,7 @@ export default function Appearance() {
               <s-heading>Using your own button</s-heading>
               <s-paragraph>
                 Link any button, image or text on your product page to <s-text type="strong">#tryora</s-text> and it will open
-                Tryora. For example, in your theme editor set a button's link to <s-text type="strong">#tryora</s-text>.
+                Visully. For example, in your theme editor set a button's link to <s-text type="strong">#tryora</s-text>.
               </s-paragraph>
             </s-box>
           )}
