@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - fix/chatbot-inline-fabric-colour-20261027
+  pull_request:
+    branches:
+      - fix/selected-colour-on-product-cards-20261027
 permissions:
   contents: read
 jobs:
