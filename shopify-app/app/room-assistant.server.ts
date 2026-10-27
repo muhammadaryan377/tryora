@@ -1057,7 +1057,12 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   // when the shopper explicitly asks for a preview, not during discovery.
   const roomRanked = rankRoomRecommendations(valid,
     ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.activePreferences);
-  const fitting = roomRanked.filter((item) => {
+  // When a preview was explicitly requested, keep the exact eligible variant ahead of
+  // another non-previewable variant of that same product before deduplicating product cards.
+  const candidateOrder = wantsRoomPreview(ctx.latestMessage)
+    ? [...roomRanked].sort((a, b) => Number(b.previewAvailable) - Number(a.previewAvailable))
+    : roomRanked;
+  const fitting = candidateOrder.filter((item) => {
     if (distinctProducts.has(item.productRef)) return false;
     distinctProducts.add(item.productRef);
     return true;
