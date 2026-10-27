@@ -321,7 +321,7 @@ export class Tryora {
   private async completeLead(skip: boolean) {
     if (this.leadSaving || (this.state.step !== "emailStep" && this.state.step !== "result")) return;
     if (skip && this.activeLead().mode !== "skippable") return;
-    if (!skip && !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(this.email.trim())) {
+    if (!skip && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(this.email.trim())) {
       this.emailError = "Please enter a valid email address.";
       this.render();
       return;
