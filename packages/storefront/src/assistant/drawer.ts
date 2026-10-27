@@ -470,14 +470,15 @@ export class RoomAssistant {
         this.state.explored = [...(this.state.explored ?? []).filter((ref) => !this.state.shown.some((s) => s.productRef === ref.productRef)), ...this.state.shown].slice(-100);
         this.syncCards(reply.recommendations, reply.id);
         this.save();
-        this.renderAll();
+        // Only update this streamed turn: replacing the full scroll area would flicker older messages.
+        this.renderEntry(reply.id);
         return;
       case "visualise":
         reply.visualise = event.item as Recommendation;
         this.select(reply.visualise, this.state.selected?.productRef === reply.visualise.productRef && this.state.selected?.variantRef === reply.visualise.variantRef ? this.state.selected.source : "conversation");
         this.syncCards([reply.visualise], reply.id);
         this.save();
-        this.renderAll();
+        this.renderEntry(reply.id);
         return;
       case "selected": {
         const item = event.item as Recommendation;
@@ -491,7 +492,7 @@ export class RoomAssistant {
         this.state.explored = [...(this.state.explored ?? []).filter(ref => ref.productRef !== item.productRef), { productRef: item.productRef, variantRef: item.variantRef }].slice(-100);
         this.syncCards([item], reply.id);
         this.save();
-        this.renderAll();
+        this.renderEntry(reply.id);
         return;
       }
       case "constraints":
