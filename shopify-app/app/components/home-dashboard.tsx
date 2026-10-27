@@ -668,13 +668,13 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
               If you need any help setting up Tryora or have questions, we&apos;re
               here for you.
             </p>
-            <a
+            <Link
               className={styles.button}
-              href="mailto:support@visully.io"
+              to="/app/support"
             >
               Contact support
               <Icon name="external" />
-            </a>
+            </Link>
           </section>
         </aside>
       </div>
