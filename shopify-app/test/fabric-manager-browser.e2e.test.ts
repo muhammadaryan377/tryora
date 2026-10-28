@@ -7,7 +7,7 @@ import { build } from "esbuild";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { providerFixture, productId, shopId } from "./fixtures/provider-mapping";
-const state = vi.hoisted(() => ({ rows: [] as any[], admin: null as any, uploads: 0, media: [] as any[], marker: "" }));
+const state = vi.hoisted(() => ({ rows: [] as any[], admin: null as any, uploads: 0, media: [] as any[], files: [] as any[], marker: "" }));
 vi.mock("../app/shopify.server", () => ({ authenticate: { admin: async () => ({ admin: state.admin, session: { shop: "synthetic.myshopify.com" } }) } }));
 vi.mock("../app/db.server", () => {
   const db = { shop: { upsert: async () => ({}) }, productPreviewConfig: { findUnique: async () => ({ enabled: true, autoConfigured: false, visualOptionName: "Colour", choices: [] }) },
@@ -39,11 +39,20 @@ function fixture() {
   draft.fabrics.push({ id: "boucle", name: "Teddy Boucle", enabled: true, description: "Actual merchant texture", textureMediaId: "gid://shopify/MediaImage/203",
     colours: [{ id: "boucle-ascot", name: "Ascot", enabled: true, swatchMediaId: "gid://shopify/MediaImage/203", hex: null }] });
   const { document } = compileFabricDocument(draft, shopId, productId, { product: {}, variants: f.variants, media: state.media });
-  state.rows = [{ shopId, productId, providerId: "manual_mapping", revision: "initial", active: true, mapping: document }]; state.uploads = 0;
+  state.rows = [{ shopId, productId, providerId: "manual_mapping", revision: "initial", active: true, mapping: document }]; state.uploads = 0; state.files = [];
   state.admin = { graphql: async (q: string, init: any) => {
     const id = init?.variables?.id;
     if (q.includes("TryoraFabricProducts")) return Response.json({ data: { products: { nodes: [{ id: nativeId, title: "Native Bed" }, { id: productId, title: "Manual Bed" }], pageInfo: { hasNextPage: false, endCursor: null } } } });
     if (q.includes("TryoraStageFabricImage")) return Response.json({ data: { stagedUploadsCreate: { stagedTargets: [{ url: "https://shopify-staged-uploads.storage.googleapis.com/", resourceUrl: "https://shopify-staged-uploads.storage.googleapis.com/image.jpg", parameters: [] }], userErrors: [] } } });
+    if (q.includes("TryoraCreateFabricSample")) {
+      state.uploads++;
+      const file = { id: `gid://shopify/MediaImage/${900 + state.uploads}`, alt: init.variables.files[0].alt,
+        fileStatus: "READY", image: { url: `https://cdn.shopify.com/upload-${state.uploads}.jpg` } };
+      state.files.push(file);
+      return Response.json({ data: { fileCreate: { files: [file], userErrors: [] } } });
+    }
+    if (q.includes("TryoraFabricFileUploadStatus")) return Response.json({ data: { node: state.files.find(file => file.id === id) ?? null } });
+    if (q.includes("TryoraSavedFabricSamples")) return Response.json({ data: { nodes: state.files.filter(file => init.variables.ids.includes(file.id)) } });
     if (q.includes("TryoraAttachFabricImage")) {
       state.marker = init.variables.media[0].alt; state.uploads++;
       state.media.push({ id: `gid://shopify/MediaImage/${900 + state.uploads}`, alt: state.marker, image: { url: `https://cdn.shopify.com/upload-${state.uploads}.jpg` } });
@@ -144,12 +153,13 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect(await fits()).toBe(true);
 
       // Appearance controls are persisted by the real save action and restored by the loader.
-      await page.getByRole("button", { name: "Rectangle", exact: true }).click();
-      await page.selectOption('[aria-label="Swatch size"]', "75");
+      await page.getByRole("button", { name: "Square swatches", exact: true }).click();
+      await page.locator('[aria-label="Swatch size"]').fill("75");
+      await page.locator('[aria-label="Swatch size"]').blur();
       expect(await page.locator('.fm-colour .fm-thumb').first().evaluate((el: HTMLElement) => el.style.width)).toBe("75px");
       await savePage(page);
-      expect(state.rows[0].mapping.draft.swatchAppearance).toEqual({ shape: "rectangle", size: 75 });
-      expect(await page.getByRole("button", { name: "Rectangle", exact: true }).getAttribute("aria-pressed")).toBe("true");
+      expect(state.rows[0].mapping.draft.presentation).toEqual({ shape: "square", size: 75 });
+      expect(await page.getByRole("button", { name: "Square swatches", exact: true }).getAttribute("aria-pressed")).toBe("true");
       expect(await page.locator('[aria-label="Swatch size"]').inputValue()).toBe("75");
       expect(await fits()).toBe(true);
 
@@ -188,6 +198,9 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       await page.locator('button[aria-label="Edit colour Grey"]').click();
       await page.locator('.fm-colour-editor input[type=file]').setInputFiles({ name: "grey-velvet.jpg", mimeType: "image/jpeg", buffer: jpeg });
       await expect.poll(() => state.uploads).toBe(2);
+      // Samples stay in Shopify Files instead of entering the product gallery.
+      expect(state.files).toHaveLength(2);
+      expect(state.media.some(media => /upload-/.test(media.image.url))).toBe(false);
       await expect.poll(() => page.locator(".fm-colour-editor .fm-media .fm-thumb img").getAttribute("src")).toMatch(/upload-2\.jpg/);
       await page.locator('.fm-colour-editor button:has-text("Save colour")').click();
       expect([await thumb("Cream"), await thumb("Grey"), await thumb("Ascot")]).toEqual(["https://cdn.shopify.com/201.jpg", "https://cdn.shopify.com/upload-2.jpg", "https://cdn.shopify.com/upload-1.jpg"]);
@@ -202,7 +215,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect([await thumb("Cream"), await thumb("Grey"), await thumb("Ascot")]).toEqual(["https://cdn.shopify.com/201.jpg", "https://cdn.shopify.com/upload-2.jpg", "https://cdn.shopify.com/upload-1.jpg"]);
       expect(await page.locator('.fm-map-row').count()).toBe(4);
       expect(await page.locator('.fm-map-row .fm-map-status').allTextContents()).toEqual(Array(4).fill("Ready for AI preview"));
-      await page.locator("#fm-mapping > summary").click();
+      expect(await page.locator("#fm-mapping").isVisible()).toBe(true);
       await page.locator("#fm-mapping").scrollIntoViewIfNeeded();
       await screenshot(page, `manager-mapping-${width}`);
       expect(await fits()).toBe(true);
@@ -212,7 +225,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
       expect(await page.locator('.fm-fabric-item[aria-pressed=true]').textContent()).toContain("Untitled fabric");
       expect(await page.locator('.fm-fabric-item[aria-pressed=true] .fm-pill').textContent()).toBe("Draft");
       expect(await page.locator('button:has-text("Save changes")').isDisabled()).toBe(true);
-      expect(await page.locator(".fm-save-hint").textContent()).toContain("Name every fabric");
+      expect(await page.locator(".fm-save-hint").textContent()).toContain("Each fabric and colour needs a name");
       await page.locator('.fabric-editor input[aria-label^="Fabric name"]').fill("Loft Linen");
       await page.locator('.fabric-editor textarea').fill("Merchant-provided fabric description");
       await page.locator('.fabric-editor input[type=file]').setInputFiles({ name: "loft-linen.jpg", mimeType: "image/jpeg", buffer: jpeg });
@@ -238,7 +251,7 @@ describe.skipIf(!RUN)("Fabric manager actual admin in Chrome", () => {
 
       // An incomplete mapping says exactly what it still needs and never publishes.
       await page.locator('.fm-fabric-item', { hasText: 'Velvet' }).click();
-      await page.locator("#fm-mapping > summary").click();
+      expect(await page.locator("#fm-mapping").isVisible()).toBe(true);
       await page.locator('button:has-text("+ Add mapping")').click();
       const incomplete = page.locator('.fm-map-row').last();
       expect(await incomplete.locator(".fm-map-status").textContent()).toBe("Colour requires mapping");

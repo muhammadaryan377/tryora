@@ -1877,7 +1877,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   let toolCalls = 0;
   let rounds = 0;
   let streamedText = false;
-  /** One model call, streamed. Text deltas are forwarded as they arrive. */
+  /** Stream model progress; expose text only after grounding and final formatting. */
   const call = async (body: Record<string, unknown>) => {
     for (let attempt = 0; ; attempt += 1) {
       const remaining = deadline - Date.now();
@@ -1915,7 +1915,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           }
           if (!response) throw Object.assign(new Error("stream_ended"), { name: "APIConnectionError" });
         } else {
-          // Non-streaming result (test doubles): forward its text as a single delta.
+          // Non-streaming result (test doubles): track progress, then verify the final text.
           const text = responseText(result);
           if (text && !(result.output ?? []).some((item: any) => item?.type === "function_call")) {
             if (!streamedText) emit({ type: "status", stage: "writing" });

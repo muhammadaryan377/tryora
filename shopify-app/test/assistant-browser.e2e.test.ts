@@ -301,15 +301,15 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       await page.goto(origin);
       await page.locator(".tryora-assistant-launch").click();
       await page.locator(".tryora-assistant__welcome").waitFor();
-      expect(await page.locator("[data-action='visualise']").textContent()).toContain("Preview this bed in my room");
+      expect(await page.locator("[data-action='visualise']").textContent()).toContain("Preview this product in my room");
       expect(await page.locator(".tryora-assistant__actions-grid [data-ta='upload']").count()).toBe(0);
       expect(await page.locator("[data-ta-scroll]").evaluate((element: HTMLElement) => element.scrollTop)).toBe(0);
-      await expect.poll(() => page.locator("[data-ta-recommend-description]").textContent()).toBe("Find the best bed and colour for your room.");
+      await expect.poll(() => page.locator("[data-ta-recommend-description]").textContent()).toBe("Get AI-powered furniture, style and colour recommendations for your space.");
       expect(await page.locator(".tryora-assistant__suggestion, [data-ta-suggestions]").count()).toBe(0);
       expect(await page.locator("[data-ta='welcome']").count()).toBe(2);
       expect(await page.locator("[data-action='ask']").count()).toBe(0);
-      expect(await page.locator("[data-action='visualise'] small").textContent()).toBe("See how this bed looks in your own space.");
-      expect(await page.locator("[data-ta-recommend-description]").textContent()).toBe("Find the best bed and colour for your room.");
+      expect(await page.locator("[data-action='visualise'] small").textContent()).toBe("Upload a photo of your room and see how this product looks in your space.");
+      expect(await page.locator("[data-ta-recommend-description]").textContent()).toBe("Get AI-powered furniture, style and colour recommendations for your space.");
       await shot(page, `approved-${width}-welcome`);
       await page.locator("[data-action='visualise']").click();
       await page.locator(".tryora__dialog").waitFor();
@@ -359,7 +359,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
 
 
 
-  it.each(["home", "unsupported-product"])("asks for furniture selection on %s without opening the preview popup", async (kind) => {
+  it.each(["home", "unsupported-product"])("starts photo-first discovery on %s without opening a product popup or generating", async (kind) => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     const pageTab = await context.newPage();
     try {
@@ -377,18 +377,19 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
       });
       await pageTab.goto(kind === "home" ? `${origin}/without-product` : origin);
       await pageTab.locator(".tryora-assistant-launch").click();
-      expect(await pageTab.locator("[data-action=visualise]").textContent()).toContain("Select furniture to preview");
+      expect(await pageTab.locator("[data-action=visualise]").textContent()).toContain("Preview this product in my room");
       await pageTab.locator("[data-action=visualise]").click();
-      await pageTab.locator(".tryora-assistant__notice").waitFor();
-      expect(await pageTab.locator(".tryora-assistant__notice").textContent()).toContain("Please select a furniture product");
+      await pageTab.locator(".tryora-assistant__photo-screen").waitFor();
       expect(await pageTab.locator(".tryora__dialog").count()).toBe(0);
-      expect(await pageTab.locator(".tryora-assistant__photo-screen").count()).toBe(0);
-      expect(await pageTab.locator("textarea").isVisible()).toBe(true);
+      expect(await pageTab.locator(".tryora-assistant__photo-screen").count()).toBe(1);
+      expect(await pageTab.locator("textarea").isVisible()).toBe(false);
       expect(seen.previewStarts).toHaveLength(0);
       expect(modelRequests).toEqual([]);
       await shot(pageTab, `guard-${kind}`);
-      // Choosing furniture is still possible on a non-preview page, with no automatic generation.
-      await pageTab.fill("textarea", "Which beds would suit my room?");
+      // Back returns to chat; recommendations never start a paid generation.
+      await pageTab.locator("[data-ta=photo-back]").click();
+      expect(await pageTab.locator("textarea").isVisible()).toBe(true);
+      await pageTab.fill("textarea", "Show me beds.");
       await pageTab.locator("[data-ta='send']").click();
       await pageTab.locator(".tryora-assistant__card").first().waitFor({ timeout: 15_000 });
       const titles = await pageTab.locator(".tryora-assistant__card h4").allTextContents();
@@ -583,11 +584,9 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
     const snapshots: { text: string; at: number }[] = await page.evaluate(() => (window as any).__snapshots);
     const final = snapshots.at(-1)!.text;
-    expect(final).toBe("Here are two verified options from the store. Option 1 suits a bright, calm room.");
-    // Genuine incremental delivery over HTTP long-polling: several partial states, spread over time.
-    const partial = snapshots.filter((entry) => entry.text !== final && final.startsWith(entry.text.trim()));
-    expect(partial.length).toBeGreaterThanOrEqual(3);
-    expect(snapshots.at(-1)!.at - snapshots[0]!.at).toBeGreaterThan(GAP_MS * 3);
+    expect(final).toBe("Here are 2 options to compare.");
+    // Only the grounded, formatted final answer reaches the shopper.
+    expect(snapshots.map((entry) => entry.text)).toEqual([final]);
     const cards = await page.locator(".tryora-assistant__card h4").allTextContents();
     expect(cards.length).toBeGreaterThanOrEqual(1);
     expect(products.some((product) => cards.includes(product.title))).toBe(true);
@@ -706,7 +705,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     } finally { await context.close(); }
   }, 60000);
 
-  it("desktop: in-card fabric/colour selection and the in-chat email step lead to a delivered preview", async () => {
+  it("desktop: exact confirmed chat preview does not collect email despite legacy lead settings", async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
     const page = await context.newPage();
     const errors: string[] = [];
@@ -723,31 +722,21 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
     const ariaCard = page.locator(".tryora-assistant__card", { hasText: "Aria Upholstered Bed" });
     await ariaCard.waitFor();
-    // Change the exact option on the card: real Shopify variants, swatches from the product page's model.
-    // The real fabric/colour choices are already on the card; no extra button opens them.
-    await ariaCard.locator(".tryora-assistant__swatch[data-value='Cream']").waitFor();
-    expect(await ariaCard.locator(".tryora-assistant__card-actions > *").allTextContents()).toEqual(["View details", "Preview in my room"]);
-    await settled(page);
-    await shot(page, "09-card-options");
-    await ariaCard.locator(".tryora-assistant__swatch[data-value='Cream']").click();
-    await expect.poll(() => ariaCard.locator(".tryora-assistant__optgroup legend").first().textContent()).toContain("Cream");
-    // Preview turns on only once the server has confirmed this exact variant.
-    await expect.poll(() => ariaCard.locator("[data-ta='preview']").isEnabled()).toBe(true);
-    await shot(page, "09b-card-preview-ready");
-    await ariaCard.locator("[data-ta='preview']").click();
-    // The store requires an email first: one inline form, then the preview continues.
-    const form = page.locator(".tryora-assistant__lead");
-    await form.waitFor();
-    await ariaCard.locator("[data-ta='preview']").click();
-    expect(await page.locator(".tryora-assistant__lead").count()).toBe(1);
+    // Configuration selectors are intentionally absent from chat cards.
+    expect(await ariaCard.locator(".tryora-assistant__swatch, select").count()).toBe(0);
     expect(seen.previewStarts.length).toBe(startsBefore);
-    await form.locator("input[name='ta-lead-email']").fill("shopper@example.com");
-    await form.locator("input[name='ta-lead-marketing']").check();
-    await settled(page);
-    await shot(page, "10-email-step");
-    await form.locator("[data-ta='lead-submit']").click();
+    await page.fill("textarea", "Show Aria Upholstered Bed in my room.");
+    await page.locator("[data-ta=send]").click();
+    await page.locator(".tryora-assistant__visualise [data-ta=preview]").waitFor();
+    await page.locator(".tryora-assistant__visualise [data-ta=preview]").click();
+    await page.locator("[data-ta=confirm-preview]").waitFor();
+    expect(seen.previewStarts.length).toBe(startsBefore);
+    await page.locator("[data-ta=confirm-preview]").click();
+    // Chat generation is independent of the standalone popup's email gate.
     await page.locator(".tryora-assistant__preview img").waitFor({ timeout: 15_000 });
-    expect(seen.leads).toEqual([expect.objectContaining({ email: "shopper@example.com", marketing: "1", product: aria.id, option: "Cream" })]);
+    expect(await page.locator(".tryora-assistant__lead").count()).toBe(0);
+    expect(seen.leads).toEqual([]);
+    expect(seen.previewStarts).toHaveLength(startsBefore + 1);
     const cream = aria.variants.find((variant) => variant.selectedOptions[0]!.value === "Cream")!;
     expect(seen.previewStarts.at(-1)).toMatchObject({ product: aria.id, option: "Cream", variant: cream.id, leadDone: "1" });
     await expect.poll(() => seen.acks).toBeGreaterThan(0);
@@ -795,7 +784,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     await context.close();
   }, 90_000);
 
-  it("SSE transport delivers incrementally over a real HTTP connection", async () => {
+  it("SSE transport delivers the verified final reply over a real HTTP connection", async () => {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } }); await routeImages(context);
     const page = await context.newPage();
     await page.goto(`${origin}/sse`);
@@ -814,8 +803,8 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     expect((await streamed).headers()["content-type"]).toMatch(/text\/event-stream/);
     await expect.poll(() => page.locator(".tryora-assistant__send").getAttribute("data-ta"), { timeout: 15_000 }).toBe("send");
     const snapshots: { text: string }[] = await page.evaluate(() => (window as any).__snapshots);
-    expect(snapshots.length).toBeGreaterThanOrEqual(4);
-    expect(snapshots.at(-1)!.text).toContain("Option 1 suits a bright, calm room.");
+    expect(snapshots.map((entry) => entry.text)).toEqual(["Here are 2 options to compare."]);
+    expect(await page.locator(".tryora-assistant__card").count()).toBe(2);
     await context.close();
   }, 60_000);
 
