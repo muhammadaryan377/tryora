@@ -9,11 +9,13 @@ Published as a Claude artifact. To host it anywhere else, serve this folder as s
 The hero, the Room Assistant thread and the fabric switcher are HTML/CSS reproductions of the
 real app's UI, not screenshots. Copy and prices follow `shopify-app/app/plans.ts`.
 
-- `assets/room-1400.jpg`, `room-700.jpg` — the shopper's room photo (generated).
-- `assets/sofa.webp` — the product cut-out. `sofa-mask.webp` masks the fabric only, so the
-  hero's colour switch tints the fabric and leaves the oak legs alone (same idea as the app's
-  swatch resolution).
-- `assets/result-*.jpg` — pre-rendered composites used in the filmstrip, chat and fabric sections.
+- `assets/room-1400.jpg`, `room-700.jpg` — the shopper's empty room, before any preview.
+- `assets/result-*.jpg` — the same room photographed with the sofa in it, one per fabric
+  (oat, navy, forest, clay). These are real AI composites generated from the empty room, not
+  cut-outs pasted on, so the perspective, contact shadow and window light are consistent.
+  The hero stacks all four and cross-fades between them, which is what the app actually does.
+  `sm-*.jpg` are the smaller copies used in the filmstrip, chat and fabric sections.
+- `assets/sofa.webp` — the product photo on white, used only for the chat's catalogue cards.
 
 ## Updating prices
 Prices appear in the pricing section only. The monthly/annual toggle reads `data-m` / `data-a`

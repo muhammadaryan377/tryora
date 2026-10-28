@@ -58,15 +58,14 @@ section{padding-block:clamp(64px,9vw,120px)}
 
 /* the stage = the real popup over the room photo */
 .stage{position:relative;aspect-ratio:3/2;max-width:100%;border-radius:18px;overflow:hidden;background:#d8cdbd;box-shadow:0 30px 60px -30px rgba(40,30,15,.45),0 1px 0 rgba(255,255,255,.6) inset;isolation:isolate;min-width:0}
-.stage .room{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
-.sofa-wrap{position:absolute;left:21%;top:53.6%;width:48.5%;aspect-ratio:1524/669;transform-origin:50% 100%;transition:opacity .9s ease,transform .9s cubic-bezier(.2,.7,.2,1)}
-.sofa-wrap .shadow{position:absolute;left:5%;right:3%;top:78%;height:26%;background:radial-gradient(ellipse at 50% 50%,rgba(40,25,10,.5),rgba(40,25,10,0) 68%);filter:blur(6px);z-index:0}
-.sofa-wrap .sofa{position:absolute;inset:0;width:100%;height:100%;z-index:1}
-.sofa-wrap .tint{position:absolute;inset:0;z-index:2;background:var(--tint,transparent);mix-blend-mode:multiply;-webkit-mask:url(assets/sofa-mask.webp) center/100% 100% no-repeat;mask:url(assets/sofa-mask.webp) center/100% 100% no-repeat;transition:background .55s ease}
-.sofa-wrap .sheen{position:absolute;inset:0;z-index:3;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);background-size:300% 100%;background-position:120% 0;-webkit-mask:url(assets/sofa.webp) center/100% 100% no-repeat;mask:url(assets/sofa.webp) center/100% 100% no-repeat;opacity:0;pointer-events:none}
-.stage.swapping .sheen{opacity:1;animation:sheen .9s ease}
-@keyframes sheen{from{background-position:120% 0}to{background-position:-20% 0}}
-.stage[data-step="upload"] .sofa-wrap,.stage[data-step="scan"] .sofa-wrap{opacity:0;transform:translateY(14px) scale(.985)}
+.stage .room{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}
+/* every fabric is a full AI-generated photograph of the same room; they cross-fade */
+.stage .shot-layer{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .85s ease;z-index:1}
+.stage .shot-layer.on{opacity:1}
+.stage[data-step="upload"] .shot-layer,.stage[data-step="scan"] .shot-layer{opacity:0}
+.stage .grain{position:absolute;inset:0;z-index:2;pointer-events:none;opacity:0;background:linear-gradient(100deg,transparent 34%,rgba(255,255,255,.4) 50%,transparent 66%);background-size:260% 100%;background-position:120% 0}
+.stage.swapping .grain{opacity:1;animation:sheen .85s ease}
+@keyframes sheen{from{background-position:120% 0}to{background-position:-30% 0}}
 
 .scrim{position:absolute;inset:0;background:rgba(28,33,29,.46);backdrop-filter:blur(3px);opacity:0;transition:opacity .5s;z-index:4;pointer-events:none}
 .stage[data-step="upload"] .scrim{opacity:1}
@@ -294,14 +293,13 @@ footer span{margin-left:auto}
     <p class="proof"><span>Built for Shopify</span><span>Uses your existing product photos</span><span>Tracks sales from previews</span></p>
   </div>
 
-  <div class="stage" id="stage" data-step="result" style="--tint:transparent" aria-label="Demo of the Visully popup placing a sofa in a shopper's room">
+  <div class="stage" id="stage" data-step="result" aria-label="Demo of the Visully popup placing a sofa in a shopper's room">
     <img class="room" src="assets/room-1400.jpg" alt="A bright living room with an empty wall, oak floor and jute rug" width="1400" height="933">
-    <div class="sofa-wrap">
-      <div class="shadow"></div>
-      <img class="sofa" src="assets/sofa.webp" alt="Luna three-seat sofa placed against the wall" width="1200" height="527">
-      <div class="tint"></div>
-      <div class="sheen"></div>
-    </div>
+    <img class="shot-layer on" data-f="oat" src="assets/result-oat.jpg" alt="The Luna sofa in oat bouclé, photographed in the room" width="1400" height="933">
+    <img class="shot-layer" data-f="navy" src="assets/result-navy.jpg" alt="The same room with the sofa in navy" width="1400" height="933">
+    <img class="shot-layer" data-f="forest" src="assets/result-forest.jpg" alt="The same room with the sofa in forest green" width="1400" height="933">
+    <img class="shot-layer" data-f="clay" src="assets/result-clay.jpg" alt="The same room with the sofa in clay" width="1400" height="933">
+    <div class="grain"></div>
     <div class="scrim"></div>
     <div class="upload-card">
       <span class="k">Nordhaus · See it in your room</span>
@@ -315,11 +313,10 @@ footer span{margin-left:auto}
     <div class="result-bar">
       <div class="caption"><b id="capName">Luna Sofa · Oat</b><span>Preview only · colour and scale may differ</span></div>
       <div class="swatches" role="group" aria-label="Fabric colours">
-        <button class="sw boucle" style="--c:#D9CDB8" data-tint="transparent" data-name="Oat" aria-pressed="true" aria-label="Oat" type="button"></button>
-        <button class="sw boucle" style="--c:#3F5478" data-tint="#46587f" data-name="Navy" aria-pressed="false" aria-label="Navy" type="button"></button>
-        <button class="sw boucle" style="--c:#4E6A4A" data-tint="#587052" data-name="Forest" aria-pressed="false" aria-label="Forest" type="button"></button>
-        <button class="sw boucle" style="--c:#B66A48" data-tint="#be6e50" data-name="Clay" aria-pressed="false" aria-label="Clay" type="button"></button>
-        <button class="sw boucle" style="--c:#4A4642" data-tint="#56524e" data-name="Charcoal" aria-pressed="false" aria-label="Charcoal" type="button"></button>
+        <button class="sw boucle" style="--c:#D9CDB8" data-f="oat" data-name="Oat bouclé" aria-pressed="true" aria-label="Oat bouclé" type="button"></button>
+        <button class="sw boucle" style="--c:#2F3E5C" data-f="navy" data-name="Navy" aria-pressed="false" aria-label="Navy" type="button"></button>
+        <button class="sw boucle" style="--c:#3F5A3C" data-f="forest" data-name="Forest" aria-pressed="false" aria-label="Forest" type="button"></button>
+        <button class="sw boucle" style="--c:#B4694A" data-f="clay" data-name="Clay" aria-pressed="false" aria-label="Clay" type="button"></button>
       </div>
     </div>
   </div>
@@ -337,11 +334,11 @@ footer span{margin-left:auto}
       <span class="n">1</span><h3>They upload a photo</h3><p>Phone or desktop. Visully checks the photo is usable and never stores it.</p>
     </div>
     <div class="frame rv">
-      <div class="shot"><img src="assets/result-oat.jpg" alt="The sofa placed in the room" width="700" height="467"><span class="mini-tag">Luna Sofa · Oat</span></div>
+      <div class="shot"><img src="assets/sm-oat.jpg" alt="The sofa placed in the room" width="760" height="507"><span class="mini-tag">Luna Sofa · Oat</span></div>
       <span class="n">2</span><h3>Your product appears in it</h3><p>Placed against their wall at a believable scale, with their light and shadows. One credit per image.</p>
     </div>
     <div class="frame rv">
-      <div class="shot"><img src="assets/result-navy.jpg" alt="The same sofa in navy" width="700" height="467"><div class="mini-sw"><i style="--c:#D9CDB8"></i><i class="on" style="--c:#3F5478"></i><i style="--c:#4E6A4A"></i><i style="--c:#B66A48"></i></div></div>
+      <div class="shot"><img src="assets/sm-navy.jpg" alt="The same sofa in navy" width="760" height="507"><div class="mini-sw"><i style="--c:#D9CDB8"></i><i class="on" style="--c:#2F3E5C"></i><i style="--c:#3F5A3C"></i><i style="--c:#B4694A"></i></div></div>
       <span class="n">3</span><h3>They explore and buy</h3><p>Switch fabrics, download the image, apply an offer. Every preview is linked to the basket so you can see what it sold.</p>
     </div>
   </div>
@@ -365,12 +362,12 @@ footer span{margin-left:auto}
       <div class="status" data-t="1"><i></i><span>Analysing your room…</span></div>
       <div class="msg bot" data-t="2">Lovely light from that window, and a long clear wall. A deep three-seater in a warm fabric would suit it. Two that fit your budget and are in stock:</div>
       <div class="cards" data-t="3">
-        <div class="pcard"><div class="pic"><img src="assets/sofa.webp" alt="" width="1200" height="527"></div><div><b>Luna Sofa · 3 seat</b><div class="meta"><span>$1,895</span><em>In stock</em><span>5 fabrics</span></div><div class="act"><span class="go">See it in my room</span><span>View product</span></div></div></div>
+        <div class="pcard"><div class="pic"><img src="assets/sofa.webp" alt="" width="1200" height="527"></div><div><b>Luna Sofa · 3 seat</b><div class="meta"><span>$1,895</span><em>In stock</em><span>4 fabrics</span></div><div class="act"><span class="go">See it in my room</span><span>View product</span></div></div></div>
         <div class="pcard"><div class="pic"><img src="assets/sofa.webp" alt="" width="1200" height="527" style="filter:saturate(.7) brightness(.95)"></div><div><b>Arlo Loveseat</b><div class="meta"><span>$1,290</span><em>In stock</em><span>3 fabrics</span></div><div class="act"><span class="go">See it in my room</span><span>View product</span></div></div></div>
       </div>
       <div class="msg user" data-t="4">Show me the Luna in forest green.</div>
       <div class="status" data-t="5"><i></i><span>Creating your preview…</span></div>
-      <div class="preview-msg" data-t="6"><img src="assets/result-forest.jpg" alt="The Luna sofa in forest green, placed in the shopper's room" width="700" height="467"><span>Luna Sofa · Forest</span></div>
+      <div class="preview-msg" data-t="6"><img src="assets/sm-forest.jpg" alt="The Luna sofa in forest green, placed in the shopper's room" width="760" height="507"><span>Luna Sofa · Forest</span></div>
       <div class="msg bot" data-t="7">Here it is in Forest. The green sits well with the oak floor. Want the Oat fabric for comparison, or a rug to go with it?</div>
     </div>
     <div class="composer"><span class="plus">+</span><span>Describe your room or ask for a preview…</span><span class="send"><svg viewBox="0 0 24 24"><path d="M12 19V5m0 0l-6 6m6-6l6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
@@ -390,16 +387,16 @@ footer span{margin-left:auto}
   </div>
   <div class="fab-demo rv">
     <div class="pic" id="fabPic">
-      <img class="on" src="assets/result-oat.jpg" alt="Sofa in Oat" data-f="oat" width="700" height="467">
-      <img src="assets/result-navy.jpg" alt="Sofa in Navy" data-f="navy" width="700" height="467">
-      <img src="assets/result-forest.jpg" alt="Sofa in Forest" data-f="forest" width="700" height="467">
-      <img src="assets/result-clay.jpg" alt="Sofa in Clay" data-f="clay" width="700" height="467">
+      <img class="on" src="assets/sm-oat.jpg" alt="Sofa in Oat" data-f="oat" width="700" height="467">
+      <img src="assets/sm-navy.jpg" alt="Sofa in Navy" data-f="navy" width="700" height="467">
+      <img src="assets/sm-forest.jpg" alt="Sofa in Forest" data-f="forest" width="700" height="467">
+      <img src="assets/sm-clay.jpg" alt="Sofa in Clay" data-f="clay" width="700" height="467">
     </div>
     <div class="fab-row" id="fabRow" role="group" aria-label="Choose a fabric">
       <button class="chip" type="button" data-f="oat" aria-pressed="true" style="--c:#D9CDB8"><i></i>Oat bouclé <span class="src">Shopify</span></button>
-      <button class="chip" type="button" data-f="navy" aria-pressed="false" style="--c:#3F5478"><i></i>Navy linen <span class="src">Merchant</span></button>
-      <button class="chip" type="button" data-f="forest" aria-pressed="false" style="--c:#4E6A4A"><i></i>Forest velvet <span class="src">From photo</span></button>
-      <button class="chip" type="button" data-f="clay" aria-pressed="false" style="--c:#B66A48"><i></i>Clay weave <span class="src">From name</span></button>
+      <button class="chip" type="button" data-f="navy" aria-pressed="false" style="--c:#2F3E5C"><i></i>Navy linen <span class="src">Merchant</span></button>
+      <button class="chip" type="button" data-f="forest" aria-pressed="false" style="--c:#3F5A3C"><i></i>Forest velvet <span class="src">From photo</span></button>
+      <button class="chip" type="button" data-f="clay" aria-pressed="false" style="--c:#B4694A"><i></i>Clay weave <span class="src">From name</span></button>
     </div>
   </div>
 </div></section>
@@ -485,15 +482,20 @@ footer span{margin-left:auto}
   function later(fn, ms){ timers.push(setTimeout(fn, ms)); }
   function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
   function setStep(s, text){ stage.setAttribute('data-step', s); label.textContent = text; }
+  var layers = Array.prototype.slice.call(stage.querySelectorAll('.shot-layer'));
+  function showFabric(f){
+    layers.forEach(function(l){ l.classList.toggle('on', l.getAttribute('data-f') === f); });
+  }
   function pick(btn, animate){
     sws.forEach(function(b){ b.setAttribute('aria-pressed', b===btn ? 'true' : 'false'); });
     capName.textContent = 'Luna Sofa · ' + btn.getAttribute('data-name');
+    var f = btn.getAttribute('data-f');
     if (animate && !reduce){
       stage.classList.remove('swapping'); void stage.offsetWidth; stage.classList.add('swapping');
-      later(function(){ stage.style.setProperty('--tint', btn.getAttribute('data-tint')); }, 180);
-      later(function(){ stage.classList.remove('swapping'); }, 950);
+      later(function(){ showFabric(f); }, 150);
+      later(function(){ stage.classList.remove('swapping'); }, 900);
     } else {
-      stage.style.setProperty('--tint', btn.getAttribute('data-tint'));
+      showFabric(f);
     }
   }
   sws.forEach(function(b){ b.addEventListener('click', function(){ clearTimers(); setStep('result','Your room, with Luna Sofa'); pick(b, true); }); });
