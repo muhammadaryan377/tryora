@@ -22,6 +22,7 @@ import type { PhotoProblem } from "../../core/src/provider.js";
 import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliability.js";
 import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
 import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig, wasOpen } from "./assistant.js";
+import { safeImageUrl } from "./assistant/url-security.js";
 import { PROXY } from "./proxy.js";
 import { tagBasket } from "./attribution.js";
 
@@ -760,7 +761,7 @@ export class Tryora {
     }
     // Show the photograph of the actual selected colour instead of the generic
     // featured product, which may be in a different colour.
-    const selectedPhoto = this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage;
+    const selectedPhoto = safeImageUrl(this.selectedVariant(s.selectedOption ?? "")?.image ?? c.productImage);
     return selectedPhoto
       ? `<img class="tryora__img tryora__img--product" src="${esc(selectedPhoto)}" alt="${esc(c.product)}">`
       : "";
@@ -920,8 +921,11 @@ export class Tryora {
     if (!this.cfg.fabricOptionName) return "";
     const fabrics = [...new Set(this.cfg.swatches.map((x) => x.group).filter((v): v is string => !!v))];
     return '<p class="tryora__label">Choose fabric</p><div class="tryora__chips" role="group" aria-label="Fabric">' +
-      fabrics.map((f) => '<button type="button" class="tryora__gchip" data-act="fabric" data-value="' + esc(f) +
-        '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + (this.cfg.fabricImages?.[f] ? '<img class="tryora__fabric-image" src="' + esc(this.cfg.fabricImages[f]!) + '" alt="" loading="lazy">' : this.cfg.fabricColours?.[f] ? '<span class="tryora__fabric-colour" style="background:' + esc(this.cfg.fabricColours[f]!) + '"></span>' : '') + esc(f) + '</button>').join("") + '</div>';
+      fabrics.map((f) => {
+        const image = safeImageUrl(this.cfg.fabricImages?.[f]);
+        return '<button type="button" class="tryora__gchip" data-act="fabric" data-value="' + esc(f) +
+          '" aria-pressed="' + (this.fabric === f) + '" ' + (locked ? 'disabled' : '') + '>' + (image ? '<img class="tryora__fabric-image" src="' + esc(image) + '" alt="" loading="lazy">' : this.cfg.fabricColours?.[f] ? '<span class="tryora__fabric-colour" style="background:' + esc(this.cfg.fabricColours[f]!) + '"></span>' : '') + esc(f) + '</button>';
+      }).join("") + '</div>';
   }
 
   private swatches(locked = false): string {
@@ -979,15 +983,16 @@ export class Tryora {
     // A Shopify colour chip is not a fabric texture. Without a real sample image, display
     // a readable fabric label instead of a large, misleading solid-colour tile.
     const fabricOnly = !this.cfg.fabricOptionName && /fabric/i.test(this.cfg.selectorLabel ?? this.cfg.optionName ?? "");
-    const text = !x.image && fabricOnly;
-    // A colour with no sample image or Shopify colour keeps the same round size: an empty sample, named below.
-    const nosample = !x.image && !x.colour && !fabricOnly;
-    const chipStyle = (!text ? swatchAppearanceStyle(this.cfg.swatchAppearance) : "") + (!text && !x.image && x.colour ? "background:" + esc(x.colour) + ";" : "");
+    const image = safeImageUrl(x.image);
+    const text = !image && fabricOnly;
+    // A colour with no safe sample image or Shopify colour keeps the same round size: an empty sample, named below.
+    const nosample = !image && !x.colour && !fabricOnly;
+    const chipStyle = (!text ? swatchAppearanceStyle(this.cfg.swatchAppearance) : "") + (!text && !image && x.colour ? "background:" + esc(x.colour) + ";" : "");
     return '<button type="button" class="tryora__s ' + (selected ? 'is-selected ' : '') + (!available ? 'is-unavailable ' : '') + (text ? 'is-text' : nosample ? 'is-nosample' : '') +
       '"' + (swatchAppearanceStyle(this.cfg.swatchAppearance) ? ' style="min-width:' + this.cfg.swatchAppearance!.size + 'px;flex-basis:auto"' : '') + ' data-act="swatch" data-value="' + esc(x.value) + '" role="radio" aria-checked="' + selected + '" ' + (disabled ? 'disabled' : '') +
       ' aria-label="' + esc(this.optionLabel(x.value)) + (viewed ? ', viewed' : '') + (!available ? ', preview not supported for selected options' : '') + '">' +
       '<span class="tryora__chip"' + (chipStyle ? ' style="' + chipStyle + '"' : '') + '>' +
-      (x.image ? '<img src="' + esc(x.image) + '" alt="' + esc(label) + '" loading="lazy">' : text ? esc(label) : '') + '</span>' +
+      (image ? '<img src="' + esc(image) + '" alt="' + esc(label) + '" loading="lazy">' : text ? esc(label) : '') + '</span>' +
       (text ? '' : '<span class="tryora__sname">' + esc(label) + '</span>') +
       (locked && !selected ? '<span class="tryora__lock" aria-hidden="true">' + LOCK + '</span>' : '') +
       (viewed ? '<span class="tryora__viewed">' + TICK + ' Viewed</span>' : '') + '</button>';
