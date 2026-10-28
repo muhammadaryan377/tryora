@@ -62,6 +62,7 @@ model Shop {
   entitlement   BillingEntitlement?
   campaigns     Campaign[]
   leads         LeadDelivery[]
+  privacyRequests PrivacyRequest[]
   leadVisits    LeadVisit[]
   consents      ConsentRecord[]
   issues        IssueReport[]
@@ -275,6 +276,22 @@ model LeadDelivery {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
   @@index([shopId, email])
+}
+
+/// Minimal Shopify compliance request ledger for authenticated merchant exports.
+model PrivacyRequest {
+  id          String   @id @default(uuid())
+  shopId      String
+  shop        Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  requestId   String
+  customerId  String?
+  email       String?
+  status      String   @default("pending") // pending | exported
+  createdAt   DateTime @default(now())
+  exportedAt  DateTime?
+
+  @@unique([shopId, requestId])
+  @@index([shopId, status, createdAt])
 }
 
 model ConsentRecord {
