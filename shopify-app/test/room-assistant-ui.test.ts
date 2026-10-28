@@ -803,6 +803,30 @@ describe("conversation controls and errors", () => {
     expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Here you go.");
   });
 
+  it("shows the credit-exhausted message and can retry after the merchant renews credits", async () => {
+    const assistant = makeAssistant();
+    let exhausted = true;
+    const fetcher = proxy.fetcher;
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      if (url === "/apps/visully/assistant/turn" && exhausted) {
+        return Promise.resolve(Response.json({ error: "CREDITS_EXHAUSTED" }, { status: 400 }));
+      }
+      return fetcher(url, init);
+    });
+    assistant.open();
+    await type("Show me beds");
+    click("[data-ta='send']");
+    await settle(80);
+    expect(document.body.textContent).toContain("preview credits have run out");
+    expect(document.body.textContent).toContain("assistant is temporarily paused");
+    expect($$(".tryora-assistant__card")).toHaveLength(0);
+    exhausted = false;
+    proxy.script([{ type: "final", reply: { message: "Credits renewed. How can I help?", recommendations: [] } }, { type: "done" }]);
+    click("[data-ta='retry']");
+    await settle(80);
+    expect(document.body.textContent).toContain("Credits renewed. How can I help?");
+  });
+
   it("shows understandable errors with Retry", async () => {
     const assistant = makeAssistant();
     proxy.script([{ type: "error", code: "PROVIDER_TIMEOUT" }]);

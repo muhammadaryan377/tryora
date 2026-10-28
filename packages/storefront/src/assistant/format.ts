@@ -39,6 +39,7 @@ export const STAGE_LABELS: Record<string, string> = {
 };
 
 export const ERROR_MESSAGES: Record<string, string> = {
+  CREDITS_EXHAUSTED: "This store's preview credits have run out, so the assistant is temporarily paused. Please try again after credits are renewed.",
   RATE_LIMITED: "The assistant is busy right now. Please wait a moment and try again.",
   BAD_PHOTO: "That room photo couldn't be read. Please choose another one.",
   PROVIDER_TIMEOUT: "That took too long to answer. Please try again.",

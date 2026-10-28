@@ -16,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { emptyState, sessionKey } from "../../packages/storefront/src/assistant/session";
 
 const state = vi.hoisted(() => ({ configs: [] as any[], copy: { assistant: { enabled: true, pages: { product: true, home: true } } } as any }));
+vi.mock("../app/tryora.server", () => ({ tryora: { balance: async () => ({ availableTotal: 100 }) } }));
 vi.mock("../app/db.server", () => ({
   default: {
     appearance: { findFirst: vi.fn(async () => ({ copy: state.copy })) },
