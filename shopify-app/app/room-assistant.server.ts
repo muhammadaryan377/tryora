@@ -2220,5 +2220,11 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
 export async function requireAssistantEnabled(shopId: string): Promise<RoomAssistantSettings> {
   const settings = await storeSettings(shopId);
   if (!settings.enabled || !assistantProviderReady()) throw new TryoraError("PROVIDER_UNAVAILABLE");
+  // Recheck the merchant's current balance for every new turn, including legacy
+  // JSON and SSE requests. Never trust the storefront's cached availability.
+  const balance = await tryora.balance(shopId).catch(() => {
+    throw new TryoraError("PROVIDER_UNAVAILABLE");
+  });
+  if (!(balance.availableTotal > 0)) throw new TryoraError("CREDITS_EXHAUSTED");
   return settings;
 }

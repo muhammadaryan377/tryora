@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ copy: { assistant: { enabled: true, pages: { product: true, home: true } } } as any }));
+const state = vi.hoisted(() => ({ copy: { assistant: { enabled: true, pages: { product: true, home: true } } } as any, balance: vi.fn() }));
+vi.mock("../app/tryora.server", () => ({ tryora: { balance: state.balance } }));
 vi.mock("../app/db.server", () => ({
   default: {
     appearance: { findFirst: vi.fn(async () => ({ copy: state.copy })) },
@@ -18,7 +19,7 @@ import {
   streamAssistantTurn,
   workerAssistantOperation,
 } from "../app/assistant/turn-routes.server";
-import { setAssistantClientForTests } from "../app/room-assistant.server";
+import { requireAssistantEnabled, setAssistantClientForTests } from "../app/room-assistant.server";
 import { resetAssistantCatalogueCache } from "../app/assistant/catalogue.server";
 import { setAssistantLogSink } from "../app/assistant/log.server";
 import { finalAnswer, fixtureAdmin, fixtureProduct, toolCall } from "./fixtures/assistant-store";
@@ -61,6 +62,8 @@ function slowStreamingModel(gapMs: number, onAbort?: () => void) {
 }
 
 beforeEach(() => {
+  state.copy = { assistant: { enabled: true, pages: { product: true, home: true } } };
+  state.balance.mockReset().mockResolvedValue({ availableTotal: 100 });
   resetAssistantTurns();
   resetAssistantCatalogueCache();
   vi.stubEnv("OPENAI_API_KEY", "test-key");
@@ -112,6 +115,30 @@ describe("turn event buffers", () => {
 });
 
 describe("app proxy turn handlers", () => {
+  it.each(["poll", "sse"])("blocks %s before any AI call when the merchant has no available previews", async (transport) => {
+    const client = vi.fn(() => slowStreamingModel(1));
+    setAssistantClientForTests(client);
+    state.balance.mockResolvedValue({ availableTotal: 0 });
+    const handler = transport === "poll" ? startAssistantTurn : streamAssistantTurn;
+    await expect(handler(fixtureAdmin([bed]), SHOP, form({ visitor: VISITOR, history })))
+      .rejects.toMatchObject({ code: "CREDITS_EXHAUSTED" });
+    expect(state.balance).toHaveBeenCalledWith(SHOP);
+    expect(client).not.toHaveBeenCalled();
+  });
+
+  it("rechecks shop-scoped credits and resumes after renewal without a cached block", async () => {
+    state.balance.mockImplementation(async (shop: string) => ({ availableTotal: shop === SHOP ? 0 : 5 }));
+    await expect(requireAssistantEnabled(SHOP)).rejects.toMatchObject({ code: "CREDITS_EXHAUSTED" });
+    await expect(requireAssistantEnabled("other.myshopify.com")).resolves.toHaveProperty("enabled", true);
+    state.balance.mockResolvedValue({ availableTotal: 100 });
+    await expect(requireAssistantEnabled(SHOP)).resolves.toHaveProperty("enabled", true);
+  });
+
+  it("fails closed when the current credit balance cannot be verified", async () => {
+    state.balance.mockRejectedValue(new Error("private database details"));
+    await expect(requireAssistantEnabled(SHOP)).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
+
   it("validates and bounds request fields", async () => {
     const admin = fixtureAdmin([bed]);
     await expect(assistantInputFrom(form({ history: "x".repeat(30_001) }), admin, SHOP)).rejects.toMatchObject({ code: "BAD_REQUEST" });
