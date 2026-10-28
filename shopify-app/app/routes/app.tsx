@@ -1,5 +1,5 @@
 import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Outlet, useLoaderData, useRouteError, useLocation } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useLocation, isRouteErrorResponse } from "react-router";
 import { useEffect, useState } from "react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
@@ -48,7 +48,18 @@ export default function App() {
 
 // Shopify needs React Router to catch some thrown responses, so that their headers are included in the response.
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  const error = useRouteError();
+  // Shopify's helper renders authentication responses, but rethrows ordinary
+  // errors. Handle those here so a failed loader keeps a usable recovery screen.
+  if (isRouteErrorResponse(error) && error.status < 500) {
+    return boundary.error(error);
+  }
+  return <main style={{ padding: "32px", fontFamily: "system-ui, sans-serif" }}>
+    <h1>Unable to load this page</h1>
+    <p role="alert">The app could not load the latest data. Please try again. If the problem continues, contact support.</p>
+    <button type="button" onClick={() => window.location.reload()}>Try again</button>
+    <p><a href="/app">Return to Home</a></p>
+  </main>;
 }
 
 export const headers: HeadersFunction = (headersArgs) => {
