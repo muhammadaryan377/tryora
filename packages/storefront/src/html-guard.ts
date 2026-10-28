@@ -19,7 +19,7 @@ const ATTRIBUTES = new Set([
 ]);
 const STYLES = new Set([
   "background", "background-color", "color", "width", "height", "min-width", "max-width",
-  "min-height", "max-height", "border-radius", "flex-shrink", "flex-basis",
+  "min-height", "max-height", "border-radius", "flex-shrink", "flex-basis", "flex", "object-fit",
 ]);
 const SAFE_STYLE_VALUE = /^(?:#[a-f0-9]{3,8}|(?:\d+(?:\.\d+)?)(?:px|rem|%|em)|auto|none|transparent|currentcolor|[a-z-]{2,24}|rgba?\([\d., %]+\))$/i;
 const CONTROLS = /[\x00-\x20\x7f\\]/;
@@ -32,7 +32,8 @@ function safeStyle(value: string): string | null {
     if (separator < 0) return null;
     const property = declaration.slice(0, separator).trim().toLowerCase();
     const cssValue = declaration.slice(separator + 1).trim();
-    if (!STYLES.has(property) || !SAFE_STYLE_VALUE.test(cssValue)) return null;
+    const flexRoomChip = property === "flex" && /^0 0 \d{1,3}px$/.test(cssValue);
+    if (!STYLES.has(property) || (!SAFE_STYLE_VALUE.test(cssValue) && !flexRoomChip)) return null;
     cleaned.push(`${property}:${cssValue}`);
   }
   return cleaned.length ? cleaned.join(";") : null;
