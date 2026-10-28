@@ -23,6 +23,7 @@ import { acknowledgeWithRetry, createWithRetry, decodePreview } from "./reliabil
 import { classifyCloudliftOption, nativeSourceVariantId } from "./cloudlift-events.js";
 import { RoomAssistant, buildAssistantLauncher, fetchAssistantConfig, wasOpen } from "./assistant.js";
 import { safeImageUrl } from "./assistant/url-security.js";
+import { setSafeHtml } from "./html-guard.js";
 import { PROXY } from "./proxy.js";
 import { tagBasket } from "./attribution.js";
 
@@ -694,7 +695,7 @@ export class Tryora {
     if (!this.root) return;
     const active = document.activeElement as HTMLElement | null;
     const focusKey = active?.dataset?.act ? `${active.dataset.act}:${active.dataset.value ?? ""}` : active?.getAttribute("name");
-    this.root.innerHTML = this.view();
+    setSafeHtml(this.root, this.view());
     if (focusKey) {
       const [act, value] = focusKey.split(":");
       const again =
@@ -1060,7 +1061,7 @@ function buildLauncher(cfg: Config, type: "overlay" | "floating" | "inline", ope
   if (l.background === null) btn.classList.add("button"); // theme's own button styling
   else btn.style.cssText = `background:${l.background};color:${l.text ?? "#fff"};border-radius:${l.radiusPx}px`;
   if (type === "floating") btn.style[l.position === "bottom-left" ? "left" : "right"] = `${l.offsetPx.x}px`;
-  btn.innerHTML = `${l.showIcon ? `<span aria-hidden="true">${CAMERA.replace(/36/g, "18")}</span>` : ""}<span>${esc(l.wording)}</span>`;
+  setSafeHtml(btn, `${l.showIcon ? `<span aria-hidden="true">${CAMERA.replace(/36/g, "18")}</span>` : ""}<span>${esc(l.wording)}</span>`);
   btn.addEventListener("click", open);
   return btn;
 }
