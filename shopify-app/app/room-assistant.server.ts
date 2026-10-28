@@ -1889,7 +1889,7 @@ export async function answerRoomAssistant(input: AssistantTurnInput): Promise<As
  * These chunks can be sent over poll/SSE without exposing an unverified model draft.
  * This improves on-the-wire display, but does not pretend to stream raw model tokens.
  */
-export function verifiedReplyChunks(message: string, maxLength = 56): string[] {
+export function verifiedReplyChunks(message: string, maxLength = 16): string[] {
   const chunks: string[] = [];
   let remaining = message;
   while (remaining.length > maxLength) {
@@ -2083,7 +2083,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           }
           if (!response) throw Object.assign(new Error("stream_ended"), { name: "APIConnectionError" });
         } else {
-          // Non-streaming result (test doubles): forward its text as a single delta.
+          // Non-streaming result (test doubles): track progress, then verify the final text.
           const text = responseText(result);
           if (text && !(result.output ?? []).some((item: any) => item?.type === "function_call")) {
             streamedText = true;

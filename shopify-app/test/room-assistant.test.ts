@@ -523,7 +523,10 @@ describe("streaming", () => {
     await runAssistantTurn({ admin: fixtureAdmin([aria]), shopId: SHOP, history: [{ role: "user", content: "beds?" }], client, env: {} as any, settings }, (event) => events.push(event));
     const types = events.map((event) => event.type);
     expect(types[0]).toBe("status");
-    expect(events.filter((event) => event.type === "delta").map((event: any) => event.text)).toEqual(["Here is one option to consider."]);
+    const delivered = events.filter((event) => event.type === "delta").map((event: any) => event.text);
+    expect(delivered.length).toBeGreaterThan(1);
+    expect(delivered.join("")).toBe("Here is one option to consider.");
+    expect(delivered.join("")).not.toContain("£999");
     // Cards are verified and shown before the prose that refers to them.
     expect(types.indexOf("recommendations")).toBeLessThan(types.indexOf("delta"));
     expect(events.filter((event) => event.type === "status").map((event: any) => event.stage))
@@ -531,6 +534,21 @@ describe("streaming", () => {
     const last = events.at(-1) as Extract<AssistantEvent, { type: "final" }>;
     expect(last.type).toBe("final");
     expect(last.reply.message).toBe("Here is one option to consider.");
+  });
+
+  it("stops verified chunk delivery when the shopper cancels", async () => {
+    const controller = new AbortController();
+    const events: AssistantEvent[] = [];
+    const { client } = scriptedModel([finalAnswer("I can help you explore furniture and find something suitable for your room.")]);
+    await expect(runAssistantTurn({
+      admin: fixtureAdmin([aria]), shopId: SHOP, history: [{ role: "user", content: "What can you help me with?" }],
+      client, env: {} as any, settings, signal: controller.signal,
+    }, event => {
+      events.push(event);
+      if (event.type === "delta") controller.abort();
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(events.filter(event => event.type === "delta")).toHaveLength(1);
+    expect(events.some(event => event.type === "final")).toBe(false);
   });
 
   it("resets streamed text when the same response turns into a tool call", async () => {

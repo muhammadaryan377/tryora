@@ -121,20 +121,24 @@ describe("app proxy turn handlers", () => {
     expect(input).toMatchObject({ currentProductId: "gid://shopify/Product/7", hasPhoto: true, shown: [{ productRef: "7", variantRef: null }] });
   });
 
-  it("delivers model text incrementally through long-polling, before the answer has finished", async () => {
+  it("delivers progress through long-polling and only exposes the verified final text", async () => {
     setAssistantClientForTests(() => slowStreamingModel(120));
     const { turnId } = await startAssistantTurn(fixtureAdmin([bed]), SHOP, form({ visitor: VISITOR, history }));
     const seen: any[] = [];
     let after = 0;
-    let firstDeltaWhileRunning = false;
+    let progressBeforeAnswer = false;
+    let partialWhileRunning = false;
     for (let polls = 0; polls < 40; polls += 1) {
       const result = await readAssistantTurn(SHOP, VISITOR, turnId, after);
       seen.push(...result.events);
-      if (result.events.some((event: any) => event.type === "delta") && !result.done) firstDeltaWhileRunning = true;
+      if (!result.done && result.events.some((event: any) => event.type === "delta")) partialWhileRunning = true;
+      if (result.events.some((event: any) => event.type === "status") && !seen.some((event) => event.type === "delta")) progressBeforeAnswer = true;
       after = result.next;
       if (result.done) break;
     }
-    expect(firstDeltaWhileRunning).toBe(true);
+    expect(progressBeforeAnswer).toBe(true);
+    expect(partialWhileRunning).toBe(true);
+    expect(seen.filter((event) => event.type === "delta").length).toBeGreaterThan(1);
     expect(seen.filter((event) => event.type === "delta").map((event) => event.text).join("")).toBe("Yes, the Luna bed comes in grey.");
     expect(seen.at(-2)).toMatchObject({ type: "final", reply: { message: "Yes, the Luna bed comes in grey." } });
     expect(seen.at(-1)).toEqual({ type: "done" });
@@ -170,9 +174,10 @@ describe("app proxy turn handlers", () => {
     const text = await response.text();
     const events = text.split("\n\n").filter((block) => block.includes("data: ") && !block.includes("event: turn")).map((block) => JSON.parse(block.slice(block.indexOf("data: ") + 6)));
     expect(text).toMatch(/event: turn\ndata: \{"turnId":"[^"]+"\}/);
-    // Model fragments stay buffered until the answer passes store-grounding checks.
+    // Model fragments are held back until grounding and response formatting finish.
+    expect(events.filter((event) => event.type === "delta").length).toBeGreaterThan(1);
     expect(events.filter((event) => event.type === "delta").map((event) => event.text).join("")).toBe("Yes, the Luna bed comes in grey.");
-    expect(events.filter((event) => event.type === "delta")).toHaveLength(1);
+    expect(events.at(-2)).toMatchObject({ type: "final", reply: { message: "Yes, the Luna bed comes in grey." } });
     expect(events.at(-1)).toEqual({ type: "done" });
   });
 
