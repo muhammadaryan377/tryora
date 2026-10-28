@@ -8,6 +8,7 @@ import type { PopupPreviewDelivery, PopupPreviewHandoff } from "../preview-hando
  * image blobs may survive same-tab page navigation through expiring local IndexedDB.
  */
 import { errorMessage, escapeHtml, formatText, money, STAGE_LABELS } from "./format.js";
+import { safeImageUrl, safeProductUrl } from "./url-security.js";
 import { runTurn, TurnError, type TurnEvent } from "./transport.js";
 import { generatePreview, resumePreview, PREVIEW_STAGES, PreviewError, previewErrorMessage } from "./preview.js";
 import { PhotoError, prepareRoomPhoto, type PreparedPhoto } from "./photo.js";
@@ -1060,7 +1061,8 @@ export class RoomAssistant {
         return;
       case "unavailable-product": {
         const item = this.findItem(id);
-        if (item) { this.leaveForProduct(); location.assign(item.url); }
+        const safeUrl = item && safeProductUrl(item.url);
+        if (safeUrl) { this.leaveForProduct(); location.assign(safeUrl); }
         return;
       }
       case "compare": {
@@ -1513,9 +1515,10 @@ export class RoomAssistant {
    * labelled, so it is never mistaken for that option's appearance. Missing images show text, never stock art.
    */
   private thumbHtml(src: string | null | undefined, alt: string, note = "") {
-    if (!src) return `<div class="tryora-assistant__thumb is-missing" role="img" aria-label="${escapeHtml(`No image available for ${alt}`)}"><span>No image</span></div>`;
+    const imageUrl = safeImageUrl(src);
+    if (!imageUrl) return `<div class="tryora-assistant__thumb is-missing" role="img" aria-label="${escapeHtml(`No image available for ${alt}`)}"><span>No image</span></div>`;
     return `<div class="tryora-assistant__thumb" data-state="loading">
-      <img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
+      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
       ${note ? `<span class="tryora-assistant__thumb-note">${escapeHtml(note)}</span>` : ""}
     </div>`;
   }
@@ -1581,7 +1584,7 @@ export class RoomAssistant {
     const validHex = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
     const hex = typeof sample?.colour === "string" && validHex.test(sample.colour) ? sample.colour
       : validHex.test(colour) ? colour : null;
-    const image = !hex && typeof sample?.image === "string" && /^https:\/\//i.test(sample.image) ? sample.image : null;
+    const image = !hex ? safeImageUrl(sample?.image) : null;
     const swatch = hex ? `<i class="tryora-assistant__selected-colour-swatch" style="background-color:${escapeHtml(hex)}" aria-hidden="true"></i>`
       : image ? `<img class="tryora-assistant__selected-colour-swatch" src="${escapeHtml(image)}" alt="" loading="lazy">` : "";
     const fabricLabel = typeof fabric === "string" && fabric.trim() ? `<span>Fabric: ${escapeHtml(fabric)}</span><span aria-hidden="true">·</span>` : "";
@@ -1613,6 +1616,7 @@ export class RoomAssistant {
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const canStartPreview = item.previewAvailable && !!item.variantId && !!item.optionValue && this.config.previewsAvailable !== false;
     const canOpenPreview = canStartPreview || canCheckCurrentPage;
+    const detailsUrl = safeProductUrl(incomplete ? panel!.data!.url : item.url);
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(incomplete ? panel?.data?.image : canStartPreview && item.referenceImage ? item.referenceImage : item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
@@ -1626,7 +1630,7 @@ export class RoomAssistant {
       </div>
       ${choices ? `<div class="tryora-assistant__card-choices">${choices}</div>` : ""}
         <div class="tryora-assistant__card-actions">
-          <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(incomplete ? panel!.data!.url : item.url)}">View details</a>
+          ${detailsUrl ? `<a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(detailsUrl)}">View details</a>` : `<span class="tryora-assistant__secondary" aria-disabled="true">View details</span>`}
           <button type="button" class="tryora-assistant__primary" data-ta="preview" data-card="${escapeHtml(key)}" data-id="${id}" ${!canOpenPreview ? "disabled" : ""}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>Preview in my room</button>
         </div>
         ${reason ? `<p class="tryora-assistant__image-note tryora-assistant__preview-note" id="ta-why-${id}" role="status">${escapeHtml(reason)}</p>` : ""}
@@ -1662,6 +1666,8 @@ export class RoomAssistant {
     const comparedEntry = this.state.entries.find((p): p is PreviewEntry => p.kind === "preview" && p.id === comparison);
     const displayedItem = comparedEntry?.item ?? entry.item;
     const displayedLabel = displayedItem.title;
+    const productUrl = safeProductUrl(entry.item.url);
+    const handoffUrl = safeProductUrl(entry.handoff);
     const shownUrl = comparison === "original" ? this.originals.get(entry.id) ?? url : comparison === "preview" ? url : this.previewUrls.get(comparison) ?? url;
     if (entry.status === "ready" && url) {
       const file = `${label} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
@@ -1677,7 +1683,7 @@ export class RoomAssistant {
             <span>AI-generated visualisation for illustration only. Colour and placement may differ from the actual product.</span></figcaption>
           <div class="tryora-assistant__card-actions">
             <a class="tryora-assistant__primary" href="${escapeHtml(url)}" download="${escapeHtml(file)}">Download</a>
-            <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(entry.item.url)}">View product</a>
+            ${productUrl ? `<a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(productUrl)}">View product</a>` : `<span class="tryora-assistant__secondary" aria-disabled="true">View product</span>`}
             <button type="button" class="tryora-assistant__secondary" data-ta="try-product">Try another product</button>
           </div>
         </figure></div>`;
@@ -1685,7 +1691,7 @@ export class RoomAssistant {
     const message = entry.status === "ready" ? "This preview is no longer available in this browser. Generate again if needed." : entry.error ?? previewErrorMessage("");
     return `<div class="tryora-assistant__message tryora-assistant__message--preview" data-entry="${id}">
       <div class="tryora-assistant__failed" role="${entry.status === "failed" ? "alert" : "status"}"><span>${escapeHtml(message)}</span>
-      ${entry.handoff ? `<a class="tryora-assistant__chip-button" href="${escapeHtml(entry.handoff)}">Continue on product page</a>`
+      ${handoffUrl ? `<a class="tryora-assistant__chip-button" href="${escapeHtml(handoffUrl)}">Continue on product page</a>`
         : entry.status === "failed" ? `<button type="button" class="tryora-assistant__chip-button" data-ta="preview" data-id="${escapeHtml(entry.item.id)}">Try again</button>` : ""}</div></div>`;
   }
 
@@ -2028,9 +2034,10 @@ export class RoomAssistant {
         const common = `type="button" data-ta="opt" data-card="${card}" data-attr="${escapeHtml(attribute.name)}" data-value="${escapeHtml(value.value)}" aria-pressed="${value.selected}" ${value.disabled ? "disabled" : ""}`;
         if (!swatches) return `<button ${common} class="tryora-assistant__opt${value.soldOut ? " is-soldout" : ""}">${escapeHtml(label)}</button>`;
         const colour = value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour) ? value.colour : null;
-        const dot = value.image ? `<img src="${escapeHtml(value.image)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
+        const imageUrl = safeImageUrl(value.image);
+        const dot = imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
         return `<button ${common}${appearanceStyle ? ` style="min-width:${data.swatchAppearance!.size}px;width:auto"` : ""} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
-          <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
+          <span class="tryora-assistant__swatch-dot${colour || imageUrl ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
         <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}${colourKind ? " is-colour" : ""}${colourKind && values.some((value) => !value.image && !(value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour))) ? " has-plain" : ""}">${buttons}</div></fieldset>`;
