@@ -1791,3 +1791,35 @@ it("remembers a selected product card in later show-more requests", async () => 
   expect(JSON.parse(String(proxy.forms.at(-1)!.get("explored")))).toContainEqual({ productRef: "1", variantRef: "11" });
   expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
 });
+
+
+describe("storefront security regression: untrusted recommendation attributes", () => {
+  it("shows an inert details label and missing thumbnail for unsafe model-provided URLs", async () => {
+    const assistant = makeAssistant();
+    proxy.script([{ type: "recommendations", items: [
+      card({ url: "javascript:alert(1)", image: "data:image/svg+xml,<svg onload=alert(1)>" }),
+    ] }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await type("Show me a bed");
+    click("[data-ta='send']");
+    await settle(60);
+    const node = $(".tryora-assistant__card")!;
+    expect(node.querySelector(".tryora-assistant__card-actions a[href]")).toBeNull();
+    expect(node.querySelector(".tryora-assistant__card-actions [aria-disabled='true']")?.textContent).toBe("View details");
+    expect(node.querySelector(".tryora-assistant__thumb img")).toBeNull();
+    expect(node.querySelector(".tryora-assistant__thumb.is-missing")).not.toBeNull();
+  });
+
+  it("preserves safe Shopify product links and https images", async () => {
+    const assistant = makeAssistant();
+    proxy.script([{ type: "recommendations", items: [
+      card({ url: "/products/aria?variant=11", image: "https://cdn.shopify.com/aria.jpg" }),
+    ] }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await type("Show me a bed");
+    click("[data-ta='send']");
+    await settle(60);
+    expect($(".tryora-assistant__card-actions a[href]")?.getAttribute("href")).toBe("/products/aria?variant=11");
+    expect($(".tryora-assistant__thumb img")?.getAttribute("src")).toBe("https://cdn.shopify.com/aria.jpg");
+  });
+});

@@ -8,6 +8,8 @@ import type { PopupPreviewDelivery, PopupPreviewHandoff } from "../preview-hando
  * image blobs may survive same-tab page navigation through expiring local IndexedDB.
  */
 import { errorMessage, escapeHtml, formatText, money, STAGE_LABELS } from "./format.js";
+import { safeImageUrl, safeProductUrl } from "./url-security.js";
+import { setSafeHtml, replaceWithSafeHtml } from "../html-guard.js";
 import { runTurn, TurnError, type TurnEvent } from "./transport.js";
 import { generatePreview, resumePreview, PREVIEW_STAGES, PreviewError, previewErrorMessage } from "./preview.js";
 import { PhotoError, prepareRoomPhoto, type PreparedPhoto } from "./photo.js";
@@ -1060,7 +1062,8 @@ export class RoomAssistant {
         return;
       case "unavailable-product": {
         const item = this.findItem(id);
-        if (item) { this.leaveForProduct(); location.assign(item.url); }
+        const safeUrl = item && safeProductUrl(item.url);
+        if (safeUrl) { this.leaveForProduct(); location.assign(safeUrl); }
         return;
       }
       case "compare": {
@@ -1147,7 +1150,7 @@ export class RoomAssistant {
     root.dataset.view = this.state.ui.view;
     root.dataset.position = this.config.launcher.position;
     applyAssistantTheme(root, storefrontAssistantTheme());
-    root.innerHTML = `<div class="tryora-assistant__backdrop"></div>
+    setSafeHtml(root, `<div class="tryora-assistant__backdrop"></div>
       <section class="tryora-assistant__panel" role="dialog" aria-labelledby="tryora-assistant-title" aria-describedby="tryora-assistant-subtitle">
         <header class="tryora-assistant__header">
           <span class="tryora-assistant__avatar">${ICONS.spark}</span>
@@ -1186,7 +1189,7 @@ export class RoomAssistant {
           <input type="file" hidden data-ta-file="camera" accept="image/*" capture="environment">
         </div>
         <p class="tryora-assistant__sr" aria-live="polite" data-ta-live></p>
-      </section>`;
+      </section>`);
     root.addEventListener("click", (event) => this.onClick(event));
     root.addEventListener("change", (event) => void this.onChange(event));
     root.addEventListener("keydown", (event) => this.onKey(event));
@@ -1211,7 +1214,7 @@ export class RoomAssistant {
       thumb.dataset.state = "error";
       thumb.setAttribute("role", "img");
       thumb.setAttribute("aria-label", `Image unavailable: ${image.getAttribute("alt") ?? ""}`);
-      thumb.innerHTML = "<span>Image unavailable</span>";
+      setSafeHtml(thumb, "<span>Image unavailable</span>");
     }, true);
     document.body.appendChild(root);
     this.root = root;
@@ -1232,9 +1235,9 @@ export class RoomAssistant {
     if (!this.root) return;
     this.renderHeader();
     const scroll = this.scroller()!;
-    scroll.innerHTML = this.photoScreen ? this.photoScreenHtml() : !this.showWelcome && this.state.entries.length
+    setSafeHtml(scroll, this.photoScreen ? this.photoScreenHtml() : !this.showWelcome && this.state.entries.length
       ? this.state.entries.map((entry) => this.entryHtml(entry)).join("") + this.previewConfirmationHtml()
-      : this.welcomeHtml() + this.previewConfirmationHtml();
+      : this.welcomeHtml() + this.previewConfirmationHtml());
     this.root.querySelector<HTMLElement>(".tryora-assistant__composer")!.hidden = !!this.photoScreen;
     if (this.photoScreen || this.showWelcome || !this.state.entries.length) scroll.scrollTop = 0;
     this.renderComposer();
@@ -1246,7 +1249,7 @@ export class RoomAssistant {
     const button = this.root?.querySelector<HTMLElement>("[data-ta='view']");
     if (!button) return;
     const full = this.state.ui.view === "fullscreen";
-    button.innerHTML = full ? ICONS.restore : ICONS.expand;
+    setSafeHtml(button, full ? ICONS.restore : ICONS.expand);
     button.setAttribute("aria-label", full ? "Restore side panel" : "Expand to fullscreen");
     button.setAttribute("aria-pressed", String(full));
     this.root!.querySelector(".tryora-assistant__panel")!.setAttribute("aria-modal", String(full));
@@ -1258,9 +1261,9 @@ export class RoomAssistant {
     const attach = this.root.querySelector<HTMLElement>(".tryora-assistant__menu--attach")!;
     more.hidden = this.menu !== "more";
     attach.hidden = this.menu !== "attach";
-    if (this.menu === "attach") attach.innerHTML = `<button type="button" class="tryora-assistant__sheet-close" data-ta="photo-sheet-close" aria-label="Close photo choices">${ICONS.close}</button>
+    if (this.menu === "attach") setSafeHtml(attach, `<button type="button" class="tryora-assistant__sheet-close" data-ta="photo-sheet-close" aria-label="Close photo choices">${ICONS.close}</button>
       <h3>Add a photo to your message</h3><p>Take a photo or choose from your device to share with the assistant.</p>
-      ${this.photoActionsHtml()}`;
+      ${this.photoActionsHtml()}`);
     this.root.querySelector("[data-ta='more']")!.setAttribute("aria-expanded", String(this.menu === "more"));
     this.root.querySelector("[data-ta='attach']")!.setAttribute("aria-expanded", String(this.menu === "attach"));
     const forget = more.querySelector<HTMLButtonElement>("[data-ta='forget-room']")!;
@@ -1272,16 +1275,16 @@ export class RoomAssistant {
     const box = this.root.querySelector<HTMLElement>("[data-ta-attachment]")!;
     if (this.preparing) {
       box.hidden = false;
-      box.innerHTML = `<span class="tryora-assistant__spinner" aria-hidden="true"></span><span>Preparing photo…</span>`;
+      setSafeHtml(box, `<span class="tryora-assistant__spinner" aria-hidden="true"></span><span>Preparing photo…</span>`);
     } else if (this.attachment) {
       box.hidden = false;
-      box.innerHTML = `<img src="${escapeHtml(this.attachment.url)}" alt="Selected room photo">
+      setSafeHtml(box, `<img src="${escapeHtml(this.attachment.url)}" alt="Selected room photo">
         <span class="tryora-assistant__attachment-name">Room photo ready</span>
         <button type="button" data-ta="upload" class="tryora-assistant__chip-button">Replace</button>
-        <button type="button" data-ta="remove-photo" class="tryora-assistant__chip-button" aria-label="Remove photo">Remove</button>`;
+        <button type="button" data-ta="remove-photo" class="tryora-assistant__chip-button" aria-label="Remove photo">Remove</button>`);
     } else {
       box.hidden = true;
-      box.innerHTML = "";
+      box.replaceChildren();
     }
     const error = this.root.querySelector<HTMLElement>("[data-ta-error]")!;
     error.hidden = !this.composerError;
@@ -1293,7 +1296,7 @@ export class RoomAssistant {
       : "Describe your room or ask for a preview…";
     const busy = !!this.active;
     send.dataset.ta = busy ? "stop" : "send";
-    send.innerHTML = busy ? ICONS.stop : ICONS.send;
+    setSafeHtml(send, busy ? ICONS.stop : ICONS.send);
     send.setAttribute("aria-label", busy ? "Stop generating" : "Send message");
     send.disabled = this.preparing;
     this.root.querySelector<HTMLButtonElement>("[data-ta='attach']")!.disabled = busy || this.preparing;
@@ -1307,10 +1310,10 @@ export class RoomAssistant {
     const items = this.state.entries.flatMap(entry => entry.kind === "assistant" ? [...entry.recommendations, ...(entry.visualise ? [entry.visualise] : [])] : entry.kind === "preview" ? [entry.item] : []);
     const item = [...items].reverse().find(item => item.productRef === selected?.productRef && (item.variantRef ?? null) === selected?.variantRef);
     const selection = selected ? `<p class="tryora-assistant__selection" role="status">Selected: ${escapeHtml(item ? `${item.title}${Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value)).map(([name, value]) => " · " + name + ": " + value).join("")}` : this.context.productTitle || "this product")}</p>` : "";
-    if (!room && !this.roomPhoto) { box.innerHTML = selection; return; }
+    if (!room && !this.roomPhoto) { setSafeHtml(box, selection); return; }
     const summary = room ? [room.style, ...room.colours.slice(0, 2)].filter(Boolean).join(", ") : "photo added";
-    box.innerHTML = `${selection}<p class="tryora-assistant__room-chip">${this.roomPhoto ? `<img src="${escapeHtml(this.roomPhoto.url)}" alt="Your selected room" width="40" height="40" style="width:40px;height:40px;min-width:40px;max-width:40px;min-height:40px;max-height:40px;flex:0 0 40px;object-fit:cover;border-radius:6px">` : ICONS.room}<span>Using your room: ${escapeHtml(summary || "photo notes")}</span>
-      <button type="button" class="tryora-assistant__link" data-ta="edit-room">Edit</button><button type="button" class="tryora-assistant__link" data-ta="forget-room">Forget room</button></p>`;
+    setSafeHtml(box, `${selection}<p class="tryora-assistant__room-chip">${this.roomPhoto ? `<img src="${escapeHtml(this.roomPhoto.url)}" alt="Your selected room" width="40" height="40" style="width:40px;height:40px;min-width:40px;max-width:40px;min-height:40px;max-height:40px;flex:0 0 40px;object-fit:cover;border-radius:6px">` : ICONS.room}<span>Using your room: ${escapeHtml(summary || "photo notes")}</span>
+      <button type="button" class="tryora-assistant__link" data-ta="edit-room">Edit</button><button type="button" class="tryora-assistant__link" data-ta="forget-room">Forget room</button></p>`);
   }
 
   private renderEntry(id: string) {
@@ -1318,7 +1321,7 @@ export class RoomAssistant {
     const node = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(id)}"]`);
     if (!entry || !node) return;
     const near = this.nearBottom();
-    node.outerHTML = this.entryHtml(entry);
+    replaceWithSafeHtml(node, this.entryHtml(entry));
     this.renderRoomChip();
     if (near) this.scrollToEnd(false);
   }
@@ -1381,7 +1384,7 @@ export class RoomAssistant {
     if (!node) return this.renderEntry(entry.id);
     const near = this.nearBottom();
     const displayed = this.visibleText(entry);
-    node.innerHTML = formatText(displayed);
+    setSafeHtml(node, formatText(displayed));
     node.closest(".tryora-assistant__bubble")?.classList.toggle("is-empty", !displayed);
     const status = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(entry.id)}"] [data-ta-status]`);
     if (status) status.hidden = !!displayed;
@@ -1445,7 +1448,7 @@ export class RoomAssistant {
   }
 
   private renderPhotoScreen() {
-    if (this.photoScreen && this.scroller()) this.scroller()!.innerHTML = this.photoScreenHtml();
+    if (this.photoScreen && this.scroller()) setSafeHtml(this.scroller()!, this.photoScreenHtml());
   }
 
   private welcomeHtml() {
@@ -1513,9 +1516,10 @@ export class RoomAssistant {
    * labelled, so it is never mistaken for that option's appearance. Missing images show text, never stock art.
    */
   private thumbHtml(src: string | null | undefined, alt: string, note = "") {
-    if (!src) return `<div class="tryora-assistant__thumb is-missing" role="img" aria-label="${escapeHtml(`No image available for ${alt}`)}"><span>No image</span></div>`;
+    const imageUrl = safeImageUrl(src);
+    if (!imageUrl) return `<div class="tryora-assistant__thumb is-missing" role="img" aria-label="${escapeHtml(`No image available for ${alt}`)}"><span>No image</span></div>`;
     return `<div class="tryora-assistant__thumb" data-state="loading">
-      <img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
+      <img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(alt)}" loading="lazy" decoding="async">
       ${note ? `<span class="tryora-assistant__thumb-note">${escapeHtml(note)}</span>` : ""}
     </div>`;
   }
@@ -1581,7 +1585,7 @@ export class RoomAssistant {
     const validHex = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
     const hex = typeof sample?.colour === "string" && validHex.test(sample.colour) ? sample.colour
       : validHex.test(colour) ? colour : null;
-    const image = !hex && typeof sample?.image === "string" && /^https:\/\//i.test(sample.image) ? sample.image : null;
+    const image = !hex ? safeImageUrl(sample?.image) : null;
     const swatch = hex ? `<i class="tryora-assistant__selected-colour-swatch" style="background-color:${escapeHtml(hex)}" aria-hidden="true"></i>`
       : image ? `<img class="tryora-assistant__selected-colour-swatch" src="${escapeHtml(image)}" alt="" loading="lazy">` : "";
     const fabricLabel = typeof fabric === "string" && fabric.trim() ? `<span>Fabric: ${escapeHtml(fabric)}</span><span aria-hidden="true">·</span>` : "";
@@ -1613,6 +1617,7 @@ export class RoomAssistant {
     const label = `${focus || selected ? "Selected" : "Recommended"} for your room \u00b7 Option ${index + 1}`;
     const canStartPreview = item.previewAvailable && !!item.variantId && !!item.optionValue && this.config.previewsAvailable !== false;
     const canOpenPreview = canStartPreview || canCheckCurrentPage;
+    const detailsUrl = safeProductUrl(incomplete ? panel!.data!.url : item.url);
     return `<article class="tryora-assistant__card${selected ? " is-selected" : ""}" data-card="${escapeHtml(key)}" aria-current="${selected}">
       ${this.thumbHtml(incomplete ? panel?.data?.image : canStartPreview && item.referenceImage ? item.referenceImage : item.image, item.imageAlt || item.title, note)}
       <div class="tryora-assistant__card-body">
@@ -1626,7 +1631,7 @@ export class RoomAssistant {
       </div>
       ${choices ? `<div class="tryora-assistant__card-choices">${choices}</div>` : ""}
         <div class="tryora-assistant__card-actions">
-          <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(incomplete ? panel!.data!.url : item.url)}">View details</a>
+          ${detailsUrl ? `<a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(detailsUrl)}">View details</a>` : `<span class="tryora-assistant__secondary" aria-disabled="true">View details</span>`}
           <button type="button" class="tryora-assistant__primary" data-ta="preview" data-card="${escapeHtml(key)}" data-id="${id}" ${!canOpenPreview ? "disabled" : ""}${reason ? ` aria-describedby="ta-why-${id}"` : ""}>Preview in my room</button>
         </div>
         ${reason ? `<p class="tryora-assistant__image-note tryora-assistant__preview-note" id="ta-why-${id}" role="status">${escapeHtml(reason)}</p>` : ""}
@@ -1662,6 +1667,8 @@ export class RoomAssistant {
     const comparedEntry = this.state.entries.find((p): p is PreviewEntry => p.kind === "preview" && p.id === comparison);
     const displayedItem = comparedEntry?.item ?? entry.item;
     const displayedLabel = displayedItem.title;
+    const productUrl = safeProductUrl(entry.item.url);
+    const handoffUrl = safeProductUrl(entry.handoff);
     const shownUrl = comparison === "original" ? this.originals.get(entry.id) ?? url : comparison === "preview" ? url : this.previewUrls.get(comparison) ?? url;
     if (entry.status === "ready" && url) {
       const file = `${label} - in my room.jpg`.replace(/[\\/:*?"<>|]/g, "");
@@ -1677,7 +1684,7 @@ export class RoomAssistant {
             <span>AI-generated visualisation for illustration only. Colour and placement may differ from the actual product.</span></figcaption>
           <div class="tryora-assistant__card-actions">
             <a class="tryora-assistant__primary" href="${escapeHtml(url)}" download="${escapeHtml(file)}">Download</a>
-            <a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(entry.item.url)}">View product</a>
+            ${productUrl ? `<a class="tryora-assistant__secondary" data-ta="view-details" href="${escapeHtml(productUrl)}">View product</a>` : `<span class="tryora-assistant__secondary" aria-disabled="true">View product</span>`}
             <button type="button" class="tryora-assistant__secondary" data-ta="try-product">Try another product</button>
           </div>
         </figure></div>`;
@@ -1685,7 +1692,7 @@ export class RoomAssistant {
     const message = entry.status === "ready" ? "This preview is no longer available in this browser. Generate again if needed." : entry.error ?? previewErrorMessage("");
     return `<div class="tryora-assistant__message tryora-assistant__message--preview" data-entry="${id}">
       <div class="tryora-assistant__failed" role="${entry.status === "failed" ? "alert" : "status"}"><span>${escapeHtml(message)}</span>
-      ${entry.handoff ? `<a class="tryora-assistant__chip-button" href="${escapeHtml(entry.handoff)}">Continue on product page</a>`
+      ${handoffUrl ? `<a class="tryora-assistant__chip-button" href="${escapeHtml(handoffUrl)}">Continue on product page</a>`
         : entry.status === "failed" ? `<button type="button" class="tryora-assistant__chip-button" data-ta="preview" data-id="${escapeHtml(entry.item.id)}">Try again</button>` : ""}</div></div>`;
   }
 
@@ -2028,9 +2035,10 @@ export class RoomAssistant {
         const common = `type="button" data-ta="opt" data-card="${card}" data-attr="${escapeHtml(attribute.name)}" data-value="${escapeHtml(value.value)}" aria-pressed="${value.selected}" ${value.disabled ? "disabled" : ""}`;
         if (!swatches) return `<button ${common} class="tryora-assistant__opt${value.soldOut ? " is-soldout" : ""}">${escapeHtml(label)}</button>`;
         const colour = value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour) ? value.colour : null;
-        const dot = value.image ? `<img src="${escapeHtml(value.image)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
+        const imageUrl = safeImageUrl(value.image);
+        const dot = imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy">` : `<i${colour ? ` style="background:${colour}"` : ""}></i>`;
         return `<button ${common}${appearanceStyle ? ` style="min-width:${data.swatchAppearance!.size}px;width:auto"` : ""} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
-          <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
+          <span class="tryora-assistant__swatch-dot${colour || imageUrl ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
         <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}${colourKind ? " is-colour" : ""}${colourKind && values.some((value) => !value.image && !(value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour))) ? " has-plain" : ""}">${buttons}</div></fieldset>`;

@@ -3,6 +3,7 @@
  * The drawer itself lives in ./assistant/drawer.ts.
  */
 import { escapeHtml } from "./assistant/format.js";
+import { setSafeHtml } from "./html-guard.js";
 import { applyAssistantTheme, storefrontAssistantTheme } from "./assistant/theme.js";
 import type { AssistantConfig } from "./assistant/drawer.js";
 
@@ -23,9 +24,9 @@ export function buildAssistantLauncher(config: AssistantConfig, open: () => void
   button.setAttribute("aria-label", `${config.launcher.label}, AI shopping assistant`);
   button.setAttribute("aria-haspopup", "dialog");
   button.setAttribute("aria-expanded", "false");
-  button.innerHTML = `<span class="tryora-assistant-launch__icon">${LAUNCHER_ICON}</span>` +
+  setSafeHtml(button, `<span class="tryora-assistant-launch__icon">${LAUNCHER_ICON}</span>` +
     `<span class="tryora-assistant-launch__label">${escapeHtml(config.launcher.label)}</span>` +
-    `<span class="tryora-assistant-launch__dot" aria-hidden="true"></span>`;
+    `<span class="tryora-assistant-launch__dot" aria-hidden="true"></span>`);
   button.addEventListener("click", open);
   avoidFloatingWidgets(button);
   return button;
