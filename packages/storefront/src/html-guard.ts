@@ -21,7 +21,7 @@ const STYLES = new Set([
   "background", "background-color", "color", "width", "height", "min-width", "max-width",
   "min-height", "max-height", "border-radius", "flex-shrink", "flex-basis", "flex", "object-fit",
 ]);
-const SAFE_STYLE_VALUE = /^(?:#[a-f0-9]{3,8}|(?:\d+(?:\.\d+)?)(?:px|rem|%|em)|auto|none|transparent|currentcolor|[a-z-]{2,24}|rgba?\([\d., %]+\))$/i;
+const SAFE_STYLE_VALUE = /^(?:#[a-f0-9]{3,8}|(?:0|1|(?:\d+(?:\.\d+)?)(?:px|rem|%|em))|auto|none|transparent|currentcolor|[a-z-]{2,24}|rgba?\([\d., %]+\))$/i;
 const CONTROLS = /[\x00-\x20\x7f\\]/;
 
 function safeStyle(value: string): string | null {
