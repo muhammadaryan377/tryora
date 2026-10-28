@@ -1,0 +1,568 @@
+<title>Visully</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT,WONK@0,9..144,300..700,0..100,0..1;1,9..144,300..700,0..100,0..1&family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap">
+<style>
+/* Layout: a linen paper ground; the room photograph is the hero and every demo is the real popup / chat chrome
+   drawn over it. Asymmetric columns, one accent (moss), oak and clay only where fabric is shown. */
+:root{
+  --paper:#F4EFE6; --paper-2:#EBE3D6; --card:#FBF8F3; --ink:#1C211D; --ink-2:#4D544E; --ink-3:#7E847D;
+  --line:#D9D0C2; --moss:#2F4A3A; --moss-2:#3E6450; --moss-ink:#F1F5F1; --oak:#B2874E; --clay:#C4714C;
+  --display:"Fraunces",Georgia,"Times New Roman",serif; --body:"Instrument Sans","Helvetica Neue",Arial,sans-serif;
+  --r:14px; --max:1200px; --gx:max(16px,env(safe-area-inset-left,0px)); --gxr:max(16px,env(safe-area-inset-right,0px));
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);font-size:17px;line-height:1.55;-webkit-font-smoothing:antialiased}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--paper)}
+img{max-width:100%;height:auto;display:block}
+h1,h2,h3{font-family:var(--display);font-weight:400;line-height:1.02;letter-spacing:-.01em;margin:0;text-wrap:balance;font-variation-settings:"SOFT" 30,"WONK" 1}
+h1{font-size:clamp(40px,5.6vw,78px)}
+h2{font-size:clamp(34px,4.4vw,58px)}
+h3{font-size:clamp(22px,2.2vw,28px);line-height:1.15}
+p{margin:0}
+a{color:inherit}
+.wrap{max-width:var(--max);margin:0 auto;padding-left:var(--gx);padding-right:var(--gxr)}
+.eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--moss);font-weight:600}
+.lede{font-size:clamp(17px,1.4vw,20px);color:var(--ink-2);max-width:34em}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:14px 22px;border-radius:999px;font-weight:600;text-decoration:none;border:1.5px solid var(--ink);line-height:1;transition:transform .2s,background .2s,color .2s;cursor:pointer;font-family:var(--body);font-size:16px}
+.btn:hover{transform:translateY(-1px)}
+.btn.primary{background:var(--moss);border-color:var(--moss);color:var(--moss-ink)}
+.btn.primary:hover{background:var(--moss-2)}
+.btn.ghost{background:transparent}
+.btn small{font-weight:400;opacity:.8}
+:focus-visible{outline:3px solid var(--oak);outline-offset:3px}
+section{padding-block:clamp(64px,9vw,120px)}
+.sect-head{display:grid;gap:18px;max-width:40em;margin-bottom:clamp(32px,4vw,56px)}
+
+/* nav */
+.nav{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:color-mix(in srgb,var(--paper) 86%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid color-mix(in srgb,var(--line) 60%,transparent)}
+.nav .wrap{display:flex;align-items:center;gap:28px;height:68px}
+.brand{font-family:var(--display);font-size:28px;text-decoration:none;display:flex;align-items:center;gap:10px;font-variation-settings:"SOFT" 60,"WONK" 1}
+.brand i{width:14px;height:14px;border:2px solid var(--moss);border-radius:4px 4px 4px 0;display:inline-block;position:relative}
+.brand i::after{content:"";position:absolute;inset:3px;background:var(--moss);border-radius:2px}
+.nav ul{list-style:none;margin:0 0 0 auto;padding:0;display:flex;gap:26px;font-size:15px;font-weight:500}
+.nav ul a{text-decoration:none;color:var(--ink-2)}
+.nav ul a:hover{color:var(--ink)}
+@media(max-width:860px){.nav ul{display:none}}
+
+/* hero */
+.hero{padding-block:clamp(36px,5vw,72px) 0}
+.hero .wrap{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(28px,4vw,56px);align-items:center}
+.hero-copy{display:grid;gap:26px}
+.hero-copy .ctas{display:flex;gap:12px;flex-wrap:wrap}
+.proof{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:14px;color:var(--ink-2)}
+.proof span::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--moss);margin-right:8px;vertical-align:2px}
+@media(max-width:900px){.hero .wrap{grid-template-columns:1fr}}
+
+/* the stage = the real popup over the room photo */
+.stage{position:relative;aspect-ratio:3/2;max-width:100%;border-radius:18px;overflow:hidden;background:#d8cdbd;box-shadow:0 30px 60px -30px rgba(40,30,15,.45),0 1px 0 rgba(255,255,255,.6) inset;isolation:isolate;min-width:0}
+.stage .room{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.sofa-wrap{position:absolute;left:21%;top:53.6%;width:48.5%;aspect-ratio:1524/669;transform-origin:50% 100%;transition:opacity .9s ease,transform .9s cubic-bezier(.2,.7,.2,1)}
+.sofa-wrap .shadow{position:absolute;left:5%;right:3%;top:78%;height:26%;background:radial-gradient(ellipse at 50% 50%,rgba(40,25,10,.5),rgba(40,25,10,0) 68%);filter:blur(6px);z-index:0}
+.sofa-wrap .sofa{position:absolute;inset:0;width:100%;height:100%;z-index:1}
+.sofa-wrap .tint{position:absolute;inset:0;z-index:2;background:var(--tint,transparent);mix-blend-mode:multiply;-webkit-mask:url(assets/sofa-mask.webp) center/100% 100% no-repeat;mask:url(assets/sofa-mask.webp) center/100% 100% no-repeat;transition:background .55s ease}
+.sofa-wrap .sheen{position:absolute;inset:0;z-index:3;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.55) 50%,transparent 70%);background-size:300% 100%;background-position:120% 0;-webkit-mask:url(assets/sofa.webp) center/100% 100% no-repeat;mask:url(assets/sofa.webp) center/100% 100% no-repeat;opacity:0;pointer-events:none}
+.stage.swapping .sheen{opacity:1;animation:sheen .9s ease}
+@keyframes sheen{from{background-position:120% 0}to{background-position:-20% 0}}
+.stage[data-step="upload"] .sofa-wrap,.stage[data-step="scan"] .sofa-wrap{opacity:0;transform:translateY(14px) scale(.985)}
+
+.scrim{position:absolute;inset:0;background:rgba(28,33,29,.46);backdrop-filter:blur(3px);opacity:0;transition:opacity .5s;z-index:4;pointer-events:none}
+.stage[data-step="upload"] .scrim{opacity:1}
+.upload-card{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%) scale(.96);width:min(74%,360px);background:var(--card);border-radius:16px;padding:22px 22px 18px;display:grid;gap:12px;z-index:5;box-shadow:0 20px 50px -20px rgba(0,0,0,.5);opacity:0;transition:opacity .4s,transform .4s;pointer-events:none}
+.stage[data-step="upload"] .upload-card{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.upload-card .k{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+.upload-card h4{font-family:var(--display);font-weight:400;font-size:24px;margin:0;line-height:1.1}
+.dropzone{border:1.5px dashed var(--line);border-radius:12px;height:96px;display:grid;place-items:center;position:relative;overflow:hidden;color:var(--ink-3);font-size:14px}
+.dropzone img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scale(1.15);opacity:0;transition:opacity .5s,transform .6s}
+.stage.has-photo .dropzone img{opacity:1;transform:scale(1)}
+.dropzone .ok{position:absolute;right:8px;bottom:8px;background:var(--moss);color:#fff;font-size:12px;padding:4px 9px;border-radius:999px;opacity:0;transition:opacity .3s .4s}
+.stage.has-photo .dropzone .ok{opacity:1}
+.upload-card .row{display:flex;gap:8px;justify-content:space-between;align-items:center;font-size:13px;color:var(--ink-2)}
+.pill-btn{background:var(--ink);color:#fff;border-radius:999px;padding:9px 14px;font-size:13px;font-weight:600}
+
+.scan{position:absolute;inset:0;z-index:4;pointer-events:none;opacity:0;transition:opacity .4s}
+.stage[data-step="scan"] .scan{opacity:1}
+.scan .beam{position:absolute;left:0;right:0;height:38%;top:-40%;background:linear-gradient(to bottom,transparent,rgba(236,246,238,.55) 60%,rgba(47,74,58,.35) 100%);animation:beam 1.9s linear infinite}
+@keyframes beam{to{top:110%}}
+.scan .box{position:absolute;left:19%;top:50%;width:52%;height:36%;border:1.5px dashed rgba(255,255,255,.85);border-radius:6px;box-shadow:0 0 0 2000px rgba(28,33,29,.18)}
+.scan .box::before,.scan .box::after{content:"";position:absolute;width:18px;height:18px;border:3px solid #fff;top:-3px;left:-3px;border-right:0;border-bottom:0}
+.scan .box::after{left:auto;right:-3px;bottom:-3px;top:auto;border:3px solid #fff;border-left:0;border-top:0}
+.scan .tag{position:absolute;left:19%;top:44%;background:var(--ink);color:#fff;font-size:12px;padding:5px 10px;border-radius:999px;letter-spacing:.02em}
+
+.chrome{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:12px;padding:12px 16px;z-index:6;color:#fff;font-size:12px;letter-spacing:.14em;text-transform:uppercase;background:linear-gradient(rgba(0,0,0,.45),transparent);pointer-events:none}
+.chrome .store{font-weight:700}
+.chrome .step{margin-left:auto;letter-spacing:.02em;text-transform:none;font-size:13px;background:rgba(255,255,255,.14);padding:6px 11px;border-radius:999px;backdrop-filter:blur(6px);font-weight:500}
+
+.result-bar{position:absolute;left:12px;right:12px;bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;z-index:6;opacity:0;transform:translateY(8px);transition:opacity .5s,transform .5s}
+.stage[data-step="result"] .result-bar{opacity:1;transform:none}
+.caption{background:rgba(251,248,243,.92);backdrop-filter:blur(8px);border-radius:999px;padding:8px 16px;display:flex;align-items:baseline;gap:10px;min-width:0;flex:0 1 auto}
+.caption b{font-family:var(--display);font-weight:500;font-size:17px;line-height:1.1;white-space:nowrap}
+.caption span{font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.swatches{display:flex;gap:7px;background:rgba(251,248,243,.92);backdrop-filter:blur(8px);border-radius:999px;padding:6px;flex:0 0 auto}
+.sw{width:28px;height:28px;border-radius:50%;border:2px solid transparent;padding:0;cursor:pointer;background:var(--c);box-shadow:inset 0 0 0 2px rgba(255,255,255,.65);position:relative;transition:transform .15s}
+.sw:hover{transform:scale(1.08)}
+.sw[aria-pressed="true"]{border-color:var(--ink)}
+.sw.boucle{background:radial-gradient(circle at 30% 30%,rgba(255,255,255,.35),transparent 40%),var(--c)}
+.replay{position:absolute;right:14px;top:50px;z-index:7;background:rgba(251,248,243,.85);border:0;border-radius:999px;padding:7px 12px;font-size:12.5px;font-weight:600;cursor:pointer;font-family:var(--body);display:flex;gap:6px;align-items:center;color:var(--ink)}
+.replay svg{width:12px;height:12px}
+@media(max-width:700px){.caption span{display:none}}
+@media(max-width:560px){.sw{width:24px;height:24px}.chrome .step{display:none}.caption b{font-size:15px}}
+
+/* steps filmstrip */
+.strip{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(18px,3vw,36px)}
+.frame{display:grid;gap:14px;min-width:0}
+.frame .shot{position:relative;aspect-ratio:3/2;border-radius:12px;overflow:hidden;background:#d8cdbd}
+.frame .shot img{width:100%;height:100%;object-fit:cover}
+.frame .n{font-family:var(--display);font-size:30px;color:var(--oak);line-height:1}
+.frame h3{margin-top:2px}
+.frame p{color:var(--ink-2);font-size:15.5px}
+.mini-upload{position:absolute;inset:0;background:rgba(28,33,29,.42);display:grid;place-items:center}
+.mini-upload div{background:var(--card);border-radius:10px;padding:12px 14px;font-size:13px;display:grid;gap:6px;width:62%}
+.mini-upload div span{border:1.5px dashed var(--line);border-radius:8px;height:34px;display:grid;place-items:center;color:var(--ink-3);font-size:12px}
+.mini-sw{position:absolute;left:12px;bottom:12px;display:flex;gap:6px;background:rgba(251,248,243,.92);border-radius:999px;padding:6px}
+.mini-sw i{width:18px;height:18px;border-radius:50%;background:var(--c);display:block;box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6)}
+.mini-sw i.on{outline:2px solid var(--ink);outline-offset:1px}
+.mini-tag{position:absolute;right:12px;bottom:12px;background:var(--ink);color:#fff;font-size:12px;padding:5px 10px;border-radius:999px}
+@media(max-width:760px){.strip{grid-template-columns:1fr}}
+
+/* assistant */
+.assistant{background:var(--moss);color:var(--moss-ink)}
+.assistant .eyebrow{color:#B9D1C0}
+.assistant .lede{color:#D6E2D9}
+.assistant .wrap{display:grid;grid-template-columns:minmax(0,6fr) minmax(0,6fr);gap:clamp(28px,5vw,72px);align-items:center}
+.assistant ul.points{list-style:none;padding:0;margin:26px 0 0;display:grid;gap:14px;font-size:16px;color:#D6E2D9}
+.assistant ul.points li{padding-left:26px;position:relative}
+.assistant ul.points li::before{content:"";position:absolute;left:0;top:9px;width:14px;height:2px;background:#B9D1C0}
+.drawer{background:var(--card);color:var(--ink);border-radius:18px;overflow:hidden;box-shadow:0 40px 80px -40px rgba(0,0,0,.6);max-width:460px;margin-left:auto;width:100%;display:grid;grid-template-rows:auto minmax(0,1fr) auto;height:660px;min-width:0}
+.drawer header{display:flex;align-items:center;gap:10px;padding:14px 16px;border-bottom:1px solid var(--line);font-size:14px;font-weight:600}
+.drawer header .dot{width:9px;height:9px;border-radius:50%;background:var(--moss)}
+.drawer header span{margin-left:auto;color:var(--ink-3);font-weight:400;font-size:12px}
+.thread{padding:16px;display:flex;flex-direction:column;gap:10px;overflow:auto;position:relative;scrollbar-width:none;scroll-behavior:smooth}
+.thread::-webkit-scrollbar{display:none}
+.thread>*{flex:0 0 auto}
+.msg{max-width:88%;padding:11px 14px;border-radius:16px;font-size:14.5px;line-height:1.45;opacity:0;transform:translateY(8px);transition:opacity .35s,transform .35s}
+.msg.show{opacity:1;transform:none}
+.msg.user{align-self:flex-end;background:var(--moss);color:var(--moss-ink);border-bottom-right-radius:4px}
+.msg.bot{align-self:flex-start;background:var(--paper-2);border-bottom-left-radius:4px}
+.msg .thumb{width:104px;border-radius:8px;margin-top:8px;border:2px solid rgba(255,255,255,.35)}
+.status{font-size:12.5px;color:var(--ink-3);display:flex;gap:8px;align-items:center;padding-left:4px;opacity:0;transition:opacity .3s}
+.status.show{opacity:1}
+.status i{width:6px;height:6px;border-radius:50%;background:var(--moss);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.25}}
+.cards{display:grid;gap:8px;opacity:0;transform:translateY(8px);transition:opacity .35s,transform .35s;max-width:92%}
+.cards.show{opacity:1;transform:none}
+.pcard{display:grid;grid-template-columns:72px 1fr;gap:12px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13.5px;align-items:center}
+.pcard .pic{width:72px;height:54px;border-radius:8px;overflow:hidden;background:var(--paper-2)}
+.pcard .pic img{width:100%;height:100%;object-fit:cover;object-position:52% 80%;transform:scale(1.8)}
+.pcard b{display:block;font-weight:600}
+.pcard .meta{color:var(--ink-2);font-size:12.5px;display:flex;gap:8px;flex-wrap:wrap}
+.pcard .meta em{font-style:normal;color:var(--moss);font-weight:600}
+.pcard .act{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
+.pcard .act span{font-size:12px;padding:5px 9px;border-radius:999px;border:1px solid var(--line)}
+.pcard .act span.go{background:var(--ink);color:#fff;border-color:var(--ink)}
+.preview-msg{align-self:flex-start;width:76%;border-radius:14px;overflow:hidden;opacity:0;transform:translateY(8px);transition:opacity .4s,transform .4s;position:relative}
+.preview-msg.show{opacity:1;transform:none}
+.preview-msg img{width:100%}
+.preview-msg span{position:absolute;left:10px;bottom:10px;background:rgba(251,248,243,.92);padding:5px 10px;border-radius:999px;font-size:12px;font-weight:600}
+.composer{display:flex;gap:10px;align-items:center;padding:12px 14px;border-top:1px solid var(--line);font-size:14px;color:var(--ink-3)}
+.composer .plus{width:30px;height:30px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-2)}
+.composer .send{margin-left:auto;width:32px;height:32px;border-radius:50%;background:var(--moss);display:grid;place-items:center}
+.composer .send svg{width:14px;height:14px;stroke:#fff;fill:none;stroke-width:2.2}
+.typing{display:inline-flex;gap:3px;align-items:center}
+.typing i{width:5px;height:5px;background:var(--ink-3);border-radius:50%;animation:pulse 1s infinite}
+.typing i:nth-child(2){animation-delay:.2s}.typing i:nth-child(3){animation-delay:.4s}
+@media(max-width:900px){.assistant .wrap{grid-template-columns:1fr}.drawer{margin-left:0;height:auto;min-height:560px}}
+
+/* fabrics */
+.fabrics .wrap{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:clamp(28px,5vw,72px);align-items:center}
+.fab-demo{display:grid;gap:14px;min-width:0}
+.fab-demo .pic{position:relative;aspect-ratio:3/2;border-radius:14px;overflow:hidden;background:#d8cdbd}
+.fab-demo .pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .5s}
+.fab-demo .pic img.on{opacity:1}
+.fab-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:9px;border:1.5px solid var(--line);background:var(--card);padding:7px 13px 7px 8px;border-radius:999px;font-size:14px;cursor:pointer;font-family:var(--body);color:var(--ink)}
+.chip i{width:20px;height:20px;border-radius:50%;background:var(--c);box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.6)}
+.chip[aria-pressed="true"]{border-color:var(--ink)}
+.chip .src{font-size:11px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase}
+.sources{display:grid;gap:14px;margin-top:28px}
+.src-row{display:grid;grid-template-columns:28px 1fr;gap:14px;align-items:start;font-size:15.5px;color:var(--ink-2)}
+.src-row b{color:var(--ink);font-weight:600}
+.src-row i{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:var(--paper-2);font-style:normal;font-size:13px;font-weight:700;color:var(--moss);font-family:var(--display)}
+@media(max-width:900px){.fabrics .wrap{grid-template-columns:1fr}}
+
+/* merchants */
+.merchants .grid{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:clamp(28px,5vw,64px);align-items:start}
+.ledger{display:grid;border-top:1px solid var(--line)}
+.ledger .row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,2fr);gap:18px;padding:22px 0;border-bottom:1px solid var(--line);align-items:start}
+.ledger h3{font-size:22px}
+.ledger p{color:var(--ink-2);font-size:15.5px}
+.sales{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:22px;display:grid;gap:18px;position:sticky;top:90px}
+.sales .k{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:600;display:flex;justify-content:space-between}
+.sales .k em{font-style:normal;color:var(--oak)}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.kpi b{display:block;font-family:var(--display);font-size:30px;font-weight:500;line-height:1;font-variant-numeric:tabular-nums}
+.kpi span{font-size:12.5px;color:var(--ink-2)}
+.bars{display:flex;align-items:flex-end;gap:4px;height:70px}
+.bars i{flex:1;background:var(--moss);opacity:.85;border-radius:3px 3px 0 0;transform-origin:bottom;animation:grow 1.2s cubic-bezier(.2,.7,.2,1) both}
+.bars i:nth-child(odd){opacity:.55}
+@keyframes grow{from{transform:scaleY(0)}}
+.sales .note{font-size:12.5px;color:var(--ink-3)}
+.roas{display:flex;align-items:baseline;gap:10px;padding:12px 14px;background:var(--paper-2);border-radius:10px}
+.roas b{font-family:var(--display);font-size:34px;font-weight:500;line-height:1}
+.roas span{font-size:13px;color:var(--ink-2)}
+@media(max-width:900px){.merchants .grid{grid-template-columns:1fr}.sales{position:static}}
+@media(max-width:560px){.ledger .row{grid-template-columns:1fr;gap:8px}}
+
+/* pricing */
+.pricing{background:var(--paper-2)}
+.toggle{display:inline-flex;border:1.5px solid var(--ink);border-radius:999px;padding:3px;gap:2px;background:var(--card)}
+.toggle button{border:0;background:transparent;padding:8px 16px;border-radius:999px;font-weight:600;cursor:pointer;font-family:var(--body);font-size:14px;color:var(--ink)}
+.toggle button[aria-pressed="true"]{background:var(--ink);color:#fff}
+.toggle small{font-weight:400;opacity:.75;margin-left:4px}
+.plans{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:28px}
+.plan{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px 22px;display:grid;gap:14px;align-content:start;min-width:0}
+.plan.hi{border-color:var(--moss);box-shadow:0 0 0 1px var(--moss)}
+.plan .name{font-family:var(--display);font-size:24px}
+.plan .price{display:flex;align-items:baseline;gap:6px;font-variant-numeric:tabular-nums}
+.plan .price b{font-family:var(--display);font-size:46px;font-weight:500;line-height:1}
+.plan .price span{color:var(--ink-2);font-size:14px}
+.plan .prev{font-size:15px;color:var(--ink-2);padding:10px 12px;background:var(--paper);border-radius:10px}
+.plan .prev b{color:var(--ink);font-weight:600}
+.plan ul{list-style:none;margin:0;padding:0;display:grid;gap:8px;font-size:14.5px;color:var(--ink-2)}
+.plan ul li::before{content:"·";margin-right:8px;color:var(--moss);font-weight:700}
+.plan .btn{justify-content:center;margin-top:auto}
+.plan .badge{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--moss);font-weight:700}
+.plan .annual-note{font-size:12.5px;color:var(--oak);min-height:1.2em}
+.topup{margin-top:18px;display:flex;flex-wrap:wrap;gap:12px 32px;font-size:15px;color:var(--ink-2)}
+.topup b{color:var(--ink)}
+@media(max-width:1000px){.plans{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:520px){.plans{grid-template-columns:1fr}}
+
+/* install + faq */
+.install .steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:clamp(18px,3vw,36px);margin-top:12px}
+.install .step{display:grid;gap:10px;padding-top:18px;border-top:2px solid var(--ink)}
+.install .step .n{font-family:var(--display);font-size:14px;letter-spacing:.1em;color:var(--oak)}
+.install .step p{color:var(--ink-2);font-size:15.5px}
+@media(max-width:760px){.install .steps{grid-template-columns:1fr}}
+.faq{display:grid;border-top:1px solid var(--line);margin-top:40px}
+.faq details{border-bottom:1px solid var(--line)}
+.faq summary{cursor:pointer;padding:18px 0;font-family:var(--display);font-size:22px;list-style:none;display:flex;justify-content:space-between;gap:16px}
+.faq summary::after{content:"+";color:var(--oak);font-size:26px;line-height:1}
+.faq details[open] summary::after{content:"–"}
+.faq details p{padding:0 0 20px;color:var(--ink-2);max-width:42em}
+
+/* final cta + footer */
+.final{background:var(--ink);color:#F2EEE6;text-align:left}
+.final .wrap{display:grid;grid-template-columns:minmax(0,7fr) minmax(0,5fr);gap:32px;align-items:center}
+.final h2{color:#F2EEE6}
+.final p{color:#B9B5AC}
+.final .btn.primary{background:#F2EEE6;border-color:#F2EEE6;color:var(--ink)}
+.final .btn.ghost{border-color:#6c6a64;color:#F2EEE6}
+@media(max-width:800px){.final .wrap{grid-template-columns:1fr}}
+footer{background:var(--ink);color:#8e8b84;font-size:13.5px;padding-block:24px 40px;border-top:1px solid #33372f}
+footer .wrap{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:center}
+footer .brand{color:#F2EEE6;font-size:22px}
+footer .brand i{border-color:#B9D1C0}footer .brand i::after{background:#B9D1C0}
+footer span{margin-left:auto}
+
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<nav class="nav"><div class="wrap">
+  <a class="brand" href="#top"><i></i>Visully</a>
+  <ul>
+    <li><a href="#how">How it works</a></li>
+    <li><a href="#assistant">Room Assistant</a></li>
+    <li><a href="#fabrics">Fabrics</a></li>
+    <li><a href="#merchants">For merchants</a></li>
+    <li><a href="#pricing">Pricing</a></li>
+  </ul>
+  <a class="btn primary" href="#pricing" style="padding:11px 18px;font-size:15px">Start free</a>
+</div></nav>
+
+<section class="hero" id="top"><div class="wrap">
+  <div class="hero-copy">
+    <p class="eyebrow">AI room visualisation for Shopify furniture stores</p>
+    <h1>Your furniture in their home. Before they buy.</h1>
+    <p class="lede">Shoppers upload a photo of their room and see your sofa, bed or rug in it. They switch fabric colours, ask the Room Assistant what fits, and buy with confidence. You install it in minutes and pay only for the previews they make.</p>
+    <div class="ctas">
+      <a class="btn primary" href="#pricing">Start free <small>· 10 previews a month</small></a>
+      <a class="btn ghost" href="#how">See it in action</a>
+    </div>
+    <p class="proof"><span>Built for Shopify</span><span>Uses your existing product photos</span><span>Tracks sales from previews</span></p>
+  </div>
+
+  <div class="stage" id="stage" data-step="result" style="--tint:transparent" aria-label="Demo of the Visully popup placing a sofa in a shopper's room">
+    <img class="room" src="assets/room-1400.jpg" alt="A bright living room with an empty wall, oak floor and jute rug" width="1400" height="933">
+    <div class="sofa-wrap">
+      <div class="shadow"></div>
+      <img class="sofa" src="assets/sofa.webp" alt="Luna three-seat sofa placed against the wall" width="1200" height="527">
+      <div class="tint"></div>
+      <div class="sheen"></div>
+    </div>
+    <div class="scrim"></div>
+    <div class="upload-card">
+      <span class="k">Nordhaus · See it in your room</span>
+      <h4>Add a photo of your room</h4>
+      <div class="dropzone"><img src="assets/room-700.jpg" alt="" width="700" height="467"><span>Drop a photo or take one</span><span class="ok">Photo looks good</span></div>
+      <div class="row"><span>Luna Sofa · Oat</span><span class="pill-btn">Show me</span></div>
+    </div>
+    <div class="scan"><div class="beam"></div><div class="box"></div><span class="tag">Finding the floor and walls</span></div>
+    <div class="chrome"><span class="store">Nordhaus</span><span>See it in your room</span><span class="step" id="stepLabel">Your room, with Luna Sofa</span></div>
+    <button class="replay" id="replay" type="button" aria-label="Replay the demo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Replay</button>
+    <div class="result-bar">
+      <div class="caption"><b id="capName">Luna Sofa · Oat</b><span>Preview only · colour and scale may differ</span></div>
+      <div class="swatches" role="group" aria-label="Fabric colours">
+        <button class="sw boucle" style="--c:#D9CDB8" data-tint="transparent" data-name="Oat" aria-pressed="true" aria-label="Oat" type="button"></button>
+        <button class="sw boucle" style="--c:#3F5478" data-tint="#46587f" data-name="Navy" aria-pressed="false" aria-label="Navy" type="button"></button>
+        <button class="sw boucle" style="--c:#4E6A4A" data-tint="#587052" data-name="Forest" aria-pressed="false" aria-label="Forest" type="button"></button>
+        <button class="sw boucle" style="--c:#B66A48" data-tint="#be6e50" data-name="Clay" aria-pressed="false" aria-label="Clay" type="button"></button>
+        <button class="sw boucle" style="--c:#4A4642" data-tint="#56524e" data-name="Charcoal" aria-pressed="false" aria-label="Charcoal" type="button"></button>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<section id="how"><div class="wrap">
+  <div class="sect-head rv">
+    <p class="eyebrow">Shoppers see it. Sales follow.</p>
+    <h2>Three taps on your product page</h2>
+    <p class="lede">A “See it in your room” button sits on every product you switch on. No app to download, no 3D models to commission. It works with the photos already in your store.</p>
+  </div>
+  <div class="strip">
+    <div class="frame rv">
+      <div class="shot"><img src="assets/room-700.jpg" alt="" width="700" height="467"><div class="mini-upload"><div><b>Add a photo of your room</b><span>Drop a photo or take one</span></div></div></div>
+      <span class="n">1</span><h3>They upload a photo</h3><p>Phone or desktop. Visully checks the photo is usable and never stores it.</p>
+    </div>
+    <div class="frame rv">
+      <div class="shot"><img src="assets/result-oat.jpg" alt="The sofa placed in the room" width="700" height="467"><span class="mini-tag">Luna Sofa · Oat</span></div>
+      <span class="n">2</span><h3>Your product appears in it</h3><p>Placed against their wall at a believable scale, with their light and shadows. One credit per image.</p>
+    </div>
+    <div class="frame rv">
+      <div class="shot"><img src="assets/result-navy.jpg" alt="The same sofa in navy" width="700" height="467"><div class="mini-sw"><i style="--c:#D9CDB8"></i><i class="on" style="--c:#3F5478"></i><i style="--c:#4E6A4A"></i><i style="--c:#B66A48"></i></div></div>
+      <span class="n">3</span><h3>They explore and buy</h3><p>Switch fabrics, download the image, apply an offer. Every preview is linked to the basket so you can see what it sold.</p>
+    </div>
+  </div>
+</div></section>
+
+<section class="assistant" id="assistant"><div class="wrap">
+  <div class="rv">
+    <p class="eyebrow">Room Assistant</p>
+    <h2>A sales assistant that has seen their room</h2>
+    <p class="lede" style="margin-top:18px">Shoppers describe what they need, attach a photo, and the assistant recommends products from your catalogue only. Every price and stock level is checked against Shopify before it is shown. One tap previews the product in their room, inside the chat.</p>
+    <ul class="points">
+      <li>Answers questions about delivery, lead times and returns from notes you write.</li>
+      <li>Never invents products. Recommendations come from your live catalogue, up to three at a time.</li>
+      <li>Opens as a side panel or full screen. You choose the pages it appears on and its colour.</li>
+    </ul>
+  </div>
+  <div class="drawer rv" id="drawer" aria-label="Demo of the Room Assistant chat">
+    <header><span class="dot"></span>Room Assistant <span>Nordhaus</span></header>
+    <div class="thread" id="thread">
+      <div class="msg user" data-t="0">I’ve got a small north-facing living room and I want something cosy under $2,000. Here’s the room.<img class="thumb" src="assets/room-700.jpg" alt="" width="700" height="467"></div>
+      <div class="status" data-t="1"><i></i><span>Analysing your room…</span></div>
+      <div class="msg bot" data-t="2">Lovely light from that window, and a long clear wall. A deep three-seater in a warm fabric would suit it. Two that fit your budget and are in stock:</div>
+      <div class="cards" data-t="3">
+        <div class="pcard"><div class="pic"><img src="assets/sofa.webp" alt="" width="1200" height="527"></div><div><b>Luna Sofa · 3 seat</b><div class="meta"><span>$1,895</span><em>In stock</em><span>5 fabrics</span></div><div class="act"><span class="go">See it in my room</span><span>View product</span></div></div></div>
+        <div class="pcard"><div class="pic"><img src="assets/sofa.webp" alt="" width="1200" height="527" style="filter:saturate(.7) brightness(.95)"></div><div><b>Arlo Loveseat</b><div class="meta"><span>$1,290</span><em>In stock</em><span>3 fabrics</span></div><div class="act"><span class="go">See it in my room</span><span>View product</span></div></div></div>
+      </div>
+      <div class="msg user" data-t="4">Show me the Luna in forest green.</div>
+      <div class="status" data-t="5"><i></i><span>Creating your preview…</span></div>
+      <div class="preview-msg" data-t="6"><img src="assets/result-forest.jpg" alt="The Luna sofa in forest green, placed in the shopper's room" width="700" height="467"><span>Luna Sofa · Forest</span></div>
+      <div class="msg bot" data-t="7">Here it is in Forest. The green sits well with the oak floor. Want the Oat fabric for comparison, or a rug to go with it?</div>
+    </div>
+    <div class="composer"><span class="plus">+</span><span>Describe your room or ask for a preview…</span><span class="send"><svg viewBox="0 0 24 24"><path d="M12 19V5m0 0l-6 6m6-6l6 6" stroke-linecap="round" stroke-linejoin="round"/></svg></span></div>
+  </div>
+</div></section>
+
+<section class="fabrics" id="fabrics"><div class="wrap">
+  <div class="rv">
+    <p class="eyebrow">Fabrics and colours</p>
+    <h2>Every fabric, without extra photography</h2>
+    <p class="lede" style="margin-top:18px">A sofa in 25 fabrics needs one good photo, not 25. Visully reads the colours you already have in Shopify and fills the gaps for you, so shoppers can switch fabric in the preview with one tap.</p>
+    <div class="sources">
+      <div class="src-row"><i>1</i><p><b>Shopify swatches.</b> Colour or image swatches on your variants are used as they are.</p></div>
+      <div class="src-row"><i>2</i><p><b>Your own colours.</b> Pick a colour per fabric in the Fabrics &amp; Colours manager, or upload a sample.</p></div>
+      <div class="src-row"><i>3</i><p><b>Filled automatically.</b> With auto-fill on, the colour is read from the variant photo, then from the name. One-colour products simply use their photos.</p></div>
+    </div>
+  </div>
+  <div class="fab-demo rv">
+    <div class="pic" id="fabPic">
+      <img class="on" src="assets/result-oat.jpg" alt="Sofa in Oat" data-f="oat" width="700" height="467">
+      <img src="assets/result-navy.jpg" alt="Sofa in Navy" data-f="navy" width="700" height="467">
+      <img src="assets/result-forest.jpg" alt="Sofa in Forest" data-f="forest" width="700" height="467">
+      <img src="assets/result-clay.jpg" alt="Sofa in Clay" data-f="clay" width="700" height="467">
+    </div>
+    <div class="fab-row" id="fabRow" role="group" aria-label="Choose a fabric">
+      <button class="chip" type="button" data-f="oat" aria-pressed="true" style="--c:#D9CDB8"><i></i>Oat bouclé <span class="src">Shopify</span></button>
+      <button class="chip" type="button" data-f="navy" aria-pressed="false" style="--c:#3F5478"><i></i>Navy linen <span class="src">Merchant</span></button>
+      <button class="chip" type="button" data-f="forest" aria-pressed="false" style="--c:#4E6A4A"><i></i>Forest velvet <span class="src">From photo</span></button>
+      <button class="chip" type="button" data-f="clay" aria-pressed="false" style="--c:#B66A48"><i></i>Clay weave <span class="src">From name</span></button>
+    </div>
+  </div>
+</div></section>
+
+<section class="merchants" id="merchants"><div class="wrap">
+  <div class="sect-head rv">
+    <p class="eyebrow">For merchants</p>
+    <h2>Built to be switched on and left alone</h2>
+    <p class="lede">Everything lives inside your Shopify admin. Nothing to host, no photos stored, and a bill you can predict.</p>
+  </div>
+  <div class="grid">
+    <div class="ledger rv">
+      <div class="row"><h3>Credits, not surprises</h3><p>Each preview uses one credit. Your plan refreshes monthly, and usage stops at your allowance. Buy a top-up only when you want to. A usage page shows credits by day and by product.</p></div>
+      <div class="row"><h3>Shopper limits you set</h3><p>Each shopper can make 10 previews a day by default. Change it per store. Unusual bursts are paused automatically and flagged on your home page.</p></div>
+      <div class="row"><h3>Emails into Shopify</h3><p>Ask for an email before or after the first image, required or optional, or not at all. Addresses go straight into your Shopify customers with marketing consent recorded, ready for your email tool.</p></div>
+      <div class="row"><h3>Sales from previews</h3><p>Previews are linked to the basket, so orders that follow a preview are counted. The report appears on your home page once the numbers are meaningful.</p></div>
+      <div class="row"><h3>Privacy by design</h3><p>Room photos and generated images are never stored on our servers. Shopify’s customer data requests and deletions are handled for you.</p></div>
+      <div class="row"><h3>Your look, your words</h3><p>Five popup styles, your colours, your launcher text, and a Room Assistant that uses the facts you give it.</p></div>
+    </div>
+    <div class="sales rv" aria-label="Example sales report">
+      <div class="k"><span>Sales from Visully · last 30 days</span><em>Example</em></div>
+      <div class="kpis">
+        <div class="kpi"><b>412</b><span>previews</span></div>
+        <div class="kpi"><b>31</b><span>orders after a preview</span></div>
+        <div class="kpi"><b>$27.8k</b><span>order value</span></div>
+      </div>
+      <div class="bars" aria-hidden="true"><i style="height:40%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:62%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:58%"></i><i style="height:80%"></i><i style="height:66%"></i><i style="height:90%"></i><i style="height:74%"></i><i style="height:100%"></i></div>
+      <div class="roas"><b>403×</b><span>return on the $69 Growth plan this month</span></div>
+      <p class="note">Shown on your Visully home page when previews lead to at least three orders and the return is 3× or better.</p>
+    </div>
+  </div>
+</div></section>
+
+<section class="pricing" id="pricing"><div class="wrap">
+  <div class="sect-head rv">
+    <p class="eyebrow">Pricing</p>
+    <h2>Pay for previews, not seats</h2>
+    <p class="lede">Every plan includes the popup, the Room Assistant, fabric colours, email capture, shopper limits and the sales report. Start free, no card needed.</p>
+    <div class="toggle" role="group" aria-label="Billing period"><button type="button" id="bMonthly" aria-pressed="true">Monthly</button><button type="button" id="bAnnual" aria-pressed="false">Annual <small>2 months free</small></button></div>
+  </div>
+  <div class="plans rv">
+    <div class="plan"><span class="badge">Try it</span><span class="name">Free</span><div class="price"><b>$0</b></div><p class="annual-note"></p><p class="prev"><b>10 previews</b> a month</p><ul><li>Popup on any product</li><li>Room Assistant</li><li>No card needed</li></ul><a class="btn ghost" href="#start">Start free</a></div>
+    <div class="plan"><span class="badge">Small stores</span><span class="name">Starter</span><div class="price"><b data-m="29" data-a="24">$29</b><span>/ month</span></div><p class="annual-note" data-a="$290 billed yearly"></p><p class="prev"><b>100 previews</b> a month</p><ul><li>Everything in Free</li><li>Top-ups available</li><li>Email capture to Shopify</li></ul><a class="btn ghost" href="#start">Choose Starter</a></div>
+    <div class="plan hi"><span class="badge">Most popular</span><span class="name">Growth</span><div class="price"><b data-m="69" data-a="58">$69</b><span>/ month</span></div><p class="annual-note" data-a="$690 billed yearly"></p><p class="prev"><b>300 previews</b> a month</p><ul><li>Everything in Starter</li><li>Lower cost per preview</li><li>Priority support</li></ul><a class="btn primary" href="#start">Choose Growth</a></div>
+    <div class="plan"><span class="badge">Busy stores</span><span class="name">Scale</span><div class="price"><b data-m="159" data-a="133">$159</b><span>/ month</span></div><p class="annual-note" data-a="$1,590 billed yearly"></p><p class="prev"><b>800 previews</b> a month</p><ul><li>Everything in Growth</li><li>Lowest cost per preview</li><li>Onboarding call</li></ul><a class="btn ghost" href="#start">Choose Scale</a></div>
+  </div>
+  <div class="topup rv"><span><b>Top-up:</b> 100 extra previews for $25, paid plans only.</span><span><b>Annual:</b> pay for 10 months, get 12. Previews still refresh monthly.</span><span>Prices in USD, before tax.</span></div>
+</div></section>
+
+<section class="install" id="start"><div class="wrap">
+  <div class="sect-head rv">
+    <p class="eyebrow">Getting started</p>
+    <h2>Live on your store this afternoon</h2>
+  </div>
+  <div class="steps rv">
+    <div class="step"><span class="n">STEP 1</span><h3>Install from the Shopify App Store</h3><p>Approve the app and choose a plan, or stay on Free. Visully reads your products and nothing else.</p></div>
+    <div class="step"><span class="n">STEP 2</span><h3>Pick the products</h3><p>Switch on the sofas, beds and rugs you want. For each one, confirm the reference photo and check the fabric colours it found.</p></div>
+    <div class="step"><span class="n">STEP 3</span><h3>Turn on the embed</h3><p>Enable Visully in your theme’s app embeds, choose a style and where the button sits. The Room Assistant is a second switch.</p></div>
+  </div>
+  <div class="faq rv">
+    <details><summary>Do I need 3D models of my products?</summary><p>No. Visully works from your product photos. A clear photo of the product on a plain background gives the best results.</p></details>
+    <details><summary>How accurate are the previews?</summary><p>They are AI images for illustration, and we say so under every preview. Scale, colour and details can differ, so shoppers are reminded to check dimensions before ordering.</p></details>
+    <details><summary>What happens to shoppers’ photos?</summary><p>They are used for the preview and discarded. We do not keep room photos or generated images, and the shopper downloads their result from the popup.</p></details>
+    <details><summary>Can a shopper run up my bill?</summary><p>No. Usage stops at your plan’s allowance, each shopper has a daily limit you control, and sudden bursts are paused automatically.</p></details>
+    <details><summary>Does it work on themes other than Dawn?</summary><p>Yes. It is a theme app extension, so it works with any Online Store 2.0 theme. The button position can be adjusted per theme.</p></details>
+  </div>
+</div></section>
+
+<section class="final"><div class="wrap">
+  <div class="rv"><h2>Let them see it before they buy it.</h2><p class="lede" style="margin-top:16px">Ten free previews a month, forever. Upgrade when your shoppers do.</p></div>
+  <div class="rv" style="display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-start"><a class="btn primary" href="#pricing">Start free</a><a class="btn ghost" href="#top">Watch the demo again</a></div>
+</div></section>
+<footer><div class="wrap"><a class="brand" href="#top"><i></i>Visully</a><span>© 2026 Visully · AI room visualisation for Shopify</span></div></footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var stage = document.getElementById('stage');
+  var label = document.getElementById('stepLabel');
+  var capName = document.getElementById('capName');
+  var sws = Array.prototype.slice.call(stage.querySelectorAll('.sw'));
+  var timers = [];
+  function later(fn, ms){ timers.push(setTimeout(fn, ms)); }
+  function clearTimers(){ timers.forEach(clearTimeout); timers = []; }
+  function setStep(s, text){ stage.setAttribute('data-step', s); label.textContent = text; }
+  function pick(btn, animate){
+    sws.forEach(function(b){ b.setAttribute('aria-pressed', b===btn ? 'true' : 'false'); });
+    capName.textContent = 'Luna Sofa · ' + btn.getAttribute('data-name');
+    if (animate && !reduce){
+      stage.classList.remove('swapping'); void stage.offsetWidth; stage.classList.add('swapping');
+      later(function(){ stage.style.setProperty('--tint', btn.getAttribute('data-tint')); }, 180);
+      later(function(){ stage.classList.remove('swapping'); }, 950);
+    } else {
+      stage.style.setProperty('--tint', btn.getAttribute('data-tint'));
+    }
+  }
+  sws.forEach(function(b){ b.addEventListener('click', function(){ clearTimers(); setStep('result','Your room, with Luna Sofa'); pick(b, true); }); });
+  function play(){
+    clearTimers();
+    if (reduce){ setStep('result','Your room, with Luna Sofa'); pick(sws[0], false); return; }
+    stage.classList.remove('has-photo');
+    pick(sws[0], false);
+    setStep('upload', 'Step 1 · Your room');
+    later(function(){ stage.classList.add('has-photo'); }, 1200);
+    later(function(){ setStep('scan', 'Step 2 · Finding the floor and walls'); }, 2600);
+    later(function(){ setStep('result', 'Your room, with Luna Sofa'); }, 5200);
+    later(function(){ pick(sws[1], true); }, 7600);
+    later(function(){ pick(sws[2], true); }, 9800);
+    later(function(){ pick(sws[0], true); }, 12000);
+  }
+  document.getElementById('replay').addEventListener('click', play);
+  var started = false;
+  function startWhenVisible(){
+    if (started) return;
+    if (!('IntersectionObserver' in window)){ started = true; play(); return; }
+    var io = new IntersectionObserver(function(es){ if (es[0].isIntersecting && !started){ started = true; io.disconnect(); later(play, 500); } }, {threshold:.35});
+    io.observe(stage);
+  }
+  startWhenVisible();
+
+  /* chat demo */
+  var drawer = document.getElementById('drawer');
+  var items = Array.prototype.slice.call(drawer.querySelectorAll('[data-t]'));
+  var chatTimes = [300, 1500, 3200, 4200, 7400, 8500, 11500, 12700];
+  var chatPlayed = false;
+  function playChat(){
+    if (chatPlayed) return; chatPlayed = true;
+    if (reduce){ items.forEach(function(el){ el.classList.add('show'); }); drawer.querySelectorAll('.status').forEach(function(s){ s.classList.remove('show'); }); return; }
+    items.forEach(function(el){
+      var t = chatTimes[+el.getAttribute('data-t')];
+      setTimeout(function(){
+        el.classList.add('show');
+        if (el.classList.contains('status')) setTimeout(function(){ el.classList.remove('show'); el.style.height='0'; el.style.margin='0'; el.style.overflow='hidden'; }, 1500);
+        var th = el.closest('.thread');
+        if (th){
+          var pv = th.querySelector('.preview-msg.show');
+          th.scrollTop = pv ? Math.max(0, pv.offsetTop - 12) : 1e6;
+        }
+      }, t);
+    });
+  }
+  if ('IntersectionObserver' in window){
+    var io2 = new IntersectionObserver(function(es){ if (es[0].isIntersecting){ io2.disconnect(); playChat(); } }, {threshold:.4});
+    io2.observe(drawer);
+  } else playChat();
+
+  /* fabrics */
+  var fabRow = document.getElementById('fabRow'), fabPic = document.getElementById('fabPic');
+  fabRow.addEventListener('click', function(e){
+    var b = e.target.closest('.chip'); if (!b) return;
+    var f = b.getAttribute('data-f');
+    fabRow.querySelectorAll('.chip').forEach(function(c){ c.setAttribute('aria-pressed', c===b?'true':'false'); });
+    fabPic.querySelectorAll('img').forEach(function(i){ i.classList.toggle('on', i.getAttribute('data-f')===f); });
+  });
+
+  /* pricing toggle */
+  var bm = document.getElementById('bMonthly'), ba = document.getElementById('bAnnual');
+  function cycle(annual){
+    bm.setAttribute('aria-pressed', annual?'false':'true'); ba.setAttribute('aria-pressed', annual?'true':'false');
+    document.querySelectorAll('.plan .price b[data-m]').forEach(function(b){ b.textContent = '$' + b.getAttribute(annual?'data-a':'data-m'); });
+    document.querySelectorAll('.plan .annual-note[data-a]').forEach(function(p){ p.textContent = annual ? p.getAttribute('data-a') : ''; });
+  }
+  bm.addEventListener('click', function(){ cycle(false); }); ba.addEventListener('click', function(){ cycle(true); });
+
+})();
+</script>
