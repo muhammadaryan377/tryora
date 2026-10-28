@@ -42,3 +42,11 @@ npx shopify app security review --config visully
 ```
 
 Do not deploy, release or merge until these checks and the complete integration-baseline review succeed.
+
+## Follow-up: HTML sink remediation (latest branch commits)
+
+- Added `packages/storefront/src/html-guard.ts` with an explicit safe-element/safe-attribute allowlist, URL restrictions and CSS property/value allowlist. Untrusted HTML is parsed in an inert document, stripped of executable elements, event handlers, unsafe href/src values and unsafe CSS, then imported into the active DOM.
+- Changed all `.innerHTML =` and `.outerHTML =` assignments in `packages/storefront/src/assistant.ts`, `packages/storefront/src/assistant/drawer.ts` and `packages/storefront/src/main.ts` to `setSafeHtml` or `replaceWithSafeHtml`. Constant SVG markup, selected product cards, room-photo chips, inline assistant text formatting and existing controls remain represented in the templates.
+- Added `shopify-app/test/storefront-html-guard.test.ts` with cases for malicious elements, event attributes, cross-store links, image protocols, CSS injection, input controls, SVG icons, blank-tab links, local downloads, and streamed HTML replacement.
+- **Status: source changes committed, verification required.** The earlier scanner report (11 `UNSAFE_INNERHTML` occurrences) predates these source replacements. Neither a fresh Shopify scan nor full unit/build/typecheck runs have been performed after these commits. A parser-sink finding may still need further mitigation; do not report a clean Shopify scan until the CLI actually confirms one.
+- The 35 semantic agent checks are still pending because the authoritative local `agent-checks.json` is not available in the GitHub mirror. Do not fabricate check outcomes or manually edit CLI-generated scan artifacts.
