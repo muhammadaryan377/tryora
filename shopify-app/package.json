@@ -21,7 +21,7 @@
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
-    "typecheck": "react-router typegen && tsc --noEmit"
+    "typecheck": "prisma generate && react-router typegen && tsc --noEmit"
   },
   "type": "module",
   "engines": {
