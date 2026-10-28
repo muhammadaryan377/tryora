@@ -90,7 +90,7 @@ describe("mandatory compliance webhook", () => {
     await webhook(request());
     expect(state.tx.leadDelivery.findMany).toHaveBeenCalledWith({
       where: { shopId: state.shop, OR: [{ email: { equals: "buyer@example.com", mode: "insensitive" } }] },
-      select: { customerRef: true },
+      select: { customerRef: true, email: true },
     });
     expect(state.tx.previewJob.updateMany).toHaveBeenCalledWith({
       where: { shopId: state.shop, verifiedCustomerId: { in: ["gid://shopify/Customer/98"] } },
@@ -104,6 +104,22 @@ describe("mandatory compliance webhook", () => {
       where: { shopId: state.shop, OR: [
         { email: { equals: "buyer@example.com", mode: "insensitive" } },
       ] },
+    });
+  });
+
+  it("handles ID-only deletion by following a linked customer email to older unsynced leads", async () => {
+    state.payload = { customer: { id: 98 } };
+    state.tx.leadDelivery.findMany.mockResolvedValueOnce([
+      { customerRef: "gid://shopify/Customer/98", email: "Buyer@Example.com" },
+    ]);
+    await webhook(request());
+    expect(state.tx.leadDelivery.deleteMany).toHaveBeenCalledWith({
+      where: { shopId: state.shop, OR: expect.arrayContaining([
+        { email: { equals: "buyer@example.com", mode: "insensitive" } },
+      ]) },
+    });
+    expect(state.tx.consentRecord.deleteMany).toHaveBeenCalledWith({
+      where: { shopId: state.shop, subjectRef: { in: expect.arrayContaining(["gid://shopify/Customer/98"]) } },
     });
   });
 
