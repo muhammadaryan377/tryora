@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * This is a minimal fake-DOM test for launcher boot/placement, not HTML parsing.
- * The secure HTML renderer is exercised separately by storefront-html-guard.test.ts
- * and the room-assistant DOM integration tests. Its browser DOMParser and
- * replaceChildren APIs are intentionally not implemented by FakeElement here.
+ * This minimal fake DOM tests launcher boot/placement rather than HTML parsing.
+ * The real HTML sanitizer is tested separately in storefront-html-guard.test.ts
+ * and room-assistant DOM tests. Keep mock markup as inert test data, never
+ * assign it to a browser HTML execution sink.
  */
 vi.mock("../../packages/storefront/src/html-guard.js", () => ({
-  setSafeHtml: (target: { innerHTML: string }, html: string) => { target.innerHTML = html; },
-  replaceWithSafeHtml: (target: { outerHTML?: string }, html: string) => { target.outerHTML = html; },
+  setSafeHtml: (target: { renderedMarkup?: string }, html: string) => { target.renderedMarkup = html; },
+  replaceWithSafeHtml: (target: { renderedMarkup?: string }, html: string) => { target.renderedMarkup = html; },
 }));
 
 /** Just enough DOM for storefront boot: elements, classes, styles, placement and listeners. */
