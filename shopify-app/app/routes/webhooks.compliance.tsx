@@ -1,4 +1,5 @@
 import type { ActionFunctionArgs } from "react-router";
+import { createHash } from "node:crypto";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { privacySubject } from "../privacy.server";
@@ -38,14 +39,26 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         // customerSet call stored a Shopify ID. Resolve both before cleanup.
         const linked = await tx.leadDelivery.findMany({
           where: { shopId: shop, OR: subject.or },
-          select: { customerRef: true },
+          select: { customerRef: true, email: true },
         });
         const refs = Array.from(new Set([
           ...subject.ids,
           ...linked.map(item => item.customerRef).filter((ref): ref is string => !!ref),
         ]));
-        const consentSubjects = Array.from(new Set([...subject.consentSubjects, ...refs]));
-        await tx.leadDelivery.deleteMany({ where: { shopId: shop, OR: subject.or } });
+        const emails = Array.from(new Set([
+          ...(subject.email ? [subject.email] : []),
+          ...linked.map(item => item.email?.trim().toLowerCase())
+            .filter((email): email is string => !!email && email.length <= 254),
+        ]));
+        const expandedWhere = [
+          ...subject.or,
+          ...emails.map(email => ({ email: { equals: email, mode: "insensitive" as const } })),
+        ];
+        const consentSubjects = Array.from(new Set([
+          ...subject.consentSubjects, ...refs,
+          ...emails, ...emails.map(email => createHash("sha256").update(email).digest("hex")),
+        ]));
+        await tx.leadDelivery.deleteMany({ where: { shopId: shop, OR: expandedWhere } });
         if (refs.length) {
           await tx.previewJob.updateMany({
             where: { shopId: shop, verifiedCustomerId: { in: refs } },
@@ -64,7 +77,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         await tx.privacyRequest.deleteMany({
           where: { shopId: shop, OR: [
             ...(subject.customerId ? [{ customerId: subject.customerId }] : []),
-            ...(subject.email ? [{ email: { equals: subject.email, mode: "insensitive" as const } }] : []),
+            ...emails.map(email => ({ email: { equals: email, mode: "insensitive" as const } })),
           ] },
         });
       });
