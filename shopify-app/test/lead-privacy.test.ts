@@ -20,7 +20,11 @@ const tx = {
 };
 vi.mock("../app/shopify.server", () => ({ authenticate: { webhook: state.auth } }));
 vi.mock("../app/db.server", () => ({ default: {
-  ...tx,
+  leadDelivery: { findMany: state.linked, deleteMany: state.remove },
+  previewJob: { updateMany: state.previewUpdate },
+  quotaUsage: { updateMany: state.quotaUpdate },
+  consentRecord: { deleteMany: state.consentDelete },
+  privacyRequest: { deleteMany: state.requestDelete },
   $transaction: state.transaction,
 } }));
 
@@ -32,7 +36,7 @@ beforeEach(() => {
   state.remove.mockResolvedValue({ count: 1 });
   state.consentDelete.mockResolvedValue({ count: 0 });
   state.requestDelete.mockResolvedValue({ count: 0 });
-  state.transaction.mockImplementation(async (work: (tx: typeof tx) => Promise<void>) => work(tx));
+  state.transaction.mockImplementation(async (work: (context: typeof tx) => Promise<void>) => work(tx));
 });
 
 it("redacts retained email leads even when no Shopify customer was created", async () => {
