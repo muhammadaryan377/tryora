@@ -1,4 +1,13 @@
-# Tryora
+# Visully
+
+> Previously Tryora. Visully's storefront app proxy uses `/apps/visully`.
+> Existing CSS selectors, theme asset filenames (`tryora.js`/`tryora.css`), legacy
+> Shopify client configuration, and environment-variable identifiers are retained for compatibility.
+> From `shopify-app/`, deploy the public app explicitly with
+> `npx shopify app deploy --config visully`; never deploy the legacy Tryora config by accident.
+> The local storefront build defaults to `/apps/visully`; if `VISULLY_PROXY_PATH` or
+> legacy `TRYORA_PROXY_PATH` is set in the build environment, it overrides this default.
+> Existing merchant-configured app proxy URLs must match the compiled storefront path.
 
 Shopify app: shoppers see a merchant's product in a photo of their own room. Merchant admin, storefront popup,
 credits, limits, lead capture and sales tracking are built; real AI images, billing and App Store submission are next.
@@ -26,6 +35,7 @@ Docker builds generate Prisma Client; startup only starts the server. `npm run s
 also only generates the client. Database creation and schema changes require a separate,
 explicitly authorized database operation; development startup does not apply migrations.
 See `docs/release-safety-review.md` for release gates and the migration/rollback plan.
+**Important for 27 October leads:** Lead Capture ON requires the reviewed `LeadDelivery` contact columns and `LeadVisit` table in the actual Railway database. After an authorized backup and baseline check, run `npm --prefix shopify-app run db:status`, apply approved pending changes with `npm --prefix shopify-app run db:deploy`, and verify status again before the backend release. Code-only deployment can leave the email step failing (HTTP 503 `LEAD_DATABASE_UPDATE_REQUIRED`). See `docs/lead-capture-dashboard.md` for details. No database migration is run automatically.
 
 ## Rules
 - Never store shopper photos or generated images. Preview lead contact details (email, optional first name and explicit marketing choice) are retained only in the authenticated merchant lead dashboard; Shopify customer sync is best-effort. Never put contact details in logs or browser storage. See docs/lead-capture-dashboard.md for retention and release details.

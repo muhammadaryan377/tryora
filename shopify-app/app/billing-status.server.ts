@@ -1,16 +1,16 @@
 import prisma from "./db.server";
 import { tryora } from "./tryora.server";
-import { FREE_PLAN } from "./plans";
+import { FREE_PLAN, paidPlanForSubscription } from "./plans";
 import type { AdminGraphql } from "./preview-product.server";
 
 export const BILLING_STATUS_QUERY = `#graphql
   query TryoraBillingStatus {
     shop { plan { partnerDevelopment } }
-    currentAppInstallation { activeSubscriptions { id name status test } }
+    currentAppInstallation { activeSubscriptions { id name status test currentPeriodEnd } }
   }
 `;
 
-export type Subscription = { id: string; name: string; status: string; test: boolean };
+export type Subscription = { id: string; name: string; status: string; test: boolean; currentPeriodEnd?: string | null };
 export type BillingStatus = { developer: boolean | null; subscriptions: Subscription[]; verified: boolean; allowance: number };
 
 export function testCreditAllowance(value = process.env.TRYORA_DEV_TEST_CREDITS_PER_MONTH): number {
@@ -43,11 +43,47 @@ export async function ensureBillingAllowance(admin: AdminGraphql, shopId: string
     prisma.shop.findUnique({ where: { id: shopId } }),
     prisma.billingEntitlement.findUnique({ where: { shopId } }),
   ]);
-  // Shopify subscription truth and existing local entitlements remain separate and untouched.
-  // A stale/mismatched local paid entitlement must never be replaced with a Free grant.
-  const managed = shop?.paidPlanActive || subscriptions.length > 0 ||
-    (entitlement && (entitlement.status === "active" || ["starter", "growth", "scale"].includes(entitlement.plan)));
-  if (!managed) await tryora.grantMonthlyAllowance(shopId, allowance);
+  // Shopify is the payment authority: never unlock paid credits from a local flag, URL or
+  // a subscription with an unrecognised name, inactive status, or expired billing period.
+  const now = new Date();
+  const live = subscriptions.map(subscription => ({
+    subscription, choice: paidPlanForSubscription(subscription.name),
+    periodEnd: subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd) : null,
+  })).find(candidate => candidate.choice &&
+    candidate.subscription.status === "ACTIVE" &&
+    candidate.periodEnd && Number.isFinite(candidate.periodEnd.getTime()) && candidate.periodEnd > now);
+
+  if (live && live.choice && live.periodEnd) {
+    const settings = await tryora.ensureSettings(shopId);
+    if (!settings.paidPlanActive) await tryora.updateSettings({ ...settings, paidPlanActive: true });
+    await prisma.billingEntitlement.upsert({
+      where: { shopId },
+      create: { shopId, plan: live.choice.plan.id, status: "active", subscriptionId: live.subscription.id,
+        currentPeriodEnds: live.periodEnd },
+      update: { plan: live.choice.plan.id, status: "active", subscriptionId: live.subscription.id,
+        currentPeriodEnds: live.periodEnd },
+    });
+    // Annual payment covers twelve distinct monthly credit windows, not an upfront
+    // grant of 12x previews. Each month is granted at most once by the ledger reference.
+    const period = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+    const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+    const expires = live.periodEnd < nextMonth ? live.periodEnd : nextMonth;
+    await tryora.grantPeriodCredits(shopId,
+      `${live.subscription.id}:${period.toISOString().slice(0, 7)}`,
+      live.choice.plan.previews, expires);
+  } else if (entitlement?.subscriptionId && (entitlement.status === "active" || shop?.paidPlanActive)) {
+    // Verified absence of an approved subscription closes paid eligibility. Do NOT do
+    // this on Shopify API errors (those returned above with verified:false).
+    const settings = await tryora.ensureSettings(shopId);
+    if (settings.paidPlanActive) await tryora.updateSettings({ ...settings, paidPlanActive: false });
+    await prisma.billingEntitlement.update({
+      where: { shopId }, data: { status: "cancelled" },
+    });
+    await tryora.grantMonthlyAllowance(shopId, allowance);
+  } else if (!shop?.paidPlanActive && !subscriptions.length &&
+    !(entitlement && (entitlement.status === "active" || ["starter", "growth", "scale"].includes(entitlement.plan)))) {
+    await tryora.grantMonthlyAllowance(shopId, allowance);
+  }
   return { developer, subscriptions, verified: true, allowance };
 }
 

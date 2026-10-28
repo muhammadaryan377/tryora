@@ -295,8 +295,8 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
     },
     {
       done: d.checklist.storefront,
-      title: "Turn Tryora on in your theme",
-      body: "Switch on the Tryora app embed in your theme editor so the button appears on product pages.",
+      title: "Turn Visully on in your theme",
+      body: "Switch on the Visully app embed in your theme editor so the button appears on product pages.",
       href: themeEditor,
       status: d.checklist.storefront ? "Enabled" : "Open theme editor",
       external: true,
@@ -374,7 +374,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
         <div className={styles.main}>
           <header className={styles.header}>
             <div>
-              <h1>Welcome to Tryora</h1>
+              <h1>Welcome to Visully</h1>
               <p>Create stunning AI product visualizations for your shoppers</p>
             </div>
             <div className={styles.store} title={d.shop}>
@@ -472,7 +472,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
           >
             <h2 id="quick-actions-title">Quick actions</h2>
             <p className={styles.subtitle}>
-              Jump to the most important settings for your Tryora experience.
+              Jump to the most important settings for your Visully experience.
             </p>
             <div className={styles.actions}>
               {actions.map((action) => (
@@ -503,7 +503,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
                 <p className={styles.subtitle}>
                   {doneCount === 3
                     ? "You've completed all the essential steps. You can update these anytime."
-                    : "Complete these essential steps to get Tryora ready for your shoppers."}
+                    : "Complete these essential steps to get Visully ready for your shoppers."}
                 </p>
               </div>
               <button
@@ -565,7 +565,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
 
           {d.sales && (
             <section className={styles.panel} aria-labelledby="sales-title">
-              <h2 id="sales-title">Sales from Tryora – last 30 days</h2>
+              <h2 id="sales-title">Sales from Visully – last 30 days</h2>
               <div className={styles.sales}>
                 <div>
                   <span>Sales</span>
@@ -582,7 +582,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
                   <strong>{d.sales.orders}</strong>
                 </div>
                 <div>
-                  <span>Return on Tryora</span>
+                  <span>Return on Visully</span>
                   <strong>
                     {d.sales.roas === null ? "–" : `${d.sales.roas}×`}
                   </strong>
@@ -591,7 +591,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
               <p className={styles.subtitle}>
                 Orders where the shopper saw the product in their own room
                 before buying, counting only those products. Compared with what
-                you paid for Tryora over the same 30 days.
+                you paid for Visully over the same 30 days.
               </p>
             </section>
           )}
@@ -649,12 +649,12 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
               Need help?
             </h2>
             <p>
-              If you need any help setting up Tryora or have questions, we&apos;re
+              If you need any help setting up Visully or have questions, we&apos;re
               here for you.
             </p>
             <a
               className={styles.button}
-              href="mailto:support@visully.io?subject=Tryora%20Support%20Request"
+              href="mailto:support@visully.io?subject=Visully%20Support%20Request"
               target="_top"
             >
               Contact support

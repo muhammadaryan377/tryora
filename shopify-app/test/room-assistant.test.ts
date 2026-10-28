@@ -33,6 +33,7 @@ import {
   removeAppearanceChoiceRequests,
   runAssistantTurn,
   sanitiseMessage,
+  verifiedReplyChunks,
   wantsMoreOptions,
   requestedProductCount,
   conciseAssistantReply,
@@ -153,8 +154,8 @@ describe("room assistant settings", () => {
     vi.stubEnv("OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED", "true");
     const config = await assistantStorefrontConfig(SHOP, { pageType: "product" });
     expect(config).toMatchObject({ enabled: true, shop: SHOP, transport: "poll", defaultView: "side", previewsAvailable: true });
-    // The chat applies the merchant's email step exactly as the product popup does.
-    expect(config.lead).toEqual({ mode: "skippable", timing: "after", showOptIn: false, optInWording: expect.stringMatching(/^Email me offers/) });
+    // The chatbot stays off independently of the popup until the merchant opts in.
+    expect(config.lead).toEqual({ mode: "off", timing: "after", showOptIn: false, optInWording: expect.stringMatching(/^Email me offers/) });
     vi.stubEnv("TRYORA_ASSISTANT_TRANSPORT", "sse");
     expect((await assistantStorefrontConfig(SHOP, { pageType: "product" })).transport).toBe("sse");
   });
@@ -273,6 +274,28 @@ describe("store-wide grounding", () => {
     })]);
     const [shown] = toolOutputs(requests, "call-recommend_products");
     expect(shown.shown).toEqual([expect.objectContaining({ option: 1, title: "Oslo Couch", availableToBuy: true, aiRoomPreview: "AI room preview isn't offered for this product." })]);
+  });
+
+  it("reranks a broader verified Shopify shortlist before returning the first room suggestion", async () => {
+    const roomPhoto = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#ede3d5" } }).jpeg().toBuffer();
+    const darker = fixtureProduct({
+      id: 41, title: "A Dark Charcoal Couch", productType: "Sofa",
+      options: { Colour: ["Charcoal"], Fabric: ["Leather"] }, price: 500,
+    });
+    const cream = fixtureProduct({
+      id: 42, title: "Z Cream Velvet Couch", productType: "Sofa",
+      options: { Colour: ["Cream"], Fabric: ["Velvet"] }, price: 600,
+    });
+    const { client, requests } = scriptedModel([
+      observeRoom({ colours: ["cream"], walls: "warm white", style: "modern", lighting: "soft" }),
+      search({ query: "sofa", limit: 1 }),
+      finalAnswer("I found a suitable option."),
+    ]);
+    await ask(fixtureAdmin([darker, cream]), client, "What sofa would suit my room?", { roomPhoto });
+    const [result] = toolOutputs(requests, "call-search_products");
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0].productRef).toBe(ref(cream.id));
+    expect(result.results[0].title).toBe("Z Cream Velvet Couch");
   });
 
   it("uses a transient vision request, records room notes, and validates the exact preview reference", async () => {
@@ -466,6 +489,29 @@ describe("visualisation in the conversation", () => {
 });
 
 describe("streaming", () => {
+  it("sends ordered verified chunks after tool processing without exposing raw model draft", async () => {
+    const events: AssistantEvent[] = [];
+    const verified = "The cream upholstery complements a warm, neutral room. The design has a softer outline and works well with light wooden furniture.";
+    const { client } = scriptedModel([
+      search({ query: "bed" }),
+      streamed(finalAnswer(verified), ["Unverified price £12,345. ", "The shop definitely has no beds."]),
+    ]);
+    await runAssistantTurn({
+      admin: fixtureAdmin([aria]), shopId: SHOP,
+      history: [{ role: "user", content: "Describe the style in a little detail." }],
+      client, env: {} as any, settings,
+    }, event => events.push(event));
+    const chunks = events.filter((event): event is Extract<AssistantEvent, { type: "delta" }> => event.type === "delta");
+    const reply = events.at(-1) as Extract<AssistantEvent, { type: "final" }>;
+    expect(reply.type).toBe("final");
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.map(chunk => chunk.text).join("")).toBe(reply.reply.message);
+    expect(chunks.map(chunk => chunk.text).join("")).not.toContain("£12,345");
+    expect(events.findIndex(e => e.type === "status" && e.stage === "searching_products"))
+      .toBeLessThan(events.findIndex(e => e.type === "delta"));
+    expect(verifiedReplyChunks(reply.reply.message).join("")).toBe(reply.reply.message);
+  });
+
   it("only delivers concise verified text, never raw model prose", async () => {
     const events: AssistantEvent[] = [];
     const final = finalAnswer("Option 1 is £999. Option 2 is £1,111.");
@@ -477,7 +523,10 @@ describe("streaming", () => {
     await runAssistantTurn({ admin: fixtureAdmin([aria]), shopId: SHOP, history: [{ role: "user", content: "beds?" }], client, env: {} as any, settings }, (event) => events.push(event));
     const types = events.map((event) => event.type);
     expect(types[0]).toBe("status");
-    expect(events.filter((event) => event.type === "delta").map((event: any) => event.text)).toEqual(["Here is one option to consider."]);
+    const delivered = events.filter((event) => event.type === "delta").map((event: any) => event.text);
+    expect(delivered.length).toBeGreaterThan(1);
+    expect(delivered.join("")).toBe("Here is one option to consider.");
+    expect(delivered.join("")).not.toContain("£999");
     // Cards are verified and shown before the prose that refers to them.
     expect(types.indexOf("recommendations")).toBeLessThan(types.indexOf("delta"));
     expect(events.filter((event) => event.type === "status").map((event: any) => event.stage))
@@ -485,6 +534,21 @@ describe("streaming", () => {
     const last = events.at(-1) as Extract<AssistantEvent, { type: "final" }>;
     expect(last.type).toBe("final");
     expect(last.reply.message).toBe("Here is one option to consider.");
+  });
+
+  it("stops verified chunk delivery when the shopper cancels", async () => {
+    const controller = new AbortController();
+    const events: AssistantEvent[] = [];
+    const { client } = scriptedModel([finalAnswer("I can help you explore furniture and find something suitable for your room.")]);
+    await expect(runAssistantTurn({
+      admin: fixtureAdmin([aria]), shopId: SHOP, history: [{ role: "user", content: "What can you help me with?" }],
+      client, env: {} as any, settings, signal: controller.signal,
+    }, event => {
+      events.push(event);
+      if (event.type === "delta") controller.abort();
+    })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(events.filter(event => event.type === "delta")).toHaveLength(1);
+    expect(events.some(event => event.type === "final")).toBe(false);
   });
 
   it("resets streamed text when the same response turns into a tool call", async () => {
@@ -545,9 +609,12 @@ describe("visual-first recommendations and show more", () => {
       finalAnswer("Here are a few pieces that would suit your room."),
     ]);
     const reply = await ask(fixtureAdmin(products), client, "What furniture would look good in this room?", { room });
-    expect(reply.recommendations.map((item) => item.title)).toEqual(["Linen Lounge Sofa", "Oak Round Coffee Table", "Boucle Accent Armchair", "Jute Area Rug"]);
-    // Each description travels with its own card, unchanged and in order.
-    expect(reply.recommendations.map((item) => item.reason)).toEqual(reasons.slice(0, 4));
+    // Room-aware ranking may change search order. All four real candidates must remain,
+    // with the model's own grounded reason still attached to the correct product.
+    expect(reply.recommendations.map((item) => item.title).sort()).toEqual(
+      ["Linen Lounge Sofa", "Oak Round Coffee Table", "Boucle Accent Armchair", "Jute Area Rug"].sort());
+    const expectedReasons = new Map(products.slice(0, 4).map((product, index) => [product.title, reasons[index]]));
+    for (const item of reply.recommendations) expect(item.reason).toBe(expectedReasons.get(item.title));
     expect(new Set(reply.recommendations.map((item) => item.reason)).size).toBe(4);
     // The saved room notes reached the model, and the instructions ask for real category discovery, not beds only.
     expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain("warm beige");
@@ -647,8 +714,30 @@ describe("multi-turn conversations", () => {
     expect(isConversationAcknowledgement(message)).toBe(true);
     expect(reply.recommendations).toHaveLength(0);
     expect(reply.visualise).toBeNull();
+    // These uncomplicated social reactions are answered locally; no model tool call can repeat cards.
+    expect(requests).toHaveLength(0);
+    expect(reply.message).toMatch(/glad|welcome/i);
+  });
+
+  it("answers which product is cheaper from verified details without showing the same cards again", async () => {
+    const { client, requests } = scriptedModel([
+      toolCall("get_product_details", { productRefs: ["1", "2"], colour: null, size: null, material: null }),
+      recommend([{ productRef: "1", variantRef: null, reason: "Do not repeat this card." }]),
+      finalAnswer("The Aspen Grey Bed costs less than the Aria Bed, based on the verified prices."),
+    ]);
+    const reply = await answerRoomAssistant({
+      admin: fixtureAdmin([aria, aspen]), shopId: SHOP, client, env: {} as any, settings,
+      history: [
+        { role: "user", content: "Show me two beds" },
+        { role: "assistant", content: "Here are Aria and Aspen." },
+        { role: "user", content: "Which one is cheaper?" },
+      ],
+      shown: [{ productRef: "1", variantRef: null }, { productRef: "2", variantRef: null }],
+    });
+    expect(reply.message).toContain("Aspen Grey Bed");
+    expect(reply.recommendations).toHaveLength(0);
     expect(toolOutputs(requests, "call-recommend_products")[0]).toMatchObject({ error: "no_new_cards_requested" });
-    expect(requests[0].instructions).toContain("Respond in natural, concise English");
+    expect(toolOutputs(requests, "call-get_product_details")[0].products).toHaveLength(2);
   });
 
   it("answers a price follow-up from verified details without redisplaying the product", async () => {
@@ -761,16 +850,16 @@ describe("reliability and safety", () => {
 
   it("retries one transient provider error, and reports timeouts separately", async () => {
     const retry = scriptedModel([Object.assign(new Error("busy"), { status: 503 }), search({ query: "hello" }), finalAnswer("Hello! How can I help?")]);
-    await expect(ask(fixtureAdmin([aria]), retry.client, "Hi")).resolves.toMatchObject({ message: "Hello! How can I help?" });
+    await expect(ask(fixtureAdmin([aria]), retry.client, "Can you help me find a bed?")).resolves.toMatchObject({ message: "Hello! How can I help?" });
     expect(retry.requests).toHaveLength(3);
     const timeout = scriptedModel([Object.assign(new Error("timed out"), { name: "APIConnectionTimeoutError" })]);
-    await expect(ask(fixtureAdmin([aria]), timeout.client, "Hi")).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
+    await expect(ask(fixtureAdmin([aria]), timeout.client, "Can you help me find a bed?")).rejects.toMatchObject({ code: "PROVIDER_TIMEOUT" });
     expect(logs.some((line) => line.event === "timeout")).toBe(true);
   });
 
   it("rejects an empty final answer", async () => {
     const { client } = scriptedModel([search({ query: "hi" }), { output: [], output_text: "" }]);
-    await expect(ask(fixtureAdmin([aria]), client, "Hi")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    await expect(ask(fixtureAdmin([aria]), client, "Can you help me find a bed?")).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
     expect(logs).toContainEqual(expect.objectContaining({ event: "model_parse_failure", reason: "empty" }));
   });
 
@@ -792,12 +881,12 @@ describe("reliability and safety", () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const slow = { responses: { create: async () => { await gate; return finalAnswer("ok"); } } } as any;
     const admin = fixtureAdmin([aria]);
-    const running = Array.from({ length: 8 }, () => ask(admin, slow, "Hi"));
+    const running = Array.from({ length: 8 }, () => ask(admin, slow, "Can you help me find a bed?"));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await expect(ask(admin, slow, "Hi")).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    await expect(ask(admin, slow, "Can you help me find a bed?")).rejects.toMatchObject({ code: "RATE_LIMITED" });
     release();
     await Promise.all(running);
-    await expect(ask(admin, scriptedModel([finalAnswer("ok")]).client, "Hi")).resolves.toBeTruthy();
+    await expect(ask(admin, scriptedModel([finalAnswer("ok")]).client, "Can you help me find a bed?")).resolves.toBeTruthy();
   });
 
   it("never offers an AI preview for Cloudlift configurations it cannot verify from chat", async () => {

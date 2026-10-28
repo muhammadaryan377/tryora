@@ -11,6 +11,7 @@ import {
   storefrontConfig,
 } from "../storefront.server";
 import { guardAssistant, guardAssistantRead, guardPhotoCheck, guardPreview } from "../guard.server";
+import { leadChannel, leadVisitStatus, skipLead } from "../lead-gate.server";
 import { checkVariantPreview, productOptionsForAssistant } from "../assistant/options.server";
 import {
   answerRoomAssistant,
@@ -29,7 +30,7 @@ import { loadCatalogueWelcome } from "../assistant/suggestions.server";
 import { logAssistant } from "../assistant/log.server";
 
 /**
- * Storefront API behind the Shopify app proxy: the store's /apps/tryora/<path> arrives here as /proxy/<path>.
+ * Storefront API behind the Shopify app proxy: the store's /apps/visully/<path> arrives here as /proxy/<path>.
  * Shopify signs every proxied request; authenticate.public.appProxy rejects anything unsigned.
  */
 
@@ -69,6 +70,11 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     // Load the shop's catalogue in the background so the first question does not wait for it.
     if (config.enabled) warmAssistantCatalogue(admin, session.shop);
     return json(config);
+  }
+  if (path === "lead/status") {
+    try {
+      return json(await leadVisitStatus(session.shop, url.searchParams.get("visitor") ?? "", leadChannel(url.searchParams.get("channel") ?? "")));
+    } catch { return json({ satisfied: false }, 400); }
   }
   if (path === "assistant/suggestions") {
     try {
@@ -137,8 +143,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         await guardPreview(shopId, field("visitor"));
         const photo = await photoFrom(form);
         if (!photo) return json({ error: "BAD_PHOTO" }, 400);
-        // Email-free chat previews are server-authorized only for an enabled assistant.
-        // The ordinary product popup retains the merchant's lead policy.
+        // The channel chooses the merchant gate, but never bypasses lead proof.
         const assistantPreview = field("channel") === "assistant";
         if (assistantPreview) await requireAssistantEnabled(shopId);
         return json(
@@ -161,6 +166,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       case "ack":
         await acknowledge(shopId, field("job"), field("token"));
         return json({ ok: true });
+      case "lead/skip":
+        return json(await skipLead(shopId, field("visitor"), leadChannel(field("channel"))));
       case "lead":
         return json(
           await captureLead(admin, {
@@ -171,6 +178,8 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
             wording: field("wording"),
             productId: field("product"),
             optionValue: field("option") || undefined,
+            visitorId: field("visitor"),
+            channel: leadChannel(field("channel")),
           }),
         );
       case "issue":
@@ -191,6 +200,15 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   } catch (e) {
     const code = errorCode(e);
     if (path.startsWith("assistant/") && code === "RATE_LIMITED") logAssistant("rate_limited", { shop: shopId, reason: "request_window" });
+    if (path === "lead" && code === "UNEXPECTED") {
+      // Missing LeadDelivery columns / LeadVisit table are common after a backend-only Railway deployment.
+      // Log safe Prisma error categories only: raw exceptions can contain shopper emails or SQL arguments.
+      const rawCode = (e as { code?: unknown } | null)?.code;
+      const reason = rawCode === "P2021" || rawCode === "P2022" ? "migration_required"
+        : rawCode === "P1001" || rawCode === "P1002" ? "database_unreachable" : "persistence_failed";
+      logAssistant("lead_capture_failure", { shop: shopId, reason });
+      return json({ error: reason === "migration_required" ? "LEAD_DATABASE_UPDATE_REQUIRED" : "LEAD_STORAGE_UNAVAILABLE" }, 503);
+    }
     const status = code === "RATE_LIMITED" ? 429 :
       code === "PROVIDER_UNAVAILABLE" || code === "PROVIDER_TIMEOUT" ? 503 : 400;
     return json({ error: code }, status);

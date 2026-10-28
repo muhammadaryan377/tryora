@@ -45,12 +45,15 @@ async function seed({ request }: ActionFunctionArgs) {
   const { admin, session } = await authenticate.admin(request);
   if (session.shop !== TEST_STORE) throw new Response("Not found", { status: 404 });
 
-  // Don't create a second copy.
-  const existing: any = await (await admin.graphql(`#graphql
-    query { products(first: 5, query: "title:\\"Form Sofa (Tryora test)\\"") { nodes { id handle title } } }`)).json();
-  if (existing.data?.products?.nodes?.some((n: any) => n.title === "Form Sofa (Tryora test)")) {
-    return { ok: false as const, errors: [`Test sofa already exists (${existing.data.products.nodes[0].handle}).`] };
-  }
+  // Keep earlier test products discoverable after rebranding; never seed duplicates.
+  const findNamedSample = async (name: string) => {
+    const query = `query { products(first: 5, query: ${JSON.stringify(`title:"${name}"`)}) { nodes { id handle title } } }`;
+    const response: any = await (await admin.graphql(query)).json();
+    return response.data?.products?.nodes?.find((node: any) => node.title === name);
+  };
+  const existing = await findNamedSample("Form Sofa (Visully test)")
+    ?? await findNamedSample("Form Sofa (Tryora test)");
+  if (existing) return { ok: false as const, errors: [`Test sofa already exists (${existing.handle}).`] };
 
   // Reuse a photo already in the store as the product photo.
   const imgRes = await admin.graphql(`#graphql
@@ -72,12 +75,12 @@ async function seed({ request }: ActionFunctionArgs) {
     {
       variables: {
         input: {
-          title: "Form Sofa (Tryora test)",
+          title: "Form Sofa (Visully test)",
           productType: "Sofas",
-          vendor: "Tryora test",
+          vendor: "Visully test",
           status: "ACTIVE",
           tags: ["tryora-test"],
-          descriptionHtml: "<p>Test product for checking Tryora's colour swatches. Safe to delete.</p>",
+          descriptionHtml: "<p>Test product for checking Visully's colour swatches. Safe to delete.</p>",
           productOptions: [
             { name: "Colour", values: COLOURS.map(([name]) => ({ name })) },
           ],
@@ -143,7 +146,7 @@ export default function DevSeed() {
       {result?.ok && "handle" in result && (
         <s-banner tone="success" heading="Test sofa created">
           <s-paragraph>
-            Handle: {result.handle}. {result.mediaReady ? "Tryora is on for it." : "Photo still processing – set it up in Products."}
+            Handle: {result.handle}. {result.mediaReady ? "Visully is on for it." : "Photo still processing – set it up in Products."}
           </s-paragraph>
         </s-banner>
       )}
@@ -153,14 +156,14 @@ export default function DevSeed() {
         </s-banner>
       )}
       <s-section>
-        <s-paragraph>Recalculates "Sales from Tryora" now and shows the raw numbers, even below the 3× / 3-order threshold.</s-paragraph>
+        <s-paragraph>Recalculates "Sales from Visully" now and shows the raw numbers, even below the 3× / 3-order threshold.</s-paragraph>
         <Form method="post">
           <input type="hidden" name="intent" value="sales" />
           <s-button type="submit">Check sales report</s-button>
         </Form>
       </s-section>
       <s-section>
-        <s-paragraph>Creates "Form Sofa (Tryora test)" with 25 colours (2 sold out) and turns Tryora on for it.</s-paragraph>
+        <s-paragraph>Creates "Form Sofa (Visully test)" with 25 colours (2 sold out) and turns Visully on for it.</s-paragraph>
         <Form method="post">
           <s-button type="submit" variant="primary" loading={nav.state === "submitting" || undefined}>
             Create test sofa

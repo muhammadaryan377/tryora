@@ -423,7 +423,7 @@ describe("upload route answers JSON, never the HTML page", () => {
     const form = uploadForm(); form.set("image", new Blob([image], { type: "image/png" }), "velvet.png");
     const response = await post(form);
     expect(response.headers.get("content-type")).toContain("application/json");
-    expect(await response.json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991", alt: expect.stringMatching(/^Tryora fabric sample /) } });
+    expect(await response.json()).toMatchObject({ pending: false, media: { id: "gid://shopify/MediaImage/991", alt: expect.stringMatching(/^Visully fabric sample /) } });
     expect(state.writes).toEqual([]);
   });
   it("answers refusals and oversized bodies as JSON errors too", async () => {
@@ -534,7 +534,7 @@ describe("upload route answers JSON, never the HTML page", () => {
   it("turns an HTML reply into a clear message instead of a JSON parse error", async () => {
     const file = new File(["x"], "velvet.jpg", { type: "image/jpeg" });
     const html = vi.fn(async () => new Response("<!DOCTYPE html><html></html>", { status: 200, headers: { "content-type": "text/html" } }));
-    await expect(requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, html as any)).rejects.toThrow("The upload didn't reach Tryora. Refresh the page and try again; nothing was changed.");
+    await expect(requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, html as any)).rejects.toThrow("The upload didn't reach Visully. Refresh the page and try again; nothing was changed.");
     expect((html.mock.calls[0] as any[])[0]).toBe(`/app/fabrics/upload?product=${encodeURIComponent(productId)}`);
     const expired = vi.fn(async () => new Response("", { status: 401 }));
     await expect(requestFabricUpload({ productId, revision: "r1", file, purpose: "sample" }, expired as any)).rejects.toThrow("Your Shopify session expired");
@@ -564,7 +564,7 @@ describe("actual merchant image uploads", () => {
     const fetcher = vi.fn(async (_url: string, _init?: RequestInit) => new Response("", { status: 201 })); vi.stubGlobal("fetch", fetcher);
     expect(await uploadFabricMedia(admin, productId, new Blob([image]), "reference")).toEqual({ pending: false, media: { id: "gid://shopify/MediaImage/999", url: "https://cdn.shopify.com/upload.jpg", alt } });
     // The sample marker comes back so the manager keeps a fresh upload out of the full-product reference picker.
-    expect(alt).toMatch(/^Tryora furniture reference /);
+    expect(alt).toMatch(/^Visully furniture reference /);
     expect(fetcher.mock.calls[0]![0]).toBe("https://shopify-staged-uploads.storage.googleapis.com/");
     expect(state.writes).toEqual([]); // an upload alone never approves a reference or creates a mapping
   });

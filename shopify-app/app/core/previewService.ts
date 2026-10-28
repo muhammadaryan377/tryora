@@ -48,7 +48,7 @@ export const DEFAULT_SETTINGS = (shopId: ShopId): ShopSettings => ({
   shopId,
   // Owner decision (19 Oct 2026): per-shopper limit on by default at 10 previews a day; merchants can change it.
   quota: { enabled: true, storeWide: 10, window: { type: "rolling", hours: 24 } },
-  leadCapture: "required",
+  leadCapture: "off",
   paidPlanActive: false,
 });
 

@@ -51,6 +51,8 @@ import {
   type SelectionSource,
 } from "./assistant/references.server";
 import { errorShape, logAssistant } from "./assistant/log.server";
+import { planShopperTurn, type IntentPlan } from "./assistant/intent.server";
+import { rankRoomRecommendations, roomFitScore } from "./assistant/room-fit.server";
 import {
   roomAssistantSettings,
   roomAssistantVisible,
@@ -131,7 +133,7 @@ export interface AssistantRecommendation {
    * reference for this exact variant. "product": the product's featured image, which may show a different option.
    */
   imageSource: ImageSource;
-  /** The approved reference Tryora's preview pipeline validated for this exact variant; null when not previewable. */
+  /** The approved reference Visully's preview pipeline validated for this exact variant; null when not previewable. */
   referenceImage: string | null;
   price: string | null;
   maxPrice: string | null;
@@ -139,7 +141,7 @@ export interface AssistantRecommendation {
   options: Record<string, string>;
   /** Verified from fresh Shopify data in this request. */
   purchaseAvailable: boolean;
-  /** True only after Tryora's strict preview validation passed for this exact variant. */
+  /** True only after Visully's strict preview validation passed for this exact variant. */
   previewAvailable: boolean;
   previewStatus: PreviewStatus;
   /** One shopper-facing explanation when previewAvailable is false; the model receives the same text. */
@@ -210,12 +212,12 @@ export async function assistantStorefrontConfig(shopId: string, page: AssistantP
     Promise.resolve().then(() => prisma.shop.findUnique({ where: { id: shopId } })).catch(() => null),
     Promise.resolve().then(() => tryora.balance(shopId)).catch(() => null),
   ]) : [null, null];
-  const lead = { showOptIn: true, optInWording: "", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string };
+  const lead = { showOptIn: true, optInWording: "", chatLeadCapture: "off", ...((shop?.leadSettings as object) ?? {}) } as { showOptIn: boolean; optInWording: string; chatLeadCapture: string };
   const shopName = shopId.replace(".myshopify.com", "").replace(/-/g, " ");
   return {
-    // The merchant's email step for previews, exactly as the product-page popup applies it.
+    // Chatbot lead choice is independent of the product popup; both default off.
     lead: {
-      mode: (shop?.leadCapture ?? "required") as "required" | "skippable" | "off",
+      mode: (["required", "skippable"].includes(lead.chatLeadCapture) ? lead.chatLeadCapture : "off") as "required" | "skippable" | "off",
       timing: (shop?.leadTiming === "after" ? "after" : "before") as "before" | "after",
       showOptIn: lead.showOptIn !== false,
       optInWording: lead.optInWording || `Email me offers and updates from ${shopName}. I can unsubscribe at any time.`,
@@ -293,6 +295,32 @@ export function normalisePreferences(raw: unknown): ShopperPreferences | null {
     roomNotes: plain(value.roomNotes, 240),
   };
   return Object.values(preferences).some((entry) => Array.isArray(entry) ? entry.length : entry !== null && entry !== "") ? preferences : null;
+}
+
+/**
+ * Merge the model's incremental preference update with the shopper's existing choices.
+ * Empty fields mean "not mentioned" rather than erasing a previously stated preference.
+ * Explicit "no/any colour" or "forget my budget" still clears that preference.
+ */
+export function mergeShopperPreferences(previous: ShopperPreferences | null, next: ShopperPreferences, latest: string): ShopperPreferences {
+  const original = previous ?? { budgetMin: null, budgetMax: null, colours: [], materials: [], sizes: [], furniture: [], roomDimensions: "", roomNotes: "" };
+  const cleared = (phrase: string) => new RegExp(`\\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\\s+(?:(?:particular|specific)\\s+)?(?:${phrase})\\b`, "i").test(latest);
+  const colours = cleared("colou?rs?|colou?r preference") ? [] : next.colours.length ? next.colours : original.colours;
+  const materials = cleared("materials?|fabrics?|fabric preference") ? [] : next.materials.length ? next.materials : original.materials;
+  const sizes = cleared("sizes?|size preference") ? [] : next.sizes.length ? next.sizes : original.sizes;
+  const furniture = next.furniture.length ? next.furniture : original.furniture;
+  const budgetRemoved = /\b(?:no|any|forget(?: my)?|ignore(?: my)?|remove(?: my)?)\s+(?:budget|price limit)\b/i.test(latest);
+  const roomNotes = !next.roomNotes ? original.roomNotes
+    : original.roomNotes && !next.roomNotes.toLowerCase().includes(original.roomNotes.toLowerCase()) &&
+        !original.roomNotes.toLowerCase().includes(next.roomNotes.toLowerCase())
+      ? `${original.roomNotes}; ${next.roomNotes}`.slice(0, 240) : next.roomNotes;
+  return {
+    budgetMin: budgetRemoved ? null : next.budgetMin ?? original.budgetMin,
+    budgetMax: budgetRemoved ? null : next.budgetMax ?? original.budgetMax,
+    colours, materials, sizes, furniture,
+    roomDimensions: next.roomDimensions || original.roomDimensions,
+    roomNotes,
+  };
 }
 
 const SOURCES = new Set<SelectionSource>(["card", "options", "conversation"]);
@@ -639,11 +667,17 @@ interface RequestContext {
   /** Set by tools; returned to the browser. */
   selectionSource: SelectionSource | null;
   room: RoomObservations | null;
+  /** Saved active room or freshly analysed photo; an unanalysed new photo never reuses old observations. */
+  activeRoom: RoomObservations | null;
+  activePreferences: ShopperPreferences | null;
+  intentPlan: IntentPlan | null;
   preferences: ShopperPreferences | null;
   /** The product page the shopper is on, read fresh from Shopify (null if unknown or unverifiable). */
   currentProduct: CatalogueProduct | null;
   /** True only when a complete catalogue check proved that nothing matched. Gates any "the store has none" claim. */
   zeroVerified: boolean;
+  /** Exact catalogue count last verified for this shopper turn, never from model prose. */
+  verifiedCount: number | null;
 }
 
 const priceKey = (value: number | string) => Number(value).toFixed(2);
@@ -705,7 +739,11 @@ function merged(pools: CatalogueSnapshot[], query: ProductQuery, currentProductI
 async function runSearch(ctx: RequestContext, requested: ProductQuery) {
   // The shopper's budget is a standing constraint: applied even when the model forgets it.
   const budget = ctx.constraints.budgetMax;
-  const query = budget !== null && (requested.maxPrice === null || requested.maxPrice > budget) ? { ...requested, maxPrice: budget } : requested;
+  // Elliptical follow-ups ("what about grey?", "something cheaper") keep the earlier furniture type.
+  const inferredCategory = ctx.intentPlan?.inheritedCategory;
+  const hasKind = /\b(beds?|sofas?|couches?|settees?|chairs?|tables?|wardrobes?|desks?|rugs?|ottomans?|mattresses?|headboards?|shelves?|dressers?)\b/i.test(requested.query);
+  const contextualQuery = inferredCategory && !hasKind ? { ...requested, query: `${inferredCategory} ${requested.query}`.trim() } : requested;
+  const query = budget !== null && (contextualQuery.maxPrice === null || contextualQuery.maxPrice > budget) ? { ...contextualQuery, maxPrice: budget } : contextualQuery;
   const applied = { budgetMax: budget, childrensProductsExcluded: 0 };
   const fits = (match: ProductMatch) => {
     const issue = !ctx.constraints.forChildren && isChildrensProduct(match.product) && !namedInLatest(ctx, match.product.ref);
@@ -734,7 +772,21 @@ async function runSearch(ctx: RequestContext, requested: ProductQuery) {
   const fresh = (match: ProductMatch) => !ctx.exploring || !ctx.explored.has(match.product.ref);
   const widened = ctx.exploring ? { ...query, limit: Math.min(10, query.limit + ctx.explored.size) } : query;
   const allMatches = merged(pools, widened, ctx.currentProductId);
-  const matches = merged(pools, query, ctx.currentProductId, ctx.exploring ? ctx.explored : undefined).filter(fits).slice(0, query.limit);
+  // Search a slightly broader Shopify-verified candidate pool for room requests.
+  // Rerank BEFORE truncating to requested count so the first BM25 search hit does not
+  // automatically become the room recommendation. Do not relax budget, category or stock checks.
+  const roomRanking = !!ctx.activeRoom && !!ctx.intentPlan?.needsRoomFit;
+  const shortlist = merged(pools,
+    roomRanking ? { ...query, limit: Math.min(10, Math.max(query.limit, query.limit + 5)) } : query,
+    ctx.currentProductId, ctx.exploring ? ctx.explored : undefined).filter(fits);
+  const matches = (roomRanking
+    ? shortlist.map((match, index) => ({
+      match, index,
+      roomScore: roomFitScore(match.product, { options: match.matchingVariants[0]?.options ?? {} },
+        ctx.activeRoom, ctx.activePreferences),
+    })).sort((a, b) => b.roomScore - a.roomScore || b.match.score - a.match.score || a.index - b.index)
+      .map(entry => entry.match)
+    : shortlist).slice(0, query.limit);
   matches.forEach((match) => ctx.allowed.add(match.product.ref));
   if (matches.length) {
     return { results: matches.map((match) => summary(match, ctx)), catalogue: { coverage, complete }, appliedConstraints: applied,
@@ -794,6 +846,7 @@ async function runCount(ctx: RequestContext, args: { query: string; colour: stri
   if (ctx.snapshot?.complete) {
     const matches = countCatalogue(ctx.snapshot, args);
     if (!matches.length) ctx.zeroVerified = true;
+    ctx.verifiedCount = matches.length;
     matches.slice(0, 5).forEach((product) => ctx.allowed.add(product.ref));
     return {
       verified: true,
@@ -811,6 +864,7 @@ async function runCount(ctx: RequestContext, args: { query: string; colour: stri
     if (!Number.isFinite(count)) throw new Error("count");
     const precision = String(data.productsCount?.precision ?? "EXACT");
     if (count === 0 && precision === "EXACT" && words.length) ctx.zeroVerified = true;
+    if (precision === "EXACT") ctx.verifiedCount = count;
     return {
       verified: true,
       count,
@@ -1025,7 +1079,16 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   });
   // Show one card per real product only, preferring approved configurations when multiple were checked.
   const distinctProducts = new Set<string>();
-  const fitting = [...valid].sort((a, b) => Number(b.previewAvailable) - Number(a.previewAvailable)).filter((item) => {
+  // Real room fit outranks AI-preview configuration. Preview eligibility matters
+  // when the shopper explicitly asks for a preview, not during discovery.
+  const roomRanked = rankRoomRecommendations(valid,
+    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.activePreferences);
+  // When a preview was explicitly requested, keep the exact eligible variant ahead of
+  // another non-previewable variant of that same product before deduplicating product cards.
+  const candidateOrder = wantsRoomPreview(ctx.latestMessage) || !ctx.activeRoom
+    ? [...roomRanked].sort((a, b) => Number(b.previewAvailable) - Number(a.previewAvailable))
+    : roomRanked;
+  const fitting = candidateOrder.filter((item) => {
     if (distinctProducts.has(item.productRef)) return false;
     distinctProducts.add(item.productRef);
     return true;
@@ -1034,7 +1097,7 @@ async function runRecommend(ctx: RequestContext, args: { items: ModelRecommendat
   // out when at least one previewable product exists; eligibility itself is never relaxed.
   const previewable = (item: AssistantRecommendation) => item.previewAvailable && !!item.variantId && !!item.optionValue;
   const roomPreview = wantsRoomPreview(ctx.latestMessage) && fitting.some(previewable);
-  const ranked = roomPreview ? fitting.filter(previewable) : [...fitting.filter(previewable), ...fitting.filter((item) => !previewable(item))];
+  const ranked = roomPreview ? fitting.filter(previewable) : fitting;
   const verified = orderPriceComparison(ranked, ctx.latestMessage);
   const notPreviewable = fitting.length - verified.length;
   if (verified.length) {
@@ -1136,7 +1199,7 @@ async function runVisualise(ctx: RequestContext, args: { productRef: string; var
     ...(overBudget ? { budgetNote: `This is above the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${ctx.constraints.budgetMax}; mention the difference once.` } : {}),
     needsPhoto: !ctx.hasPhoto,
     note: ctx.hasPhoto
-      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Tryora places the item automatically; do not promise exact positions."
+      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Visully places the item automatically; do not promise exact positions."
       : "A preview card is shown. Ask the shopper to attach a room photo, then confirm the card.",
   };
 }
@@ -1169,13 +1232,17 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
     case "record_room_observations":
       if (!inputPhotoAvailable(ctx)) return { error: "No photo is attached to this message; use the room notes in the context instead." };
       ctx.room = args;
+      ctx.activeRoom = args;
       ctx.photoNeedsAnalysis = false;
       ctx.emit({ type: "room", room: args });
       return { recorded: true };
-    case "update_shopper_context":
-      ctx.preferences = args;
-      ctx.emit({ type: "preferences", preferences: args });
+    case "update_shopper_context": {
+      const merged = mergeShopperPreferences(ctx.activePreferences, args, ctx.latestMessage);
+      ctx.preferences = merged;
+      ctx.activePreferences = merged;
+      ctx.emit({ type: "preferences", preferences: merged });
       return { recorded: true };
+    }
   }
 }
 
@@ -1209,7 +1276,7 @@ export interface PreviewCheck {
 }
 
 /**
- * "Available for AI preview" means Tryora's existing strict validation passed for this exact variant, through the
+ * "Available for AI preview" means Visully's existing strict validation passed for this exact variant, through the
  * same provider adapter chain that startPreview uses. Anything less is reported as not available, with the reason.
  */
 export async function exactPreviewStatus(ctx: PreviewCheckContext, product: CatalogueProduct, variant: CatalogueVariant | null, config: ConfigWithChoices | undefined): Promise<PreviewCheck> {
@@ -1301,7 +1368,9 @@ async function completeRequestedCards(ctx: RequestContext, history: { role: stri
     return product && matchesRequestedCardCategory(product, category) && !constraintIssue(ctx, product, Number(item.price));
   });
   if (!fitting.length) return;
-  ctx.recommendations = [...ctx.recommendations, ...fitting].slice(0, desired);
+  const ranked = rankRoomRecommendations(fitting,
+    ref => ctx.fresh.get(ref) ?? ctx.snapshot?.byRef.get(ref), ctx.activeRoom, ctx.activePreferences);
+  ctx.recommendations = [...ctx.recommendations, ...ranked].slice(0, desired);
   ctx.recommendations.forEach(item => { ctx.explored.add(item.productRef); notePrices(ctx, item.price, item.maxPrice); });
   ctx.emit({ type: "recommendations", items: ctx.recommendations });
 }
@@ -1329,10 +1398,29 @@ export function isConversationAcknowledgement(message: string): boolean {
   return /^(?:(?:ok(?:ay)?|great|perfect|lovely|nice|good|thanks|thank you|alright|got it)|(?:(?:that|this|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)|i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that))(?:\s+(?:thanks|thank you|a lot|so much))?[.! ,]*$/i.test(message.trim());
 }
 
+/** Answer only unambiguous social turns locally; factual shopping questions still use verified tools. */
+export function simpleSocialReply(message: string): string | null {
+  const text = message.trim();
+  if (/^(?:hi|hello|hey|hiya|good (?:morning|afternoon|evening))[!. ]*$/i.test(text))
+    return "Hi! I can help you find furniture or preview a product in your room. What are you looking for?";
+  if (/^(?:thanks|thank you|thank you very much|cheers)[!. ]*$/i.test(text))
+    return "You're welcome!";
+  if (/^(?:(?:this|that|it|the room|the preview)\s+)?(?:looks?|sounds?)\s+(?:really\s+)?(?:good|great|nice|lovely|perfect)[!. ]*$/i.test(text) ||
+      /^i\s+(?:really\s+)?(?:like|love)\s+(?:it|this|that)[!. ]*$/i.test(text))
+    return "Glad you like it!";
+  if (/^(?:ok(?:ay)?|got it|alright|perfect|great)[!. ]*$/i.test(text)) return "Got it!";
+  return null;
+}
+
 function cardActionNotRequested(ctx: RequestContext): boolean {
-  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  // A question about count or about an already-shown item is not a request for new cards.
+  if (/^\s*(?:how many\b|what(?:'s| is) the number of\b)/i.test(ctx.latestMessage)) return true;
   if (isConversationAcknowledgement(ctx.latestMessage)) return true;
-  // Questions about the previous answer or catalogue count do not request a product selection.
+  const explicitNewCards = /\b(?:show|find|suggest|recommend|list|give me)\b/i.test(ctx.latestMessage);
+  if (!explicitNewCards && ctx.intentPlan &&
+      ["comparison", "product_question", "store_support", "acknowledgement"].includes(ctx.intentPlan.intent)) return true;
+  if (!ctx.shownRefs.length && !ctx.selection) return false;
+  // Questions about the previous answer do not request another product selection.
   if (/^\s*(?:why\b.*\b(?:show|shown|only|two|three|[0-9]+)|how many\b)/i.test(ctx.latestMessage)) return true;
   const reference = ["named", "ordinal", "selected"].includes(ctx.resolution.kind);
   return reference && !wantsRoomPreview(ctx.latestMessage) && !wantsMoreOptions(ctx.latestMessage) &&
@@ -1348,6 +1436,18 @@ export function cardReasonsDistinct(items: { reason?: unknown }[]): boolean {
   return keys.every(Boolean) && new Set(keys).size === keys.length;
 }
 /** The in-card description: at most about 30 words, ending on a whole word. */
+/** A grounded, human-readable introduction derived only from verified cards and saved room observations. */
+export function recommendationIntro(cards: number, request: string, room: RoomObservations | null): string {
+  const fallback = conciseAssistantReply("", cards, request);
+  const colour = room?.colours.find(value => /^[a-z][a-z -]{1,28}$/i.test(value) && !/^(unknown|none|unsure|n\/a)$/i.test(value));
+  const noun = cards === 1 ? "option" : "options";
+  if (colour) return `With the ${colour} tones in your room, here ${cards === 1 ? "is" : "are"} ${cards} ${noun} to consider.`;
+  const style = room?.style?.trim();
+  if (style && /^[a-z][a-z -]{1,28}$/i.test(style) && !/^(unknown|none|mixed|unsure|n\/a)$/i.test(style))
+    return `For your ${style.toLowerCase()} room, here ${cards === 1 ? "is" : "are"} ${cards} ${noun} to consider.`;
+  return fallback;
+}
+
 export function conciseAssistantReply(text: string, cards = 0, request = ""): string {
   if (cards) {
     const wanted = requestedProductCount(request);
@@ -1558,13 +1658,19 @@ Respond in natural, concise English. Default to one or two short sentences, at m
 When the shopper says "show me beds" (including typos like "shoe me beds"), show actual cards using recommend_products; do not substitute a prose comparison. When cards are visible, write only one short introduction, without repeating names, prices, descriptions or preview availability from the cards. Do not append an automatic preview question.
 A count question needs only the verified count in one short sentence. A follow-up quantity request after a count means list that many new matching products; it is not a preview request. Read the latest shopper message together with previous answers, previously shown product cards and completed previews before choosing a tool.
 For questions about an earlier product, answer the question using verified details instead of redisplaying that product's card. For a simple positive reaction, acknowledge it without restarting recommendations or offering the same preview. For typo requests such as "show me moes", interpret the intent as "show me more". A question such as "why you show e 2" asks why only two were shown: explain briefly without selecting or displaying a product. For more/different options, exclude products already shown; if none remain, say so honestly.
+Decision order for EVERY turn:
+1. Understand the latest user message together with the previous assistant reply, shown product cards, selected exact variant, room observations, and any completed previews. Explicit latest constraints always override earlier preferences.
+2. Use the server's standalone intent interpretation to clarify elliptical follow-ups ("what about grey?", "the cheaper one", "show me more"), but do not infer missing product IDs, variants, policies or measurements.
+3. Choose ONE primary action: answer existing product question, answer store support, analyse a new room, discover suitable products, compare verified options, acknowledge, or offer a requested preview. A product question or positive reaction must not trigger unrelated recommendation cards or a paid image.
+4. For room discovery, analyse the current photo before product search; retrieve diverse real candidates, then rank credible matches by the room and preferences instead of search order or AI-preview configuration. Show fewer products if there are no strong evidenced matches.
+5. Respond in natural, concise English. If an ambiguity changes which real product would be shown, ask only one focused question.
 Purpose:
 - You are the store’s room advisor and preview guide. For unrelated general-chat requests, briefly redirect to room styling, real store furniture or a room preview.
-- Help shoppers find real furniture for their room, understand their space and preview a specific verified product as pictured. Never ask them to choose a size, fabric, colour or configuration. Lead with room recommendations and previews rather than product-information answers.
+- Help shoppers find real furniture for their room, understand their space and preview a specific verified product as pictured. Do not force size, fabric or colour questions in chat prose. A shopper can voluntarily choose real merchant-configured Fabric and Colour options on a product card. Answer direct product questions instead of diverting them into preview generation.
 - The "Find the perfect furniture for my room" action begins with the room photo. First call record_room_observations for actual visible room colours, walls, flooring, lighting, existing furniture and style. Then discover categories this store sells and show two or three verified room-suitable product cards with individual grounded reasons; give concise matching style and colour guidance grounded in photo observations and real catalogue attributes, without inventing available product options or charging a preview.
 - The "Preview this product in my room" action starts with a room photo. On a product page, use its exact verified merchant-approved reference to offer a preview and only generate if the shopper confirms. On other pages, show verified preview-eligible product cards to choose from first; never guess the product or start a paid generation automatically.
 - Room-based discovery: when the shopper asks what would suit their room without naming a category ("what furniture would look good here?", "recommend something for this room", "is room ke liye koi acha furniture dikhao"), use the room photo or the saved room notes: decide which furniture categories suit that room (call list_collections to see which categories this store actually sells; never assume beds), search the catalogue for each suitable category with the room's colours, materials and style plus the shopper's budget and preferences, then show two or three genuinely different matching products, mixing categories where that fits the room. Fewer verified matches are better than invented or unsuitable choices.
-- If a room-based request has no room photo in this message and no saved room notes, ask for a room photo in one short sentence instead of pretending to have seen the room. When saved room notes exist, reuse them; do not ask for the photo again.
+- If a room-based request has no room photo in this message and no saved room notes, ask for a room photo in one short sentence instead of pretending to have seen the room. When saved room notes exist, reuse them; do not ask for the photo again. A NEW room photo replaces the previous room context only after it has been analysed; never recommend using stale room notes.
 - Keep conversation context for "another option", "the second one", or "try this one". When the shopper voluntarily names a colour, treat it as a search preference for matching products or already verified exact variants, never as a reason to ask for further configuration. If no exact approved reference exists, show a non-previewable card instead of guessing.
 - Answer specifications, delivery, returns or other support questions only when the shopper asks or the detail is necessary for their stated choice. Answer briefly using verified tools, then offer a relevant next step toward a recommendation or room preview when helpful. Do not divert an explicit support question or invent a policy.
 Grounding:
@@ -1573,9 +1679,9 @@ Grounding:
 - To show products, call recommend_products with two or three strong room matches by default (up to ten when the shopper explicitly requests a quantity). Each card shows its own 8-18 word reason, so put the explanation there: specific to that product and this room, never generic, never the same for two cards. The cards show verified images and prices, so do not restate them in prose; mention a price only if a tool returned it.
 - For a shopper who uploaded a room image, first record its actual visible design, wall/floor tones, furnishings and lighting, then look up real furniture with verified matching characteristics. Do not select random catalogue products merely to fill three slots. If evidence is weak, show fewer and explain uncertainty.
 - If the shopper asks for beds at different prices, search multiple price levels and return genuinely distinct prices, not repeated versions of the same bed. The final order is verified server-side.
-- Do not ask the shopper to choose fabric, colour, size or any configuration in chat. A preview is possible only when a single exact merchant-approved variant and its matching reference image are independently verified. Otherwise the card still shows the product but preview is unavailable.
+- Do not proactively demand fabric, colour or size in chat prose. Real Fabric and Colour swatches are available on configured product cards and shoppers may select them there. AI previews require a single verified merchant-approved variant and matching reference image; otherwise the product remains browsable but Preview is disabled.
 - "Show more", "other options", "something different": show the requested number (up to ten) of genuinely different matches, keeping the same room, budget and preferences. The server excludes products already shown. If no new verified matches remain, say so plainly in one sentence.
-- Set variantRef only when the product image and exact real Shopify variant are verified; otherwise null. Never open option selectors in the chat or ask for missing fabric, colour, size or other variant choices. Keep an established exact configuration, never substitute a different variant to make preview work.
+- Set variantRef only when the product image and exact real Shopify variant are verified; otherwise null. The verified Fabric/Colour controls already rendered on cards are allowed; never invent options or ask repeated configuration questions in the chat. Keep an established exact configuration, never substitute a different variant to make preview work.
 - Products marked singleVariant have no options: never ask the shopper to choose a size, fabric or colour for them.
 - "Available to buy" and "AI room preview" are different things. A product without AI preview is still sold by the store.
 - If a tool says store data is temporarily unavailable, say so; never claim the store has no matching products in that case.
@@ -1584,14 +1690,14 @@ Grounding:
 - Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. If the tool cannot verify it, say you cannot confirm it and suggest contacting the store; a failed lookup is not proof that it is unpublished.
 - You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or the store's contact details.
 Conversation:
-- Keep the next step concrete and brief: "Tap Preview in my room, upload a room photo if needed, then press Generate preview." Photo upload never starts paid generation. After a successful preview, show Original/Preview comparison and Try another product; do not offer any fabric/colour/size picker.
+- Keep the next step concrete and brief: "Tap Preview in my room, upload a room photo if needed, then press Generate preview." Photo upload never starts paid generation. After a successful preview, show Original/Preview comparison and Try another product. Never force an extra option picker in chat prose; the product card has its own verified swatches.
 - If the shopper voluntarily says "show it in grey", search for an exact product with that appearance and approved reference. If a unique exact match cannot be verified, explain that a preview is unavailable for that choice; never ask which fabric, colour or size, never invent or silently substitute one.
 - The "Authoritative conversation state" in the context is computed by the server from the shopper's own actions and latest message. Follow it over anything said earlier: the product it says the latest message refers to is the product to use, and the budget and audience it lists are standing constraints. Tools refuse choices that contradict it.
 - "The second one", "it", "that bed" and similar refer to the numbered recommendations or the selected product in the conversation context. Do not ask which product they mean when the context establishes it.
 - "Show me X" means show that product: call select_product (its card with real photos appears). "Show X in my room" means an AI preview: call request_visualisation.
 - If the shopper asks you to choose, pick the verified product that best fits their room, budget and needs, call select_product, and give one reason.
 - Never recommend children's furniture unless the shopper says they are shopping for a child. Never present over-budget products as budget matches.
-- When the shopper shows interest in a product they have not yet previewed ("I like the first one"), call select_product to show that product. Do not ask them to select any fabric, colour or size, and do not present an options picker.
+- When the shopper shows interest in a product they have not yet previewed ("I like the first one"), call select_product to show that product. Do not ask them to select any fabric, colour or size in chat prose; a configured product card already shows its real swatches.
 - When recent history records a completed AI room preview and the shopper simply reacts positively ("looks great", "I like it", "ok ye acha laga"), acknowledge it naturally. Do not call select_product, recommend_products or request_visualisation merely to show the same product card or suggest the same preview again. Offer a brief next step such as viewing product details only if relevant. Only offer a new preview when the shopper explicitly requests it.
 - When the shopper states a budget, colours, materials, sizes, room dimensions or facts about their room, call update_shopper_context, and apply saved preferences to later searches.
 Room photos and visualisation:
@@ -1601,7 +1707,7 @@ Room photos and visualisation:
 - The chat handles room photos and any email the store needs for previews. Do not ask for an email, and mention a missing room photo at most once.
 Room match:
 - Inspect the actual uploaded image before searching. Record only visible evidence; distinguish uncertain observations from facts. If the image is not a usable room photo, explain what is missing and ask for a clear room view instead of guessing.
-- Compare visible wall/floor tones, lighting and existing furniture with verified catalogue attributes and descriptions. Each recommendation reason should connect a specific verified product feature to a specific room observation. Never invent a fabric, colour or visual feature to justify a match.
+- Compare visible wall/floor tones, lighting and existing furniture with verified catalogue attributes and descriptions. Room relevance and customer constraints outrank catalogue order and preview availability. Each card reason must link a specific VERIFIED feature to a specific observed room fact. Never invent a fabric, colour or visual feature to justify a match.
 - Prioritise two or three strong matches over filling slots. If category or purpose is genuinely unclear, ask one focused question. If none fit the verified requirements, say so and offer one useful refinement.
 - Explain fit with what is visible or stated: style, wall and floor colours, lighting, existing furniture. Never give match percentages or scores, and never estimate exact dimensions from a photo.
 Style:
@@ -1642,6 +1748,10 @@ async function resolveLatestReference(ctx: RequestContext, message: string) {
 /** The server-verified state the model must follow; rebuilt every turn from structured data, never from prose. */
 function stateMessage(ctx: RequestContext) {
   const lines = ["Authoritative conversation state (server-verified; follow it over anything earlier in the chat):"];
+  if (ctx.intentPlan) {
+    lines.push(`- Internal standalone interpretation (not a customer quote): ${ctx.intentPlan.standaloneQuery}`);
+    lines.push(`- Intended response action: ${ctx.intentPlan.intent}. A product question should not start a new recommendation search or preview unless explicitly requested.`);
+  }
   const count = requestedProductCount(ctx.latestMessage);
   if (count) lines.push(`- The shopper requested ${count} products. Search with limit ${count} and call recommend_products with that many distinct verified matches if available. If fewer can be verified, state the actual number honestly. Do not reuse previously shown products to fill the count.`);
   const budget = ctx.constraints;
@@ -1773,6 +1883,36 @@ export async function answerRoomAssistant(input: AssistantTurnInput): Promise<As
   return reply!;
 }
 
+/**
+ * Incremental delivery of the FINAL, validated reply. Model tool-round text stays hidden:
+ * it may refer to unverified prices, unavailable products, or an obsolete selection.
+ * These chunks can be sent over poll/SSE without exposing an unverified model draft.
+ * This improves on-the-wire display, but does not pretend to stream raw model tokens.
+ */
+export function verifiedReplyChunks(message: string, maxLength = 16): string[] {
+  const chunks: string[] = [];
+  let remaining = message;
+  while (remaining.length > maxLength) {
+    const boundary = remaining.lastIndexOf(" ", maxLength);
+    const end = boundary > maxLength / 2 ? boundary + 1 : maxLength;
+    chunks.push(remaining.slice(0, end));
+    remaining = remaining.slice(end);
+  }
+  if (remaining) chunks.push(remaining);
+  return chunks;
+}
+
+async function emitVerifiedReply(message: string, emit: (event: AssistantEvent) => void, signal?: AbortSignal) {
+  emit({ type: "status", stage: "writing" });
+  const chunks = verifiedReplyChunks(message);
+  for (let index = 0; index < chunks.length; index++) {
+    if (signal?.aborted) throw new TryoraError("BAD_REQUEST", "cancelled");
+    emit({ type: "delta", text: chunks[index]! });
+    // Yield to the turn transport so SSE/long-poll can deliver individual verified chunks.
+    if (index + 1 < chunks.length) await new Promise((resolve) => setTimeout(resolve, 45));
+  }
+}
+
 /** Streams one assistant turn through `emit`, ending with a "final" event. Throws TryoraError on failure. */
 export async function runAssistantTurn(input: AssistantTurnInput, emit: (event: AssistantEvent) => void): Promise<void> {
   const active = inFlight.get(input.shopId) ?? 0;
@@ -1796,7 +1936,23 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const client = input.client ?? clientOverride?.() ?? openAIClient(env);
   const model = env.OPENAI_ASSISTANT_MODEL?.trim() || "gpt-4.1-mini";
   const history = normaliseAssistantHistory(input.history);
-  const room = normaliseRoomContext(input.room);
+  // Greetings and simple reactions need no catalogue lookup, model call or paid preview.
+  // Preserve the structured selection and constraints already established in the chat.
+  const social = !input.roomPhoto ? simpleSocialReply(history.at(-1)!.content) : null;
+  if (social) {
+    const reply: AssistantReply = {
+      message: social,
+      room: null, preferences: null, recommendations: [], visualise: null, selected: null,
+      selection: normaliseSelection(input.selected),
+      constraints: nextConstraints(normaliseConstraints(input.constraints), history.at(-1)!.content),
+      model: "local-social",
+    };
+    await emitVerifiedReply(social, emit, input.signal);
+    emit({ type: "final", reply });
+    return;
+  }
+  // A newly uploaded image must never reuse the previous room's observations while being analysed.
+  const room = input.roomPhoto ? null : normaliseRoomContext(input.room);
   const preferences = normalisePreferences(input.preferences);
   const shown = normaliseShownRecommendations(input.shown);
   const selection = normaliseSelection(input.selected);
@@ -1847,13 +2003,26 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     latestMessage: history.at(-1)!.content,
     selectionSource: null,
     room: null,
+    activeRoom: input.roomPhoto ? null : room,
+    activePreferences: preferences,
+    intentPlan: null,
     preferences: null,
     currentProduct: current,
     zeroVerified: false,
+    verifiedCount: null,
   };
   if (currentProductId) ctx.allowed.add(currentProductId.split("/").pop()!);
   ctx.exploring = ctx.explored.size > 0 && (wantsMoreOptions(ctx.latestMessage) || requestedProductCount(ctx.latestMessage) !== null);
   await resolveLatestReference(ctx, history.at(-1)!.content);
+  const referencedRef = targetRef(ctx);
+  ctx.intentPlan = planShopperTurn({
+    latest: ctx.latestMessage,
+    previousUserMessages: history.slice(0, -1).filter(message => message.role === "user").map(message => message.content),
+    roomKnown: !!ctx.activeRoom || !!input.roomPhoto,
+    newRoomPhoto: !!input.roomPhoto,
+    referencedProductName: referencedRef ? titleOf(ctx, referencedRef) : null,
+    selectedProductName: ctx.selection ? titleOf(ctx, ctx.selection.productRef) : null,
+  });
   emit({ type: "constraints", constraints: ctx.constraints });
   if (current) {
     ctx.fresh.set(current.ref, current);
@@ -1877,7 +2046,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   let toolCalls = 0;
   let rounds = 0;
   let streamedText = false;
-  /** Stream model progress; expose text only after grounding and final formatting. */
+  /** One model call. Draft text is buffered until all tool checks and sanitisation finish. */
   const call = async (body: Record<string, unknown>) => {
     for (let attempt = 0; ; attempt += 1) {
       const remaining = deadline - Date.now();
@@ -1903,10 +2072,9 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           response = null;
           for await (const event of result as AsyncIterable<any>) {
             if (event?.type === "response.output_text.delta" && typeof event.delta === "string" && event.delta) {
-              if (!streamedText) emit({ type: "status", stage: "writing" });
               streamedText = true;
               deltas += 1;
-              // Final, grounded reply is emitted after the tool loop.
+              // Never publish unverified model drafts to the shopper.
             } else if (event?.type === "response.completed" || event?.type === "response.incomplete") {
               response = event.response;
             } else if (event?.type === "response.failed" || event?.type === "error") {
@@ -1918,9 +2086,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
           // Non-streaming result (test doubles): track progress, then verify the final text.
           const text = responseText(result);
           if (text && !(result.output ?? []).some((item: any) => item?.type === "function_call")) {
-            if (!streamedText) emit({ type: "status", stage: "writing" });
             streamedText = true;
-            // Final, grounded reply is emitted after the tool loop.
+            // Non-streaming test doubles also stay private until the final checks.
           }
         }
         inputTokens += Number(response?.usage?.input_tokens ?? 0);
@@ -2004,11 +2171,20 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   // Prefer a concise grounded introduction over contradicting what was actually returned.
   const contradictsCards = ctx.recommendations.length > 0 &&
     /\b(?:found no|couldn['’]t find|cannot find|no (?:matching|suitable|available)|nothing matches|no beds|no sofas)\b/i.test(guarded.message);
-  const message = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
+  const conciseMessage = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
     ? (ctx.recommendations.length === 1
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
     : guarded.message), ctx.recommendations.length, ctx.latestMessage);
+  const groundedIntro = ctx.recommendations.length
+    ? recommendationIntro(ctx.recommendations.length, ctx.latestMessage, ctx.activeRoom)
+    : conciseMessage;
+  // A count question must answer the verified quantity, even when a recommendation card is also shown.
+  // Never trust a count merely written by the model: use the exact result of count_products.
+  const countedNoun = ctx.latestMessage.match(/\b(beds?|sofas?|chairs?|tables?|products?|items?|pieces?)\b/i)?.[1]?.toLowerCase();
+  const message = /\bhow many\b|\bnumber of\b/i.test(ctx.latestMessage) && ctx.verifiedCount !== null && countedNoun
+    ? `We have ${ctx.verifiedCount} ${countedNoun}. ${ctx.recommendations.length ? groundedIntro : ""}`.trim()
+    : groundedIntro;
   const reply: AssistantReply = {
     message,
     room: ctx.room,
@@ -2037,7 +2213,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     photo: !!input.roomPhoto,
     model,
   }, "info");
-  emit({ type: "delta", text: message });
+  await emitVerifiedReply(message, emit, input.signal);
   emit({ type: "final", reply });
 }
 

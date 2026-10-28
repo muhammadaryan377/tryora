@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import prisma from "./db.server";
+import { leadPolicy, markLeadCaptured, precheckLeadPermission, reserveLeadPermission, type LeadChannel } from "./lead-gate.server";
 import { tryora } from "./tryora.server";
 import { ensureBillingAllowance } from "./billing-status.server";
 import {
@@ -29,7 +30,7 @@ import { providerAdapter, resolveConfiguredPreview } from "./customization/regis
 import { isFabricDocument } from "./customization/fabric-manager";
 import { manualStorefrontData } from "./customization/validation.server";
 /**
- * Storefront side of Tryora, reached through the Shopify app proxy (/apps/tryora/*).
+ * Storefront side of Tryora, reached through the Shopify app proxy (/apps/visully/*).
  * Image bytes are handled in process memory and never written to disk or the database here.
  * Delivery, failure and expiry clear the result and abort outstanding work. Providers must honour
  * cancellation; OpenAI additionally requires an explicit data-policy acknowledgement.
@@ -163,7 +164,7 @@ export async function storefrontConfig(admin: AdminGraphql, shopId: string, prod
     style: { template, accent: tokens.accent, useThemeFont: tokens.useThemeFont },
     launcher: { ...launcher, wording: launcher.wording || DEFAULT_WORDING },
     lead: {
-      mode: (shop?.leadCapture ?? "required") as "required" | "skippable" | "off",
+      mode: (shop?.leadCapture ?? "off") as "required" | "skippable" | "off",
       timing: (shop?.leadTiming === "after" ? "after" : "before") as "before" | "after",
       showOptIn: lead.showOptIn,
       optInWording: lead.optInWording || `Email me offers and updates from ${shopName}. I can unsubscribe at any time.`,
@@ -294,6 +295,14 @@ export async function startPreview(input: {
   if (!input.idempotencyKey || input.idempotencyKey.length > 128) throw new TryoraError("BAD_REQUEST");
   if (input.productId.length > 256 || input.optionValue.length > 4096 ||
     (input.variantId?.length ?? 0) > 128 || (input.sourceVariantId?.length ?? 0) > 128 || (input.mappingRevision?.length ?? 0) > 128) throw new TryoraError("BAD_REQUEST");
+  // Same-idempotency-key retries reuse the original job, even after the one free
+  // first-preview allowance has been claimed. Never return another visitor's job.
+  const repeated = await prisma.previewJob.findFirst({
+    where: { shopId: input.shopId, visitorId: input.visitorId, idempotencyKey: input.idempotencyKey },
+    select: { id: true },
+  });
+  if (repeated) return { jobId: repeated.id };
+  await precheckLeadPermission(input.shopId, input.visitorId, input.assistantPreview ? "assistant" : "popup");
   const config = await configuredProduct(input.admin, input.shopId, input.productId);
   const setting = await loadProviderSetting(input.shopId, config.productId);
   const product = await resolveConfiguredPreview({ admin: input.admin, config, setting, sourceVariantId: input.sourceVariantId }, input.optionValue, input.variantId, input.mappingRevision);
@@ -305,7 +314,10 @@ export async function startPreview(input: {
   if (analysis.outcome !== "accepted") throw new TryoraError("BAD_PHOTO");
   await ensureBillingAllowance(input.admin, input.shopId);
   const roomPhotoHash = createHash("sha256").update(room).digest("hex").slice(0, 32);
-  const { job, deduplicated } = await tryora.createPreview({
+  const rollbackLead = await reserveLeadPermission(input.shopId, input.visitorId, input.assistantPreview ? "assistant" : "popup");
+  let jobResult: Awaited<ReturnType<typeof tryora.createPreview>>;
+  try {
+    jobResult = await tryora.createPreview({
     workerId,
     shopId: input.shopId,
     idempotencyKey: input.idempotencyKey,
@@ -314,8 +326,14 @@ export async function startPreview(input: {
     optionValue: product.optionValue,
     referenceVersion: product.referenceVersion,
     roomPhotoHash,
-    leadStepDone: input.assistantPreview === true || input.leadStepDone,
-  });
+    // Verified from a server-owned visitor gate, never an untrusted browser field.
+    leadStepDone: true,
+    });
+  } catch (error) {
+    await rollbackLead();
+    throw error;
+  }
+  const { job, deduplicated } = jobResult;
   if (deduplicated) return { jobId: job.id };
   const t: Transient = {
     shopId: input.shopId,
@@ -456,27 +474,34 @@ export async function acknowledge(shopId: string, jobId: string, token: string) 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export async function captureLead(
   admin: AdminGraphql,
-  input: { shopId: string; email: string; firstName?: string; marketing: boolean; wording: string; productId: string; optionValue?: string },
+  input: { shopId: string; email: string; firstName?: string; marketing: boolean; wording: string; productId: string; optionValue?: string; visitorId?: string; channel?: LeadChannel },
 ) {
   const email = input.email.trim();
   if (email.length > 254 || !EMAIL.test(email)) throw new TryoraError("BAD_EMAIL");
   const shop = await prisma.shop.findUnique({ where: { id: input.shopId } });
-  // Re-check the merchant setting on the server: a stale popup must not collect
-  // a new lead after the merchant has turned capture off.
-  if (shop?.leadCapture === "off") return { ok: true };
+  // A stale channel cannot collect a lead after its merchant switch was disabled.
+  const policy = await leadPolicy(input.shopId, input.channel ?? "popup");
+  if (policy.mode === "off") return { ok: true };
   const leadSettings = (shop?.leadSettings as { customerTag?: string; showOptIn?: boolean; optInWording?: string }) ?? {};
   const tag = leadSettings.customerTag || "tryora-lead";
   const firstName = input.firstName?.replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 80) || null;
   const marketing = input.marketing && leadSettings.showOptIn !== false;
-  // Save the merchant's lead independently of optional Shopify customer sync.
-  // Contact data stays in this shop's authenticated dashboard, never in browser storage or logs.
-  const lead = await prisma.leadDelivery.create({
-    data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue,
-      email, firstName, marketingOptIn: marketing,
-      marketingWording: marketing ? (leadSettings.optInWording || input.wording).slice(0, 1000) : null,
-      status: "queued" },
+  // An accepted email and the server-side visitor proof must be committed atomically.
+  // Otherwise a failed LeadVisit write leaves duplicate "queued" contacts while previews stay blocked.
+  // A missing database migration must fail closed rather than silently bypassing Required capture.
+  // Contact details are retained only in this shop's authenticated dashboard, never in browser logs.
+  const lead = await prisma.$transaction(async (tx) => {
+    const saved = await tx.leadDelivery.create({
+      data: { shopId: input.shopId, productId: input.productId, optionValue: input.optionValue,
+        email, firstName, marketingOptIn: marketing,
+        marketingWording: marketing ? (leadSettings.optInWording || input.wording).slice(0, 1000) : null,
+        status: "queued" },
+    });
+    if (input.visitorId) await markLeadCaptured(input.shopId, input.visitorId, tx);
+    return saved;
   });
-  await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } });
+  // Analytics must never block a successfully persisted lead or a preview.
+  await prisma.event.create({ data: { shopId: input.shopId, name: "lead_captured", productId: input.productId } }).catch(() => {});
   let customerRef: string | null = null;
   try {
     const res = await admin.graphql(

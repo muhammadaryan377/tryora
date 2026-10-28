@@ -21,13 +21,19 @@ function fakeProxy() {
   const forms: FormData[] = [];
   const calls: { method: string; url: string; body?: FormData }[] = [];
   let pollGate: Promise<void> | null = null;
+  let leadStatusGate: Promise<void> | null = null;
   const respond = (body: unknown, status = 200) => Promise.resolve(Response.json(body, { status }));
   const fetcher = vi.fn(async (input: string, init: RequestInit = {}) => {
     const url = String(input);
     if (init.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     calls.push({ method: init.method ?? "GET", url, body: init.body as FormData });
-    if (url.startsWith("/apps/tryora/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions, recommendation: proxy.recommendation });
-    if (url === "/apps/tryora/assistant/turn") { forms.push(init.body as FormData); return respond({ turnId: `turn${forms.length}` }); }
+    if (url.startsWith("/apps/visully/lead/status?")) {
+      if (leadStatusGate) await leadStatusGate;
+      return respond({ satisfied: proxy.leadSatisfied });
+    }
+    if (url === "/apps/visully/lead/skip") { proxy.leadSatisfied = true; return respond({ ok: true }); }
+    if (url.startsWith("/apps/visully/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions, recommendation: proxy.recommendation });
+    if (url === "/apps/visully/assistant/turn") { forms.push(init.body as FormData); return respond({ turnId: `turn${forms.length}` }); }
     const poll = url.match(/assistant\/turn\/turn(\d+)\?visitor=[^&]+&after=(\d+)/);
     if (poll) {
       if (pollGate) await pollGate;
@@ -43,11 +49,11 @@ function fakeProxy() {
       return respond({ events: [], next: after, done: false });
     }
     if (/assistant\/turn\/turn\d+\/cancel/.test(url)) return respond({ cancelled: true });
-    if (url === "/apps/tryora/preview") return respond(proxy.previewError ? { error: proxy.previewError } : { jobId: "job1" }, proxy.previewError ? 400 : 200);
-    if (url.startsWith("/apps/tryora/preview/job1")) return respond({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "tok", expiresAt: Date.now() + 60_000 });
-    if (url === "/apps/tryora/ack") return respond({ ok: true });
-    if (url.startsWith("/apps/tryora/assistant/options?")) return proxy.options ? respond(proxy.options) : respond({ error: "NOT_FOUND" }, 404);
-    if (url.startsWith("/apps/tryora/assistant/preview-check?")) {
+    if (url === "/apps/visully/preview") return respond(proxy.previewError ? { error: proxy.previewError } : { jobId: "job1" }, proxy.previewError ? 400 : 200);
+    if (url.startsWith("/apps/visully/preview/job1")) return respond({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "tok", expiresAt: Date.now() + 60_000 });
+    if (url === "/apps/visully/ack") return respond({ ok: true });
+    if (url.startsWith("/apps/visully/assistant/options?")) return proxy.options ? respond(proxy.options) : respond({ error: "NOT_FOUND" }, 404);
+    if (url.startsWith("/apps/visully/assistant/preview-check?")) {
       // By default the server confirms what the options model offered; a test can return a precise refusal instead.
       const variantId = new URL(url, "https://shop.example").searchParams.get("variant");
       const variant = proxy.options?.variants.find((v: any) => v.id === variantId);
@@ -56,19 +62,22 @@ function fakeProxy() {
       const answer = typeof proxy.check === "function" ? proxy.check(variantId) : proxy.check;
       return respond(answer ?? { variantId, previewAvailable: true, previewStatus: "available", previewReason: null, optionValue: variant?.previewOption ?? null, referenceImage: null });
     }
-    if (url === "/apps/tryora/lead") {
+    if (url === "/apps/visully/lead") {
       const email = String((init.body as FormData).get("email") ?? "");
-      return email.includes("@") ? respond({ ok: true }) : respond({ error: "BAD_EMAIL" }, 400);
+      if (email.includes("@")) { proxy.leadSatisfied = true; return respond({ ok: true }); }
+      return respond({ error: "BAD_EMAIL" }, 400);
     }
     if (url.startsWith("data:")) return new Response(new Blob(["a"], { type: "image/jpeg" }));
     throw new Error(`Unexpected request ${url}`);
   });
   const proxy = {
+    leadSatisfied: false,
     suggestions: [] as string[],
     recommendation: null as any,
     fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any, checkGate: null as Promise<void> | null,
     script(...batches: any[][]) { turns.push(batches); },
     hold() { let release!: () => void; pollGate = new Promise((resolve) => { release = resolve; }); return () => { pollGate = null; release(); }; },
+    holdLeadStatus() { let release!: () => void; leadStatusGate = new Promise((resolve) => { release = resolve; }); return () => { leadStatusGate = null; release(); }; },
   };
   return proxy;
 }
@@ -259,7 +268,7 @@ describe("welcome screen", () => {
     expect(welcome.querySelector("[data-ta='product-preview']")).not.toBeNull();
     expect(welcome.querySelectorAll("[data-ta='upload'], [data-ta='camera'], [data-ta='opt'], .tryora-assistant__swatch")).toHaveLength(0);
     expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview…");
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
   });
 
   it("starts the visualise flow on a product page without showing a product preview handoff link", async () => {
@@ -303,7 +312,7 @@ describe("welcome screen", () => {
     const history = String(proxy.forms[0]!.get("history"));
     expect(history).toContain("Analyse my room photo");
     expect(history).toContain("suitable furniture from this store");
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
   });
 
 describe("chat image upload", () => {
@@ -328,7 +337,7 @@ describe("chat image upload", () => {
       expect(history.at(-1).content).toContain("from this store");
     }
     expect($(".tryora-assistant__card")).not.toBeNull();
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
   });
 
   it("previews, replaces and removes an attachment, and rejects unsupported files", async () => {
@@ -461,6 +470,113 @@ describe("chat image upload", () => {
     expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Looking at beds now.");
   });
 
+  it("paces larger real model chunks while recommendation cards arrive without resetting the typing state", async () => {
+    const assistant = makeAssistant();
+    const answer = "The bright walls and warm wood floor give your room a calm foundation. ".repeat(15).trim();
+    proxy.script(
+      [{ type: "delta", text: answer }],
+      [{ type: "recommendations", items: [card()] }],
+      [{ type: "final", reply: { message: answer, recommendations: [] } }, { type: "done" }],
+    );
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = proxy.fetcher.getMockImplementation()!;
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=2")) await gate;
+      return original(url, init);
+    });
+    assistant.open();
+    await type("Which bed would suit this room?");
+    click("[data-ta='send']");
+    await settle(45);
+    const first = $(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent!;
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.length).toBeLessThan(answer.length);
+    expect($(".tryora-assistant__card h4")!.textContent).toBe("Aria Bed");
+    expect($(".tryora-assistant__bubble[aria-busy='true'] .tryora-assistant__text")).not.toBeNull();
+    await settle(55);
+    const progressed = $(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent!;
+    expect(progressed.length).toBeGreaterThan(first.length);
+    expect(progressed.length).toBeLessThanOrEqual(answer.length);
+    release();
+    await settle(60);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(answer);
+    expect($(".tryora-assistant__bubble[aria-busy='true']")).toBeNull();
+    expect(assistant.typing.size).toBe(0);
+  });
+
+  it("clears an obsolete streamed draft on reset and never types stale content into the final reply", async () => {
+    const assistant = makeAssistant();
+    proxy.script(
+      [{ type: "delta", text: "Unverified draft that must disappear. ".repeat(14) }],
+      [{ type: "reset_text" }, { type: "delta", text: "Verified recommendation." }],
+      [{ type: "final", reply: { message: "Verified recommendation.", recommendations: [] } }, { type: "done" }],
+    );
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = proxy.fetcher.getMockImplementation()!;
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=3")) await gate;
+      return original(url, init);
+    });
+    assistant.open();
+    await type("Help?");
+    click("[data-ta='send']");
+    await settle(65);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Verified recommendation.");
+    expect(assistant.typing.size).toBeLessThanOrEqual(1);
+    release();
+    await settle(45);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe("Verified recommendation.");
+    expect(assistant.typing.size).toBe(0);
+  });
+
+  it("does not queue a typing animation while minimised", async () => {
+    const assistant = makeAssistant();
+    const sentence = "These pieces complement your room without obscuring the existing furniture. ".repeat(10);
+    proxy.script([{ type: "delta", text: sentence }], [{ type: "final", reply: { message: sentence, recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    const original = proxy.fetcher.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=1")) await gate;
+      return original(url, init);
+    });
+    assistant.minimise();
+    void assistant.send("Suggest a sofa");
+    await settle(45);
+    expect(assistant.typing.size).toBe(0);
+    assistant.open();
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(sentence.trim());
+    release();
+    await settle(60);
+    expect(assistant.typing.size).toBe(0);
+  });
+
+  it("honours reduced-motion preference by showing incoming model deltas without delayed characters", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const assistant = makeAssistant();
+    const answer = "A real model-generated recommendation for your bright room. ".repeat(12).trim();
+    proxy.script([{ type: "delta", text: answer }], [{ type: "final", reply: { message: answer, recommendations: [] } }, { type: "done" }]);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const original = proxy.fetcher.getMockImplementation()!;
+    proxy.fetcher.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("&after=1")) await gate;
+      return original(url, init);
+    });
+    assistant.open();
+    await type("Which furniture would fit?");
+    click("[data-ta='send']");
+    await settle(40);
+    expect($(".tryora-assistant__message--assistant .tryora-assistant__text")!.textContent).toBe(answer);
+    expect(assistant.typing.size).toBe(0);
+    release();
+    await settle(50);
+    expect(assistant.typing.size).toBe(0);
+  });
+
   it("escapes model output instead of rendering markup", async () => {
     const assistant = makeAssistant();
     proxy.script([{ type: "final", reply: { message: "**Great** <img src=x onerror=alert(1)>\n- one\n- two", recommendations: [] } }, { type: "done" }]);
@@ -508,7 +624,7 @@ describe("recommendation cards and previews", () => {
     await assistant.startPreview(card());
     expect(assistant.roomPhoto).toBe(edited);
     expect(assistant.attachment).toBeNull(); expect(assistant.state.room).toBeNull();
-    const request = proxy.calls.find((c) => c.url === "/apps/tryora/preview")!;
+    const request = proxy.calls.find((c) => c.url === "/apps/visully/preview")!;
     expect(request.body!.get("photo")).toBeInstanceOf(Blob);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
     expect(openPreview).not.toHaveBeenCalled();
@@ -525,7 +641,7 @@ describe("recommendation cards and previews", () => {
     click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "11", source: "card" });
-    const start = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!;
+    const start = proxy.calls.find((call) => call.url === "/apps/visully/preview")!;
     expect(start.body!.get("product")).toBe("gid://shopify/Product/1");
     expect(start.body!.get("variant")).toBe("gid://shopify/ProductVariant/11");
     expect(start.body!.get("option")).toBe("Cream");
@@ -533,7 +649,7 @@ describe("recommendation cards and previews", () => {
     const image = $(".tryora-assistant__preview img")!;
     expect(image.getAttribute("src")).toBe("blob:preview");
     expect($(".tryora-assistant__preview a[download]")).not.toBeNull();
-    const ack = proxy.calls.findIndex((call) => call.url === "/apps/tryora/ack");
+    const ack = proxy.calls.findIndex((call) => call.url === "/apps/visully/ack");
     expect(ack).toBeGreaterThan(-1);
     expect(proxy.calls[ack]!.body!.get("token")).toBe("tok");
   });
@@ -547,7 +663,7 @@ describe("recommendation cards and previews", () => {
     await settle(60);
     return assistant;
   }
-  const previewStarts = () => proxy.calls.filter((call) => call.url === "/apps/tryora/preview");
+  const previewStarts = () => proxy.calls.filter((call) => call.url === "/apps/visully/preview");
   it("asks for a room photo once, however often preview is pressed", async () => {
     await cardWithPhoto({ lead: { mode: "off", timing: "before", showOptIn: false, optInWording: "" } });
     const pick = vi.spyOn($('[data-ta-file="upload"]') as HTMLInputElement, "click");
@@ -566,17 +682,24 @@ describe("recommendation cards and previews", () => {
     expect(previewStarts()[0]!.body!.get("leadDone")).toBe("1");
   });
 
-  it("generates directly from the saved room without email, name or marketing consent", async () => {
+  it("requires the merchant's email in chatbot before generation, then reuses the proof", async () => {
     await cardWithPhoto({ lead: { mode: "required", timing: "before", showOptIn: true, optInWording: "Email me offers." } });
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
     click("[data-ta='confirm-preview']");
+    await settle(100);
+    expect(previewStarts()).toHaveLength(0);
+    expect($$(".tryora-assistant__lead")).toHaveLength(1);
+    expect($(".tryora-assistant__lead [data-ta='lead-skip']")).toBeNull();
+    const email = $(".tryora-assistant__lead input[name='ta-lead-email']") as HTMLInputElement;
+    email.value = "shopper@example.com";
+    email.dispatchEvent(new Event("input", { bubbles: true }));
+    click("[data-ta='lead-submit']");
     await settle(1500);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/lead")).toBe(true);
     expect(previewStarts()).toHaveLength(1);
     expect(previewStarts()[0]!.body!.get("channel")).toBe("assistant");
     expect(previewStarts()[0]!.body!.get("leadDone")).toBe("1");
-    expect(proxy.calls.some((call) => call.url === "/apps/tryora/lead")).toBe(false);
-    expect($$(".tryora-assistant__lead")).toHaveLength(0);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
     click(".tryora-assistant__card [data-ta='preview']");
     click("[data-ta='confirm-preview']");
@@ -594,19 +717,56 @@ describe("recommendation cards and previews", () => {
     await settle(80);
     expect(previewStarts()).toHaveLength(1);
     expect($$(".tryora-assistant__lead")).toHaveLength(0);
-    expect(document.body.textContent).toContain("Chat previews are not configured for direct generation yet");
-    expect(proxy.calls.some((call) => call.url === "/apps/tryora/lead")).toBe(false);
+    expect(document.body.textContent).toContain("This store requires the email step before another preview");
+    expect(proxy.calls.some((call) => call.url === "/apps/visully/lead")).toBe(false);
   });
 
-  it("does not interrupt a successful preview with an after-preview email prompt", async () => {
+  it("asks after the first chatbot preview and lets skippable leads decline", async () => {
     await cardWithPhoto({ lead: { mode: "skippable", timing: "after", showOptIn: true, optInWording: "" } });
     await attachFile();
     click(".tryora-assistant__card [data-ta='preview']");
     click("[data-ta='confirm-preview']");
     await settle(1500);
     expect(previewStarts()).toHaveLength(1);
-    expect($$(".tryora-assistant__lead")).toHaveLength(0);
     expect($(".tryora-assistant__preview img")).not.toBeNull();
+    expect($$(".tryora-assistant__lead")).toHaveLength(1);
+    click("[data-ta='lead-skip']");
+    await settle(70);
+    expect(proxy.calls.some(c => c.url === "/apps/visully/lead/skip")).toBe(true);
+    expect($$(".tryora-assistant__lead [data-ta='lead-submit']")).toHaveLength(0);
+  });
+
+  it("locks two different product previews while the lead-status check is pending", async () => {
+    const assistant = makeAssistant({}, { lead: { mode: "skippable", timing: "after", showOptIn: false, optInWording: "" } });
+    assistant.open();
+    assistant.roomPhoto = photo();
+    const release = proxy.holdLeadStatus();
+    const first = assistant.startPreview(card());
+    const second = assistant.startPreview(card({
+      id: "2:22", productRef: "2", variantRef: "22",
+      productId: "gid://shopify/Product/2", variantId: "gid://shopify/ProductVariant/22",
+      title: "Another Bed", optionValue: "Grey",
+    }));
+    await settle(40);
+    expect(proxy.calls.filter(c => c.url.startsWith("/apps/visully/lead/status?"))).toHaveLength(1);
+    expect(previewStarts()).toHaveLength(0);
+    release();
+    await Promise.all([first, second]);
+    expect(previewStarts()).toHaveLength(1);
+    expect(previewStarts()[0]!.body!.get("product")).toBe("gid://shopify/Product/1");
+  });
+
+  it("does not start a paid preview after Forget room invalidates a pending lead check", async () => {
+    const assistant = makeAssistant({}, { lead: { mode: "skippable", timing: "after", showOptIn: false, optInWording: "" } });
+    assistant.open();
+    assistant.roomPhoto = photo();
+    const release = proxy.holdLeadStatus();
+    const pending = assistant.startPreview(card());
+    await settle(20);
+    assistant.forgetRoom();
+    release();
+    await pending;
+    expect(previewStarts()).toHaveLength(0);
   });
 
   it("never starts a second job while one is generating", async () => {
@@ -712,6 +872,34 @@ describe("conversation history", () => {
     expect(form.get("hasPhoto")).toBe("0");
   });
 
+  it("restores the existing paid preview job after navigating without starting another generation", async () => {
+    const now = Date.now();
+    sessionStorage.setItem(sessionKey(SHOP), JSON.stringify({
+      v: 2, shop: SHOP, createdAt: now, updatedAt: now, entries: [
+        { id: "continued-1", kind: "preview", item: card(), status: "generating",
+          stage: "generating", idempotencyKey: "continued-1", jobId: "job1", at: now },
+      ],
+      room: null, preferences: null, shown: [], explored: [], selected: null, constraints: null,
+      ui: { open: false, view: "side" }, lead: { done: true }, previewsDelivered: 0,
+    }));
+    const assistant = makeAssistant();
+    assistant.open();
+    expect($(".tryora-assistant__preview.is-loading")!.textContent).toContain("Continue browsing");
+    click(".tryora-assistant__preview.is-loading [data-ta='minimise']");
+    expect(assistant.isOpen).toBe(false);
+    expect(launcher.classList.contains("is-generating")).toBe(true);
+    await settle(1550);
+    expect(proxy.calls.filter(call => call.url === "/apps/visully/preview")).toHaveLength(0);
+    expect(proxy.calls.filter(call => call.url.endsWith("/preview/job1")).length).toBeGreaterThan(0);
+    assistant.open();
+    expect($(".tryora-assistant__preview img")).not.toBeNull();
+    expect(assistant.state.entries.find((entry: any) => entry.id === "continued-1").status).toBe("ready");
+    expect(assistant.state.previewsDelivered).toBe(1);
+    expect(launcher.classList.contains("is-generating")).toBe(false);
+    expect(proxy.calls.filter(call => call.url === "/apps/visully/ack")).toHaveLength(1);
+    expect(sessionStorage.getItem(sessionKey(SHOP))!).not.toContain("base64");
+  });
+
   it("expires idle history, ignores other stores and removes the legacy shared key", () => {
     sessionStorage.setItem("tryora_assistant_context", JSON.stringify({ room: { style: "old store" }, shown: [] }));
     sessionStorage.setItem(sessionKey("other.myshopify.com"), JSON.stringify({ v: 2, shop: "other.myshopify.com", createdAt: Date.now(), updatedAt: Date.now(), entries: [{ id: "x", kind: "user", text: "secret", photo: false, at: 1 }], ui: { open: true, view: "side" } }));
@@ -751,7 +939,7 @@ describe("conversation history", () => {
 });
 
 describe("product images in cards", () => {
-  it("never asks for fabric, colour or size on a product whose exact preview reference is unknown", async () => {
+  it("offers an options retry but never previews an unresolved product without verified Shopify data", async () => {
     makeAssistant({ productId: undefined, currentVariantId: () => null }).open();
     proxy.script([{ type: "recommendations", items: [card({ variantRef: null, variantId: null,
       previewAvailable: false, previewStatus: "choose_options", optionValue: null, hasOptions: true })] }], [{ type: "done" }]);
@@ -761,9 +949,53 @@ describe("product images in cards", () => {
     const item = $(".tryora-assistant__card")!;
     expect([...item.querySelectorAll(".tryora-assistant__card-actions > *")].map(e => e.textContent)).toEqual(["View details", "Preview in my room"]);
     expect((item.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
-    expect($(".tryora-assistant__options")).toBeNull();
-    expect(proxy.calls.some(c => c.url.includes("/assistant/options?"))).toBe(false);
-    expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+    expect($(".tryora-assistant__options [data-ta='options']")!.textContent).toContain("Retry loading options");
+    expect(proxy.calls.some(c => c.url.includes("/assistant/options?"))).toBe(true);
+    expect(proxy.calls.some(c => c.url === "/apps/visully/preview")).toBe(false);
+  });
+
+
+  it("shows the exact selected colour on product cards without changing preview actions", async () => {
+    await showCards([card({ options: { Colour: "Cream", Fabric: "Velvet", Size: "King" } })]);
+    const summary = $(".tryora-assistant__selected-colour")!;
+    expect(summary.textContent).toContain("Fabric: Velvet");
+    expect(summary.textContent).toContain("Colour: Cream");
+    expect(summary.textContent).not.toContain("King");
+    expect($$(".tryora-assistant__card-actions > *").map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
+    // Without a real sample it must not invent a swatch colour.
+    expect(summary.querySelector(".tryora-assistant__selected-colour-swatch")).toBeNull();
+  });
+
+  it("omits colour when none is selected and escapes colour names", async () => {
+    await showCards([
+      card({ options: { Size: "King" } }),
+      card({ id: "2:22", productRef: "2", options: { Color: "<img src=x onerror=alert(1)>" } }),
+    ]);
+    expect($$(".tryora-assistant__selected-colour")).toHaveLength(1);
+    expect($(".tryora-assistant__selected-colour")!.textContent).toContain("<img src=x onerror=alert(1)>");
+    expect($(".tryora-assistant__selected-colour img")).toBeNull();
+  });
+
+  it("uses a real dependent fabric-colour sample and clears stale colour when fabric changes", async () => {
+    const assistant = await showCards([card({ options: { Fabric: "Velvet", Colour: "Oat" } })]);
+    const entry = assistant.state.entries.find((item: any) => item.kind === "assistant" && item.recommendations.length)!;
+    const key = `${entry.id}:0`;
+    const data = {
+      attributes: [
+        { name: "Fabric", kind: "fabric", values: [] },
+        { name: "Colour", kind: "colour", values: [{ value: "Oat", colour: null, image: null,
+          samples: { Velvet: { colour: "#ccbbaa", image: null } } }] },
+      ],
+    };
+    const panel = { productId: "gid://shopify/Product/1", data, selections: { Fabric: "Velvet", Colour: "Oat" },
+      loading: false, error: "" };
+    assistant.cardOptions.set(key, panel);
+    assistant.renderAll();
+    expect($(".tryora-assistant__selected-colour-swatch")!.getAttribute("style")).toContain("#ccbbaa");
+    expect($(".tryora-assistant__selected-colour")!.textContent).toContain("Colour: Oat");
+    delete (panel.selections as Record<string, string>).Colour;
+    assistant.renderAll();
+    expect($(".tryora-assistant__selected-colour")).toBeNull();
   });
 
   it("shows the supplied store currency on genuine product cards", async () => {
@@ -907,7 +1139,7 @@ describe("product images in cards", () => {
     click(".tryora-assistant__visualise [data-ta='preview']");
     click("[data-ta='confirm-preview']");
     await settle(1500);
-    const start = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!;
+    const start = proxy.calls.find((call) => call.url === "/apps/visully/preview")!;
     // The server re-resolves the approved reference itself; the browser only names the exact product and variant.
     expect([...start.body!.keys()].sort()).toEqual(["channel", "key", "leadDone", "mappingRevision", "option", "photo", "product", "sourceVariant", "variant", "visitor"]);
     expect(JSON.stringify([...start.body!.entries()].filter(([, value]) => typeof value === "string"))).not.toContain("cdn.shopify.com");
@@ -925,15 +1157,97 @@ describe("simple chat cards and safe direct previews", () => {
     return assistant;
   }
 
-  it("never shows Fabric, Colour or colour swatches inside a recommended chat card", async () => {
-    const item = card({ hasOptions: true, variantCount: 3, options: { Fabric: "Naples", Colour: "Cream" } });
-    await showCards([item]);
+  const selectableOptions = () => ({
+    productRef: "1", productId: "gid://shopify/Product/1", title: "Aria Bed", url: "/products/aria",
+    image: "https://cdn.shopify.com/aria.jpg", imageAlt: null, currencyCode: "GBP",
+    singleVariant: false, preview: { offered: true, reason: null },
+    attributes: [
+      { name: "Fabric", kind: "fabric", values: ["Plush", "Teddy"].map(value => ({ value, colour: null, image: null })) },
+      { name: "Colour", kind: "colour", values: [
+        { value: "Cream", colour: "#e6dac8", image: null }, { value: "Black", colour: "#151515", image: null },
+        { value: "Orange", colour: "#cc873e", image: null },
+      ] },
+      { name: "Size", kind: "size", values: [{ value: "King", colour: null, image: null }] },
+    ],
+    variants: [
+      { ref: "11", id: "gid://shopify/ProductVariant/11", values: { Fabric: "Plush", Colour: "Cream", Size: "King" },
+        options: { Fabric: "Plush", Colour: "Cream", Size: "King" }, price: "899.00", available: true,
+        image: "https://cdn.shopify.com/aria-11.jpg", previewOption: "Cream" },
+      { ref: "12", id: "gid://shopify/ProductVariant/12", values: { Fabric: "Plush", Colour: "Black", Size: "King" },
+        options: { Fabric: "Plush", Colour: "Black", Size: "King" }, price: "919.00", available: true,
+        image: "https://cdn.shopify.com/aria-12.jpg", previewOption: "Black" },
+      { ref: "13", id: "gid://shopify/ProductVariant/13", values: { Fabric: "Teddy", Colour: "Orange", Size: "King" },
+        options: { Fabric: "Teddy", Colour: "Orange", Size: "King" }, price: "939.00", available: true,
+        image: "https://cdn.shopify.com/aria-13.jpg", previewOption: "Orange" },
+    ],
+  });
+
+  it("shows real fabric chips and labelled colour swatches on a recommended product card", async () => {
+    proxy.options = selectableOptions();
+    await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
+    await settle(45);
     const element = $(".tryora-assistant__card")!;
-    expect(element.querySelector(".tryora-assistant__card-choices")).toBeNull();
-    expect(element.querySelectorAll("[data-ta='opt'], [data-ta='options'], .tryora-assistant__swatch, .tryora-assistant__tag")).toHaveLength(0);
-    expect(element.textContent).not.toMatch(/Select a fabric and colour|Show fabric|Colour:|Fabric:/);
-    expect([...element.querySelectorAll(".tryora-assistant__card-actions > *")].map((node) => node.textContent)).toEqual(["View details", "Preview in my room"]);
-    expect(proxy.calls.some((call) => call.url.startsWith("/apps/tryora/assistant/options?"))).toBe(false);
+    expect(element.querySelector(".tryora-assistant__card-choices")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Plush']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Cream']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Black']")).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Orange']")).toBeNull();
+    expect(element.querySelector(".tryora-assistant__swatch-name")?.textContent).not.toBeNull();
+    expect(element.querySelector("[data-ta='opt'][data-attr='Size']")).toBeNull();
+    expect(element.textContent).toContain("Fabric: Plush");
+    expect(element.textContent).toContain("Colour: Cream");
+    expect(element.querySelectorAll(".tryora-assistant__card-actions > *")).toHaveLength(2);
+    expect(proxy.calls.some(call => call.url.startsWith("/apps/visully/assistant/options?"))).toBe(true);
+  });
+
+  it("switches dependent fabric and colour to the exact Shopify variant without silently previewing the old one", async () => {
+    proxy.options = selectableOptions();
+    const assistant = await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
+    await settle(45);
+    click("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']");
+    const inProgress = $(".tryora-assistant__card")!;
+    expect(inProgress.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Cream']")).toBeNull();
+    expect(inProgress.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Orange']")).not.toBeNull();
+    expect(inProgress.querySelector(".tryora-assistant__selected-colour")).toBeNull();
+    expect(inProgress.querySelector(".tryora-assistant__price")).toBeNull();
+    expect((inProgress.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
+    expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: null, source: "options" });
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+    click("[data-ta='opt'][data-attr='Colour'][data-value='Orange']");
+    await settle(60);
+    const chosen = $(".tryora-assistant__card")!;
+    expect(chosen.querySelector(".tryora-assistant__price")!.textContent).toMatch(/939\.00/);
+    expect(chosen.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/aria-13.jpg");
+    expect(chosen.querySelector("a[data-ta='view-details']")!.getAttribute("href")).toBe("/products/aria?variant=13");
+    expect(chosen.textContent).toContain("Colour: Orange");
+    expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "13", source: "options" });
+    expect(proxy.calls.some(call => call.url.includes("/assistant/preview-check?") && call.url.includes("ProductVariant%2F13"))).toBe(true);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+  });
+
+  it("keeps Preview disabled for a selected colour rejected by the exact-variant check", async () => {
+    proxy.options = selectableOptions();
+    proxy.check = { variantId: "gid://shopify/ProductVariant/13", previewAvailable: false,
+      previewStatus: "unavailable", previewReason: "The merchant hasn't approved this colour.", optionValue: null };
+    await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
+    await settle(45);
+    click("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']");
+    click("[data-ta='opt'][data-attr='Colour'][data-value='Orange']");
+    await settle(60);
+    expect(($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
+    expect($(".tryora-assistant__card")!.textContent).toContain("The merchant hasn't approved this colour.");
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+  });
+
+  it("retries a failed card option request when Shopify data becomes available", async () => {
+    await showCards([card({ hasOptions: true, variantCount: 3 })]);
+    await settle(35);
+    expect($(".tryora-assistant__options [data-ta='options']")).not.toBeNull();
+    proxy.options = selectableOptions();
+    click(".tryora-assistant__options [data-ta='options']");
+    await settle(50);
+    expect($(".tryora-assistant__card [data-ta='opt'][data-attr='Fabric'][data-value='Plush']")).not.toBeNull();
   });
 
   it("previews the exact clicked card rather than silently using a different product-page variant", async () => {
@@ -942,10 +1256,10 @@ describe("simple chat cards and safe direct previews", () => {
     assistant.roomPhoto = photo();
     click(".tryora-assistant__card [data-ta='preview']");
     expect($("[data-ta='confirm-preview']")).not.toBeNull();
-    expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(c => c.url === "/apps/visully/preview")).toBe(false);
     click("[data-ta='confirm-preview']");
     await settle(1500);
-    const start = proxy.calls.find(c => c.url === "/apps/tryora/preview")!;
+    const start = proxy.calls.find(c => c.url === "/apps/visully/preview")!;
     expect(start.body!.get("variant")).toBe("gid://shopify/ProductVariant/11");
     expect(start.body!.get("option")).toBe("Cream");
     expect(proxy.calls.some(c => c.url.includes("/assistant/preview-check?"))).toBe(false);
@@ -956,7 +1270,7 @@ describe("simple chat cards and safe direct previews", () => {
     await showCards([card({ productRef: "7", productId: "gid://shopify/Product/7", variantId: null, variantRef: null,
       previewAvailable: false, optionValue: null, previewStatus: "not_configured", hasOptions: true })]);
     expect(($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
-    expect(proxy.calls.some((c) => c.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some((c) => c.url === "/apps/visully/preview")).toBe(false);
   });
 
   it("sends older shopper messages as bounded reminders in long conversations", async () => {
@@ -1128,7 +1442,7 @@ describe("approved photo entry points", () => {
     await settle(60);
     expect(proxy.forms[0]!.get("photo")).toBeInstanceOf(Blob);
     expect(String(proxy.forms[0]!.get("history"))).toContain("What colour would suit it?");
-    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some((call) => call.url === "/apps/visully/preview")).toBe(false);
   });
   it("discards a prepared image arriving after Forget room", async () => {
     let resolve!: (value: ReturnType<typeof photo>) => void;
@@ -1160,7 +1474,7 @@ describe("approved photo entry points", () => {
     click("[data-ta='send']"); await settle(60);
     expect(proxy.forms).toHaveLength(1);
     expect(String(proxy.forms[0]!.get("history"))).toContain("furniture from this store that I can preview");
-    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some((call) => call.url === "/apps/visully/preview")).toBe(false);
   });
 });
 
@@ -1224,7 +1538,7 @@ describe("managed preview transport", () => {
     await type("Show this in my room"); await attachFile(); click("[data-ta='send']"); await settle(60);
     click(".tryora-assistant__visualise [data-ta='preview']");
     click("[data-ta='confirm-preview']"); await settle(1500);
-    const posted = proxy.calls.find((call) => call.url === "/apps/tryora/preview")!.body!;
+    const posted = proxy.calls.find((call) => call.url === "/apps/visully/preview")!.body!;
     expect(posted.get("mappingRevision")).toBe("reviewed-revision");
     expect(posted.get("sourceVariant")).toBe("gid://shopify/ProductVariant/11");
     expect(posted.get("variant")).toBe("gid://shopify/ProductVariant/11");
@@ -1234,7 +1548,7 @@ describe("managed preview transport", () => {
     const assistant = makeAssistant({ currentVariantId: () => "12" }); assistant.open();
     await assistant.startPreview(card({ previewContext: { mappingRevision: "r", sourceVariantId: "gid://shopify/ProductVariant/11", pageSourceVariantId: "gid://shopify/ProductVariant/11" } }));
     expect($(".tryora-assistant__notice")!.textContent).toContain("not ready for an AI room preview");
-    expect(proxy.calls.some((call) => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some((call) => call.url === "/apps/visully/preview")).toBe(false);
   });
 });
 
@@ -1249,7 +1563,7 @@ describe("chat card popup handoff", () => {
     preview.click();
     expect(launch).toHaveBeenCalledOnce();
     expect(assistant.isOpen).toBe(false);
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
   });
   it("does not open the current product's popup for an unrelated unverified recommendation", async () => {
     const launch = vi.fn();
@@ -1283,7 +1597,7 @@ describe("chat card popup handoff", () => {
     expect($(".tryora-assistant__photo-screen")).toBeNull();
     expect(openPreview).not.toHaveBeenCalled();
     const hooks = launch.mock.calls[0]![0];
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
     assistant.state.room = { colours: ["old red"], style: "old room" };
     assistant.attachment = photo("old-draft.jpg");
     expect(hooks.deliver(result())).toBe(true);
@@ -1321,7 +1635,7 @@ describe("chat card popup handoff", () => {
       click("[data-ta='photo-back']");
     }
     expect(launch).toHaveBeenCalledTimes(productId ? 1 : 0);
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
     expect(proxy.forms).toHaveLength(0);
   });
 
@@ -1348,7 +1662,7 @@ describe("chat card popup handoff", () => {
     expect(JSON.stringify(assistant.state.entries)).toBe(previousState);
     expect(assistant.roomPhoto).toBe(previousRoom);
     expect(assistant.attachment).toBe(previousAttachment);
-    expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
     const photoEpoch = assistant.photoEpoch;
     expect(hooks.deliver(result())).toBe(true);
     expect(assistant.photoEpoch).toBeGreaterThan(photoEpoch);
@@ -1395,7 +1709,7 @@ describe("preview entry requires an eligible page product", () => {
     expect(picker).not.toHaveBeenCalled(); expect(openPreview).not.toHaveBeenCalled();
     expect(proxy.forms).toHaveLength(0);
     expect(assistant.isOpen).toBe(true);
-    expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+    expect(proxy.calls.some(c => c.url === "/apps/visully/preview")).toBe(false);
   });
   it("does not open a supplied popup hook without a current product identity", async () => {
     const popup = vi.fn();
@@ -1432,7 +1746,7 @@ describe("guided preview results", () => {
     const second = assistant.state.entries.filter((entry: any) => entry.kind === "preview")[1];
     click('[data-ta="compare"][data-id="'+second.id+'"][data-source="'+first.id+'"]');
     expect(document.querySelector('[data-entry="'+second.id+'"] .tryora-assistant__preview img')!.getAttribute("src")).toBe("blob:cream-result");
-    expect(proxy.calls.filter(c => c.url === "/apps/tryora/preview")).toHaveLength(2);
+    expect(proxy.calls.filter(c => c.url === "/apps/visully/preview")).toHaveLength(2);
     expect(proxy.forms).toHaveLength(0);
     expect(assistant.roomPhoto.url).toBe("blob:original-room.jpg");
   });
@@ -1441,7 +1755,7 @@ describe("guided preview results", () => {
     const assistant = makeAssistant(); assistant.open(); assistant.roomPhoto = photo();
     const original = proxy.fetcher.getMockImplementation()!;
     proxy.fetcher.mockImplementation((url: string, init?: RequestInit) => {
-      if (url === "/apps/tryora/preview") return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }));
+      if (url === "/apps/visully/preview") return new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }));
       return original(url, init);
     });
     const pending = assistant.startPreview(card()); await settle();
@@ -1459,11 +1773,11 @@ it("keeps a verified conversational colour choice instead of replacing it with t
   const grey = card({ id: "1:12", variantRef: "12", variantId: "gid://shopify/ProductVariant/12", optionValue: "Grey", options: { Colour: "Grey", Size: "King" } });
   proxy.script([{ type: "selected", item: grey, source: "conversation" }, { type: "done" }]);
   await type("Show it in grey"); click("[data-ta='send']"); await settle(60);
-  expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+  expect(proxy.calls.some(c => c.url === "/apps/visully/preview")).toBe(false);
   click(".tryora-assistant__card [data-ta='preview']");
-  expect(proxy.calls.some(c => c.url === "/apps/tryora/preview")).toBe(false);
+  expect(proxy.calls.some(c => c.url === "/apps/visully/preview")).toBe(false);
   click("[data-ta='confirm-preview']"); await settle(1500);
-  expect(proxy.calls.find(c => c.url === "/apps/tryora/preview")!.body!.get("variant")).toBe("gid://shopify/ProductVariant/12");
+  expect(proxy.calls.find(c => c.url === "/apps/visully/preview")!.body!.get("variant")).toBe("gid://shopify/ProductVariant/12");
 });
 
 
@@ -1475,5 +1789,5 @@ it("remembers a selected product card in later show-more requests", async () => 
   proxy.script([{ type: "done" }]);
   await type("show me moes"); click("[data-ta='send']"); await settle(90);
   expect(JSON.parse(String(proxy.forms.at(-1)!.get("explored")))).toContainEqual({ productRef: "1", variantRef: "11" });
-  expect(proxy.calls.some(call => call.url === "/apps/tryora/preview")).toBe(false);
+  expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
 });

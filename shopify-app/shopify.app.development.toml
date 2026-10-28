@@ -3,7 +3,7 @@
 client_id = "ffe2967f5912e5b241d1c09c9d8751e7"
 application_url = "https://example.com"
 embedded = true
-name = "Tryora Dev"
+name = "Visully Dev"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes

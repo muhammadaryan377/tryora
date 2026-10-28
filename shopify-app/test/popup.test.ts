@@ -233,7 +233,7 @@ describe("dependent fabric and colour popup", () => {
     await popup.generate(key("Boucle", "Cream"), "photo");
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, request] = fetcher.mock.calls[0] as any;
-    expect(url).toBe("/apps/tryora/preview");
+    expect(url).toBe("/apps/visully/preview");
     expect(request.body.get("variant")).toBe("4");
     expect(request.body.get("option")).toBe(key("Boucle", "Cream"));
     expect(popup.configurationNotice).toContain("product reference is no longer available");

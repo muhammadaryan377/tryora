@@ -64,7 +64,7 @@ function parseColours(raw: string): Record<string, string> {
 
 const SOURCE_LABEL = {
   shopify: "From Shopify",
-  merchant: "Set in Tryora",
+  merchant: "Set in Visully",
   photo: "From variant photo",
   guess: "Guessed from name",
   missing: "Shows as name",
@@ -119,7 +119,7 @@ export default function ProductSetup() {
         <input type="hidden" name="setting" value={setting} />
         <input type="hidden" name="visualOptionName" value={option} />
         <input type="hidden" name="swatchColours" value={JSON.stringify(colours)} />
-        <s-section heading="Show this product in Tryora">
+        <s-section heading="Show this product in Visully">
           <s-switch
             label="Let shoppers see this product in their room"
             checked={enabled || undefined}

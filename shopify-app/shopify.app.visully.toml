@@ -32,5 +32,5 @@ automatically_update_urls_on_dev = false
 
 [app_proxy]
 url = "https://tryoracore-production.up.railway.app/proxy"
-subpath = "tryora"
+subpath = "visully"
 prefix = "apps"

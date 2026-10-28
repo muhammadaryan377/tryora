@@ -127,15 +127,18 @@ describe("app proxy turn handlers", () => {
     const seen: any[] = [];
     let after = 0;
     let progressBeforeAnswer = false;
+    let partialWhileRunning = false;
     for (let polls = 0; polls < 40; polls += 1) {
       const result = await readAssistantTurn(SHOP, VISITOR, turnId, after);
       seen.push(...result.events);
+      if (!result.done && result.events.some((event: any) => event.type === "delta")) partialWhileRunning = true;
       if (result.events.some((event: any) => event.type === "status") && !seen.some((event) => event.type === "delta")) progressBeforeAnswer = true;
       after = result.next;
       if (result.done) break;
     }
     expect(progressBeforeAnswer).toBe(true);
-    expect(seen.filter((event) => event.type === "delta")).toEqual([{ type: "delta", text: "Yes, the Luna bed comes in grey." }]);
+    expect(partialWhileRunning).toBe(true);
+    expect(seen.filter((event) => event.type === "delta").length).toBeGreaterThan(1);
     expect(seen.filter((event) => event.type === "delta").map((event) => event.text).join("")).toBe("Yes, the Luna bed comes in grey.");
     expect(seen.at(-2)).toMatchObject({ type: "final", reply: { message: "Yes, the Luna bed comes in grey." } });
     expect(seen.at(-1)).toEqual({ type: "done" });
@@ -172,9 +175,8 @@ describe("app proxy turn handlers", () => {
     const events = text.split("\n\n").filter((block) => block.includes("data: ") && !block.includes("event: turn")).map((block) => JSON.parse(block.slice(block.indexOf("data: ") + 6)));
     expect(text).toMatch(/event: turn\ndata: \{"turnId":"[^"]+"\}/);
     // Model fragments are held back until grounding and response formatting finish.
-    expect(events.filter((event) => event.type === "delta")).toEqual([
-      { type: "delta", text: "Yes, the Luna bed comes in grey." },
-    ]);
+    expect(events.filter((event) => event.type === "delta").length).toBeGreaterThan(1);
+    expect(events.filter((event) => event.type === "delta").map((event) => event.text).join("")).toBe("Yes, the Luna bed comes in grey.");
     expect(events.at(-2)).toMatchObject({ type: "final", reply: { message: "Yes, the Luna bed comes in grey." } });
     expect(events.at(-1)).toEqual({ type: "done" });
   });

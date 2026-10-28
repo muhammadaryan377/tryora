@@ -141,7 +141,7 @@ export default function Limits() {
       <s-section slot="aside" heading="Bot protection">
         <s-paragraph>
           Always on. If your store suddenly gets far more previews than a real shopper could make (more than 40 in 10
-          minutes), new ones pause for a few minutes and you'll see a warning on your Tryora Home page.
+          minutes), new ones pause for a few minutes and you'll see a warning on your Visully Home page.
         </s-paragraph>
       </s-section>
     </s-page>
