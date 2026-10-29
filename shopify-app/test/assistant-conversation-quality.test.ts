@@ -10,6 +10,8 @@ const intent = (latest: string, previousUserMessages = ["Show me sofas"]) => pla
 describe("natural English conversation understanding", () => {
   it("responds to simple greetings and reactions without inventing product claims", () => {
     expect(simpleSocialReply("Hi!")).toContain("What are you looking for?");
+    expect(simpleSocialReply("Who are you?")).toBe("I'm Room Assistant. I can help you find furniture, answer product questions and preview products in your room.");
+    expect(simpleSocialReply("What can you do?")).toBe(simpleSocialReply("Who are you?"));
     expect(simpleSocialReply("Thanks")).toBe("You're welcome!");
     expect(simpleSocialReply("Looks great!")).toBe("Glad you like it!");
     expect(simpleSocialReply("What is the delivery price?")).toBeNull();
