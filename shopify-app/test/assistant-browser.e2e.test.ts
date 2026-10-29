@@ -729,10 +729,13 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
     const ariaCard = page.locator(".tryora-assistant__card", { hasText: "Aria Upholstered Bed" });
     await ariaCard.waitFor();
     // Select an exact Shopify appearance, then confirm generation explicitly.
-    await ariaCard.locator(".tryora-assistant__colour-picker > summary").click();
+    expect(await ariaCard.locator("[data-colour-options]").isVisible()).toBe(false);
+    await ariaCard.locator("[data-ta='toggle-colours']").click();
+    expect(await ariaCard.locator("[data-colour-options]").isVisible()).toBe(true);
     await ariaCard.locator(".tryora-assistant__swatch[data-value='Cream']").waitFor();
     await ariaCard.locator(".tryora-assistant__swatch[data-value='Cream']").click();
-    await expect.poll(() => ariaCard.locator(".tryora-assistant__colour-picker > summary").textContent()).toContain("Cream");
+    await expect.poll(() => ariaCard.locator("[data-colour-options]").isVisible()).toBe(false);
+    expect(await ariaCard.locator("[data-ta='toggle-colours']").textContent()).toBe("Show colors");
     await expect.poll(() => ariaCard.locator("[data-ta='preview']").isEnabled()).toBe(true);
     expect(seen.previewStarts.length).toBe(startsBefore);
     await ariaCard.locator("[data-ta=preview]").click();

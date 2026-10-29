@@ -688,13 +688,9 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant .tryora-assistant__room-chip > img { display: block; flex: 0 0 40px; width: 40px; height: 40px; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; object-fit: cover; border-radius: 6px; }
 .tryora-assistant__preview button[aria-pressed="true"] { background: var(--ta-text); color: var(--ta-bg); }
 
-/* Keep product colours compact until the shopper opens the real swatches. */
-.tryora-assistant__colour-picker { min-width:0; border:1px solid var(--ta-line); border-radius:10px; background:var(--ta-surface); }
-.tryora-assistant__colour-picker > summary { display:flex; align-items:center; gap:8px; padding:10px 12px; cursor:pointer; list-style:none; color:var(--ta-ink); font-size:13px; }
-.tryora-assistant__colour-picker > summary::-webkit-details-marker { display:none; }
-.tryora-assistant__colour-picker > summary::after { content:""; width:7px; height:7px; margin-left:auto; border-right:1.5px solid currentColor; border-bottom:1.5px solid currentColor; transform:rotate(45deg); flex-shrink:0; }
-.tryora-assistant__colour-picker[open] > summary::after { transform:rotate(225deg); }
-.tryora-assistant__colour-picker > summary:focus-visible { outline:2px solid var(--ta-ink); outline-offset:2px; border-radius:10px; }
-.tryora-assistant__colour-picker .tryora-assistant__colour-sample { display:block; width:22px; height:22px; border-radius:50%; object-fit:cover; border:1px solid var(--ta-line); flex-shrink:0; }
-.tryora-assistant__colour-picker > .tryora-assistant__optrow { padding:10px; max-height:220px; overflow-y:auto; overscroll-behavior:contain; border-top:1px solid var(--ta-line); }
-.tryora-assistant__colour-picker:not([open]) > .tryora-assistant__optrow { display:none; }
+/* Swatches stay hidden until the shopper explicitly asks to see colours. */
+.tryora-assistant__colour-picker { min-width:0; }
+.tryora-assistant__colour-toggle { width:100%; padding:10px 12px; border:1px solid var(--ta-line); border-radius:10px; background:var(--ta-surface); color:var(--ta-ink); font:inherit; font-size:13px; text-align:left; cursor:pointer; }
+.tryora-assistant__colour-toggle:focus-visible { outline:2px solid var(--ta-ink); outline-offset:2px; }
+.tryora-assistant__colour-picker > .tryora-assistant__optrow { padding:10px 0; max-height:220px; overflow-y:auto; overscroll-behavior:contain; }
+.tryora-assistant__colour-picker > [data-colour-options][hidden] { display:none !important; }
