@@ -1206,12 +1206,17 @@ describe("simple chat cards and safe direct previews", () => {
     ],
   });
 
-  it("shows real fabric chips and labelled colour swatches on a recommended product card", async () => {
+  it("keeps real product colour swatches in a collapsed picker on a recommended card", async () => {
     proxy.options = selectableOptions();
     await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
     await settle(45);
     const element = $(".tryora-assistant__card")!;
     expect(element.querySelector(".tryora-assistant__card-choices")).not.toBeNull();
+    const picker = element.querySelector<HTMLDetailsElement>(".tryora-assistant__colour-picker")!;
+    expect(picker.open).toBe(false);
+    expect(picker.querySelector("summary")!.textContent).toContain("Colour: Cream");
+    picker.querySelector("summary")!.click();
+    expect(picker.open).toBe(true);
     expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Plush']")).not.toBeNull();
     expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']")).not.toBeNull();
     expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Cream']")).not.toBeNull();
@@ -1238,6 +1243,7 @@ describe("simple chat cards and safe direct previews", () => {
     expect((inProgress.querySelector("[data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
     expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: null, source: "options" });
     expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+    click(".tryora-assistant__colour-picker > summary");
     click("[data-ta='opt'][data-attr='Colour'][data-value='Orange']");
     await settle(60);
     const chosen = $(".tryora-assistant__card")!;
@@ -1245,6 +1251,8 @@ describe("simple chat cards and safe direct previews", () => {
     expect(chosen.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/aria-13.jpg");
     expect(chosen.querySelector("a[data-ta='view-details']")!.getAttribute("href")).toBe("/products/aria?variant=13");
     expect(chosen.textContent).toContain("Colour: Orange");
+    expect(chosen.querySelector<HTMLDetailsElement>(".tryora-assistant__colour-picker")!.open).toBe(false);
+    expect(chosen.querySelector(".tryora-assistant__colour-picker summary")!.textContent).toContain("Colour: Orange");
     expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "13", source: "options" });
     expect(proxy.calls.some(call => call.url.includes("/assistant/preview-check?") && call.url.includes("ProductVariant%2F13"))).toBe(true);
     expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
@@ -1257,6 +1265,7 @@ describe("simple chat cards and safe direct previews", () => {
     await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);
     await settle(45);
     click("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']");
+    click(".tryora-assistant__colour-picker > summary");
     click("[data-ta='opt'][data-attr='Colour'][data-value='Orange']");
     await settle(60);
     expect(($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).disabled).toBe(true);
