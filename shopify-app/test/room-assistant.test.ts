@@ -820,20 +820,22 @@ describe("multi-turn conversations", () => {
 });
 
 describe("store knowledge", () => {
-  it("answers policy questions from retrieved policy sections without losing late clauses", async () => {
-    const refund = ["Returns within 30 days.", ...Array.from({ length: 30 }, (_, i) => `Clause ${i}. Original packaging is required for collection.`),
-      "Made to order items cannot be returned unless faulty."].map((text) => `<p>${text}</p>`).join("");
-    const admin = fixtureAdmin([aria], { policies: [{ type: "REFUND_POLICY", title: "Refund policy", url: "/policies/refund-policy", body: refund }], pages: "denied" });
+  it("keeps policy support outside scope without fetching store knowledge", async () => {
+    const admin = fixtureAdmin([aria], { pages: "denied" });
     const { client, requests } = scriptedModel([
-      toolCall("search_store_info", { query: "return made to order" }),
-      finalAnswer("Made-to-order items cannot be returned unless faulty."),
+      toolCall("search_store_info", { query: "delivery charges" }),
+      finalAnswer("For delivery charges, please contact the store directly. I can help with product details and room previews."),
     ]);
-    await ask(admin, client, "Can I return a made to order bed?");
-    const [info] = toolOutputs(requests, "call-search_store_info");
-    expect(info.sections[0]).toMatchObject({ source: "policy", title: expect.stringMatching(/^Returns and refunds/) });
-    expect(info.sections[0].text).toContain("Made to order items cannot be returned unless faulty.");
-    expect(JSON.stringify(info).length).toBeLessThan(6000);
-    expect(admin.calls.TryoraAssistantPages).toBe(1);
+    await ask(admin, client, "What are the delivery charges?");
+    expect(requests[0].tool_choice).toBe("auto");
+    expect(requests[0].tools.some((tool: any) => tool.name === "search_store_info")).toBe(false);
+    expect(requests[0].instructions).toContain('For "who are you?" or "what can you do?"');
+    expect(requests[0].instructions).toContain("Do not mention missing store information or policies in greetings or introductions.");
+    expect(toolOutputs(requests, "call-search_store_info")[0]).toMatchObject({
+      error: "outside_assistant_scope", instruction: expect.stringContaining("Do not describe these topics as temporarily unavailable"),
+    });
+    expect(admin.calls.TryoraAssistantPages ?? 0).toBe(0);
+    expect(admin.calls.TryoraAssistantStoreInfo ?? 0).toBe(0);
   });
 });
 
@@ -872,7 +874,7 @@ describe("reliability and safety", () => {
     ]);
     await expect(ask(admin, client, "Do you sell beds?")).resolves.toMatchObject({ recommendations: [] });
     expect(toolOutputs(requests, "call-search_products")[0]).toMatchObject({ error: "store_data_temporarily_unavailable", instruction: expect.stringMatching(/Do not say the store has no matching products/) });
-    expect(toolOutputs(requests, "call-search_store_info")[0]).toMatchObject({ error: "store_data_temporarily_unavailable" });
+    expect(toolOutputs(requests, "call-search_store_info")[0]).toMatchObject({ error: "outside_assistant_scope" });
     expect(logs).toContainEqual(expect.objectContaining({ event: "shopify_failure", status: 500 }));
   });
 

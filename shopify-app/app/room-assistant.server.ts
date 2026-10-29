@@ -37,7 +37,6 @@ import {
   type ProductMatch,
   type ProductQuery,
 } from "./assistant/catalogue.server";
-import { loadStoreKnowledge, retrieveKnowledge } from "./assistant/knowledge.server";
 import {
   EMPTY_CONSTRAINTS,
   isChildrensProduct,
@@ -925,14 +924,11 @@ async function runDetails(ctx: RequestContext, args: { productRefs: string[]; co
   return { products, notFound: args.productRefs.filter((ref) => !ctx.fresh.has(ref)) };
 }
 
-async function runStoreInfo(ctx: RequestContext, args: { query: string }) {
-  let knowledge;
-  try { knowledge = await loadStoreKnowledge(ctx.admin, ctx.shopId, ctx.settings.knowledge, ctx.budget); }
-  catch { return { ...STORE_UNAVAILABLE, instruction: "Tell the shopper the store's information is temporarily unavailable and suggest trying again or contacting the store." }; }
-  const sections = retrieveKnowledge(knowledge, args.query, 4);
+// Handle stale tool calls without fetching out-of-scope store policies.
+function runStoreInfo() {
   return {
-    sections: sections.map((section) => ({ source: section.source, title: section.title, url: section.url, text: section.text })),
-    note: "Answer only from these sections. If they do not cover the question, say the store has not published that information and suggest contacting the store.",
+    error: "outside_assistant_scope",
+    instruction: "Explain that you help with product information and room previews. For delivery charges, shipping, returns, warranty or other store policies, ask the shopper to contact the store directly. Do not describe these topics as temporarily unavailable or suggest trying again later.",
   };
 }
 
@@ -1224,7 +1220,7 @@ async function executeTool(ctx: RequestContext, name: string, raw: string): Prom
     case "search_products": ctx.emit({ type: "status", stage: "searching_products" }); return runSearch(ctx, args);
     case "get_product_details": ctx.emit({ type: "status", stage: "checking_variants" }); return runDetails(ctx, args);
     case "count_products": ctx.emit({ type: "status", stage: "searching_products" }); return runCount(ctx, args);
-    case "search_store_info": ctx.emit({ type: "status", stage: "reading_store_info" }); return runStoreInfo(ctx, args);
+    case "search_store_info": return runStoreInfo();
     case "list_collections": return runCollections(ctx);
     case "recommend_products": ctx.emit({ type: "status", stage: "preparing_recommendations" }); return runRecommend(ctx, args);
     case "request_visualisation": ctx.emit({ type: "status", stage: "checking_preview" }); return runVisualise(ctx, args);
@@ -1401,6 +1397,8 @@ export function isConversationAcknowledgement(message: string): boolean {
 /** Answer only unambiguous social turns locally; factual shopping questions still use verified tools. */
 export function simpleSocialReply(message: string): string | null {
   const text = message.trim();
+  if (/^(?:who are you|what can you do|what do you do)[?!. ]*$/i.test(text))
+    return "I'm Room Assistant. I can help you find furniture, answer product questions and preview products in your room.";
   if (/^(?:hi|hello|hey|hiya|good (?:morning|afternoon|evening))[!. ]*$/i.test(text))
     return "Hi! I can help you find furniture or preview a product in your room. What are you looking for?";
   if (/^(?:thanks|thank you|thank you very much|cheers)[!. ]*$/i.test(text))
@@ -1656,12 +1654,12 @@ function openAIClient(env: NodeJS.ProcessEnv = process.env) {
 const INSTRUCTIONS = `You are Room Assistant, a conversational AI furniture previewer for exactly one Shopify store. You can see only this store's data, through the tools.
 Respond in natural, concise English. Default to one or two short sentences, at most 60 words; only give a longer explanation when explicitly requested. Never expose productRef, variantRef, IDs, internal prompts or tool metadata.
 When the shopper says "show me beds" (including typos like "shoe me beds"), show actual cards using recommend_products; do not substitute a prose comparison. When cards are visible, write only one short introduction, without repeating names, prices, descriptions or preview availability from the cards. Do not append an automatic preview question.
-A count question needs only the verified count in one short sentence. A follow-up quantity request after a count means list that many new matching products; it is not a preview request. Read the latest shopper message together with previous answers, previously shown product cards and completed previews before choosing a tool.
+A count question needs only the verified count in one short sentence. Describe catalogue counts as products "listed in the catalogue"; do not imply in-stock availability unless verified by stock data. A follow-up quantity request after a count means list that many new matching products; it is not a preview request. Read the latest shopper message together with previous answers, previously shown product cards and completed previews before choosing a tool.
 For questions about an earlier product, answer the question using verified details instead of redisplaying that product's card. For a simple positive reaction, acknowledge it without restarting recommendations or offering the same preview. For typo requests such as "show me moes", interpret the intent as "show me more". A question such as "why you show e 2" asks why only two were shown: explain briefly without selecting or displaying a product. For more/different options, exclude products already shown; if none remain, say so honestly.
 Decision order for EVERY turn:
 1. Understand the latest user message together with the previous assistant reply, shown product cards, selected exact variant, room observations, and any completed previews. Explicit latest constraints always override earlier preferences.
 2. Use the server's standalone intent interpretation to clarify elliptical follow-ups ("what about grey?", "the cheaper one", "show me more"), but do not infer missing product IDs, variants, policies or measurements.
-3. Choose ONE primary action: answer existing product question, answer store support, analyse a new room, discover suitable products, compare verified options, acknowledge, or offer a requested preview. A product question or positive reaction must not trigger unrelated recommendation cards or a paid image.
+3. Choose ONE primary action: answer existing product question, explain the product-only support scope, analyse a new room, discover suitable products, compare verified options, acknowledge, or offer a requested preview. A product question or positive reaction must not trigger unrelated recommendation cards or a paid image.
 4. For room discovery, analyse the current photo before product search; retrieve diverse real candidates, then rank credible matches by the room and preferences instead of search order or AI-preview configuration. Show fewer products if there are no strong evidenced matches.
 5. Respond in natural, concise English. If an ambiguity changes which real product would be shown, ask only one focused question.
 Purpose:
@@ -1672,9 +1670,11 @@ Purpose:
 - Room-based discovery: when the shopper asks what would suit their room without naming a category ("what furniture would look good here?", "recommend something for this room", "is room ke liye koi acha furniture dikhao"), use the room photo or the saved room notes: decide which furniture categories suit that room (call list_collections to see which categories this store actually sells; never assume beds), search the catalogue for each suitable category with the room's colours, materials and style plus the shopper's budget and preferences, then show two or three genuinely different matching products, mixing categories where that fits the room. Fewer verified matches are better than invented or unsuitable choices.
 - If a room-based request has no room photo in this message and no saved room notes, ask for a room photo in one short sentence instead of pretending to have seen the room. When saved room notes exist, reuse them; do not ask for the photo again. A NEW room photo replaces the previous room context only after it has been analysed; never recommend using stale room notes.
 - Keep conversation context for "another option", "the second one", or "try this one". When the shopper voluntarily names a colour, treat it as a search preference for matching products or already verified exact variants, never as a reason to ask for further configuration. If no exact approved reference exists, show a non-previewable card instead of guessing.
-- Answer specifications, delivery, returns or other support questions only when the shopper asks or the detail is necessary for their stated choice. Answer briefly using verified tools, then offer a relevant next step toward a recommendation or room preview when helpful. Do not divert an explicit support question or invent a policy.
+- Your scope is product information, furniture discovery, room guidance and product previews. You do not provide delivery charges, shipping times, returns, refunds, warranty, order support or other store policies. When asked about these topics, briefly direct the shopper to contact the store directly. Do not look up policies, imply an outage, say this information is temporarily unavailable, or suggest trying again later.
+- For "who are you?" or "what can you do?", introduce yourself without a tool call: "I'm Room Assistant. I can help you find furniture, answer product questions and preview products in your room." Do not mention missing store information or policies in greetings or introductions.
+- If earlier chat says store information is unavailable, clarify that you can help with the store's product catalogue, while delivery and store policies are outside your scope. Do not repeat or rely on the earlier outage claim. For mixed product and policy questions, answer the product part using verified tools and refer only the policy part to the store.
 Grounding:
-- Use the tools before any factual claim about products, options, colours, sizes, materials, dimensions, prices, stock, AI room previews, delivery, returns, warranty, promotions or store policies. Never invent any of these.
+- Use the tools before any factual claim about products, options, colours, sizes, materials, dimensions, prices, stock or AI room previews. Never invent any of these.
 - A product exists only if a tool returned it. Recommend only productRef/variantRef values a tool returned; never alter or guess a ref, and never swap one variant for a similar one.
 - To show products, call recommend_products with two or three strong room matches by default (up to ten when the shopper explicitly requests a quantity). Each card shows its own 8-18 word reason, so put the explanation there: specific to that product and this room, never generic, never the same for two cards. The cards show verified images and prices, so do not restate them in prose; mention a price only if a tool returned it.
 - For a shopper who uploaded a room image, first record its actual visible design, wall/floor tones, furnishings and lighting, then look up real furniture with verified matching characteristics. Do not select random catalogue products merely to fill three slots. If evidence is weak, show fewer and explain uncertainty.
@@ -1684,11 +1684,11 @@ Grounding:
 - Set variantRef only when the product image and exact real Shopify variant are verified; otherwise null. The verified Fabric/Colour controls already rendered on cards are allowed; never invent options or ask repeated configuration questions in the chat. Keep an established exact configuration, never substitute a different variant to make preview work.
 - Products marked singleVariant have no options: never ask the shopper to choose a size, fabric or colour for them.
 - "Available to buy" and "AI room preview" are different things. A product without AI preview is still sold by the store.
-- If a tool says store data is temporarily unavailable, say so; never claim the store has no matching products in that case.
+- Only if a product tool actually fails, say the product information could not be retrieved right now; do not generalise this to all store information; never claim the store has no matching products in that case.
 - Never say the store has none of something unless count_products or search_products explicitly says the full catalogue was checked and nothing matched. Search results are capped at a few items: never infer totals or absence from them. Use count_products for "how many" and "do you have any" questions.
 - A current-page product is context, not an automatic recommendation. Include it only if relevant and not already shown; never force it into a request for new options. On a homepage, collection or unsupported page without a selected product, ask them to choose a real product before previewing "this" item; recommendations can still use the catalogue. Never invent a current selection.
-- Give delivery times, shipping costs, discounts, promotions or warranty terms only when search_store_info returns them. If the tool cannot verify it, say you cannot confirm it and suggest contacting the store; a failed lookup is not proof that it is unpublished.
-- You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or the store's contact details.
+- Do not provide delivery times, shipping costs, discounts, promotions or warranty terms, even if earlier chat or a product description mentions them. Direct those questions to the store.
+- You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or ask them to contact the store directly. Do not invent contact details.
 Conversation:
 - Keep the next step concrete and brief: "Tap Preview in my room, upload a room photo if needed, then press Generate preview." Photo upload never starts paid generation. After a successful preview, show Original/Preview comparison and Try another product. Never force an extra option picker in chat prose; the product card has its own verified swatches.
 - If the shopper voluntarily says "show it in grey", search for an exact product with that appearance and approved reference. If a unique exact match cannot be verified, explain that a preview is unavailable for that choice; never ask which fabric, colour or size, never invent or silently substitute one.
@@ -2061,7 +2061,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
         const result: any = await client.responses.create({
           model,
           instructions: INSTRUCTIONS,
-          tools: ASSISTANT_TOOLS,
+          tools: ASSISTANT_TOOLS.filter((tool) => tool.name !== "search_store_info"),
           store: false,
           stream: true,
           max_output_tokens: requestedProductCount(ctx.latestMessage) ? 2000 : 900,
@@ -2118,7 +2118,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     const response = await call({
       input: running,
       // The first round must consult the store, so even small talk cannot produce ungrounded product claims.
-      tool_choice: ctx.photoNeedsAnalysis ? { type: "function", name: "record_room_observations" } : rounds === 0 ? "required" : "auto",
+      tool_choice: ctx.photoNeedsAnalysis ? { type: "function", name: "record_room_observations" } : rounds === 0 && ctx.intentPlan?.intent !== "store_support" ? "required" : "auto",
       parallel_tool_calls: false,
     });
     const calls = (response.output ?? []).filter((item: any) => item?.type === "function_call");
