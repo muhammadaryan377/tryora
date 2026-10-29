@@ -66,3 +66,27 @@
 .cancelSubscription:disabled { opacity: .6; cursor: wait; }
 .subscriptionCard:focus-visible, .cancelSubscription:focus-visible { outline: 3px solid #2878ee; outline-offset: -4px; }
 @media (max-width: 480px) { .subscriptionCard { padding: 20px 16px; gap: 12px; } .subscriptionCardText strong { font-size: 18px; } }
+.cancellationConfirmation { max-width: 540px; margin: 12px auto 24px; padding: 20px 18px; border: 1px solid #e1e1e1; border-radius: 24px; background: #fcfcfc; color: #161616; }
+.confirmationTop { display: flex; justify-content: space-between; align-items: center; margin-bottom: 34px; padding-left: 14px; }
+.confirmationTop > span:last-child { border-radius: 999px; background: #eee; padding: 3px 8px; font-size: 13px; font-weight: 600; }
+.warningIcon { color: #ff2626; }
+.cancellationConfirmation h1 { margin: 0 0 16px; font-size: 23px; line-height: 1.3; font-weight: 600; }
+.confirmationIntro { font-size: 18px; line-height: 1.6; margin: 0 0 30px; }
+.confirmationPlan { margin: 0 14px 32px; }
+.confirmationPlan > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+.confirmationPlan dt { font-size: 14px; color: #666; }
+.confirmationPlan dd { margin: 0; font-size: 16px; font-weight: 600; text-align: right; }
+.cancellationConfirmation h2 { margin: 0 0 20px; font-size: 18px; font-weight: 600; }
+.cancellationConsequences { padding: 0; margin: 0; list-style: none; }
+.cancellationConsequences li { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+.cancellationConsequences li > span { flex-shrink: 0; color: #666; }
+.cancellationConsequences li > .warningIcon { color: #ff2626; }
+.cancellationConsequences h3 { font-size: 18px; line-height: 1.4; font-weight: 600; margin: 0 0 6px; }
+.cancellationConsequences p { margin: 0; color: #666; font-size: 14px; line-height: 1.6; }
+.confirmationActions { border-top: 1px solid #e9e9e9; padding-top: 22px; margin-top: 22px; display: grid; gap: 10px; }
+.confirmationActions .dashboardButton { min-height: 42px; font-size: 14px; }
+.continueCancellation { width: 100%; min-height: 42px; border: 1px solid #ffd0d0; border-radius: 999px; background: transparent; color: #ff3030; font: inherit; font-weight: 600; cursor: pointer; }
+.continueCancellation:hover:not(:disabled) { background: #fff1f1; }
+.continueCancellation:focus-visible { outline: 3px solid #2878ee; outline-offset: 3px; }
+.confirmationActions button:disabled { opacity: .6; cursor: wait; }
+.secureCancellation { text-align: center; color: #666; font-size: 13px; margin: 20px 0 0; }

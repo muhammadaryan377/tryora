@@ -7,7 +7,7 @@ import prisma from "../db.server";
 import { tryora } from "../tryora.server";
 import { billingPresentation, ensureBillingAllowance } from "../billing-status.server";
 import { createTopUpCheckout, hasVerifiedPaidPlan, reconcileTopUps } from "../billing-purchases.server";
-import { FREE_PLAN, PLANS, TOP_UP, annualPrice, billingPlanName, type BillingCycle } from "../plans";
+import { FREE_PLAN, PLANS, TOP_UP, annualPrice, billingPlanName, paidPlanForSubscription, type BillingCycle } from "../plans";
 import styles from "../styles/billing.module.css";
 
 const usd = (n: number) => `$${n.toFixed(2)}`;
@@ -100,12 +100,45 @@ export default function Billing() {
   const navigation = useNavigation();
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
   const [managementOpen, setManagementOpen] = useState(false);
+  const [confirmCancellation, setConfirmCancellation] = useState(false);
   const navigate = useNavigate();
   useEffect(() => {
     if (result?.ok && "cancelled" in result && result.cancelled)
       navigate("/app", { replace: true, state: { subscriptionCancelled: true } });
   }, [result, navigate]);
   const saving = navigation.state !== "idle";
+  useEffect(() => {
+    if (confirmCancellation) document.getElementById("cancel-subscription-heading")?.focus();
+  }, [confirmCancellation]);
+  const currentPlan = d.activeSubscriptionName ? paidPlanForSubscription(d.activeSubscriptionName) : null;
+  if (confirmCancellation && d.paid) return <s-page heading="">
+    <section className={styles.cancellationConfirmation} aria-labelledby="cancel-subscription-heading">
+      <div className={styles.confirmationTop}><span className={styles.warningIcon} aria-hidden="true">⚠</span><span>Confirmation required</span></div>
+      <h1 id="cancel-subscription-heading" tabIndex={-1}>Cancel your subscription?</h1>
+      <p className={styles.confirmationIntro}>You're about to cancel your Visully subscription. Please review what happens before you continue.</p>
+      <dl className={styles.confirmationPlan}>
+        <div><dt>Current plan</dt><dd>{currentPlan ? `${currentPlan.plan.name} — ${usd(currentPlan.cycle === "annual" ? annualPrice(currentPlan.plan.price) : currentPlan.plan.price)}/${currentPlan.cycle === "annual" ? "year" : "month"}` : d.activeSubscriptionName}</dd></div>
+        <div><dt>Subscription status</dt><dd><span className={styles.activeBadge}>Active</span></dd></div>
+      </dl>
+      <h2>What happens if you cancel?</h2>
+      <ul className={styles.cancellationConsequences}>
+        <li><span className={styles.warningIcon} aria-hidden="true">⊗</span><div><h3>Paid features will be disabled</h3><p>Once cancellation takes effect, paid AI preview allowances will no longer renew. Your account will switch to the Free plan.</p></div></li>
+        <li><span aria-hidden="true">▤</span><div><h3>Recurring billing will stop</h3><p>Shopify will process the cancellation. No automatic refund is requested.</p></div></li>
+        <li><span aria-hidden="true">↻</span><div><h3>You can subscribe again</h3><p>Reactivate your paid plan anytime from Plans &amp; Billing.</p></div></li>
+      </ul>
+      {result?.errors?.length ? <s-banner tone="critical" heading="Cancellation not completed">
+        {result.errors.map(error => <s-paragraph key={error}>{error}</s-paragraph>)}
+      </s-banner> : null}
+      <div className={styles.confirmationActions}>
+        <button type="button" className={styles.dashboardButton} disabled={saving} onClick={() => setConfirmCancellation(false)}>Keep My Subscription</button>
+        <Form method="post">
+          <input type="hidden" name="intent" value="switch-free" />
+          <button type="submit" className={styles.continueCancellation} disabled={saving}>{saving ? "Cancelling…" : "Continue to Cancellation"}</button>
+        </Form>
+      </div>
+      <p className={styles.secureCancellation}><span aria-hidden="true">♢</span> Cancellation securely processed by Shopify</p>
+    </section>
+  </s-page>;
   return (
     <s-page heading="Plans & Billing" inlineSize="large">
       <p className={styles.subtitle}>Choose a plan and approve payment through Shopify. You can change plans without leaving Shopify.</p>
@@ -216,12 +249,9 @@ export default function Billing() {
           <p>Active plan: <strong>{d.activeSubscriptionName}</strong></p>
           {d.periodEnds && <p>Current billing period ends on {date(d.periodEnds)}.</p>}
           <p>Don't need Visully anymore? Cancel your paid subscription to switch to the Free plan.</p>
-          <Form method="post">
-            <input type="hidden" name="intent" value="switch-free" />
-            <button type="submit" className={styles.cancelSubscription} disabled={saving}>
-              <span aria-hidden="true">⊗</span> {saving ? "Cancelling…" : "Cancel Subscription"}
-            </button>
-          </Form>
+          <button type="button" className={styles.cancelSubscription} disabled={saving} onClick={() => setConfirmCancellation(true)}>
+            <span aria-hidden="true">⊗</span> Cancel Subscription
+          </button>
         </div>}
       </section>}
     </s-page>

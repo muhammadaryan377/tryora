@@ -64,6 +64,22 @@ describe("subscription activation return", () => {
     expect(card.getAttribute("aria-expanded")).toBe("true");
     expect(container.querySelector("#subscription-details")!.textContent).toContain("Starter");
     expect(container.textContent).toContain("Cancel Subscription");
+    expect(container.querySelector("input[value='switch-free']")).toBeNull();
+    const cancel = Array.from(container.querySelectorAll("button")).find(button => button.textContent?.includes("Cancel Subscription"))!;
+    await act(async () => cancel.click());
+    expect(container.textContent).toContain("Cancel your subscription?");
+    expect(container.textContent).toContain("Starter — $29.00/month");
+    expect(container.textContent).toContain("No automatic refund is requested.");
+    expect(document.activeElement?.id).toBe("cancel-subscription-heading");
+    expect(state.cancelBilling).not.toHaveBeenCalled();
+    const finalButton = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Continue to Cancellation")!;
+    expect(finalButton.type).toBe("submit");
+    expect(finalButton.closest("form")?.querySelector<HTMLInputElement>("input[name='intent']")?.value).toBe("switch-free");
+    const keep = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Keep My Subscription")!;
+    await act(async () => keep.click());
+    expect(container.textContent).toContain("Your Subscription");
+    expect(container.textContent).not.toContain("Cancel your subscription?");
+    expect(state.cancelBilling).not.toHaveBeenCalled();
   });
   it("hides subscription management for Free users", async () => {
     state.data = { paid: false, billingStatus: state.status, presentation: { storeStatus: "LIVE", plan: "Free" },
