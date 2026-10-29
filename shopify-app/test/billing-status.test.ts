@@ -101,7 +101,7 @@ describe("authenticated store classification and credits", () => {
     await fixture.service.grantPeriodCredits(shop, "paid-oct", 300, new Date("2026-11-01"));
     await ensureBillingAllowance(admin(true), shop);
     expect((await fixture.service.balance(shop)).availableTotal).toBe(300);
-    expect(fixture.entitlement).toMatchObject({ plan: "growth", status: "cancelled", subscriptionId: "existing" });
+    expect(fixture.entitlement).toMatchObject({ plan: "free", status: "cancelled", subscriptionId: "existing" });
     expect((await fixture.service.ensureSettings(shop)).paidPlanActive).toBe(false);
   });
 

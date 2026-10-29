@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, useActionData, useLoaderData, useNavigation } from "react-router";
+import { Form, useActionData, useLoaderData, useNavigation, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -60,17 +60,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     return billing.request({
       plan: name,
       isTest: status.developer === true,
-      returnUrl: new URL("/app/billing", process.env.SHOPIFY_APP_URL || request.url).toString(),
+      returnUrl: `https://admin.shopify.com/store/${session.shop.replace(/\.myshopify\.com$/, "")}/apps/${process.env.SHOPIFY_API_KEY}/app?subscription=verify`,
     });
   }
 
   if (intent === "switch-free") {
+    if (!hasVerifiedPaidPlan(status)) return { ok: false, errors: ["No active paid subscription to cancel."] };
     const active = status.subscriptions.find(sub => sub.status === "ACTIVE" && sub.currentPeriodEnd &&
       new Date(sub.currentPeriodEnd) > new Date());
     if (!active) return { ok: false, errors: ["No active Shopify subscription to cancel."] };
     // Shopify requires the merchant's authenticated billing permission.
-    await billing.cancel({ subscriptionId: active.id, prorate: false, isTest: status.developer === true });
-    return redirect("/app/billing");
+    try {
+      await billing.cancel({ subscriptionId: active.id, prorate: false, isTest: status.developer === true });
+    } catch {
+      return { ok: false, errors: ["Your subscription could not be cancelled. Please try again."] };
+    }
+    const updated = await ensureBillingAllowance(admin, session.shop);
+    if (!updated.verified || updated.subscriptions.some(sub => sub.status === "ACTIVE"))
+      return { ok: false, errors: ["Cancellation is not confirmed yet. Please refresh to check your subscription before trying again."] };
+    return { ok: true, errors: [], cancelled: true };
   }
 
   if (intent === "buy-topup") {
@@ -91,6 +99,12 @@ export default function Billing() {
   const result = useActionData<typeof action>();
   const navigation = useNavigation();
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
+  const [managementOpen, setManagementOpen] = useState(false);
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (result?.ok && "cancelled" in result && result.cancelled)
+      navigate("/app", { replace: true, state: { subscriptionCancelled: true } });
+  }, [result, navigate]);
   const saving = navigation.state !== "idle";
   return (
     <s-page heading="Plans & Billing" inlineSize="large">
@@ -128,14 +142,10 @@ export default function Billing() {
           <h2>{FREE_PLAN.name}</h2>
           <p className={styles.price}><strong>$0</strong><span>/month</span></p>
           <ul className={styles.features}><li><span>✓</span>{FREE_PLAN.previews} previews/month</li></ul>
-          {d.paid ? (
-            <Form method="post" className={styles.planForm} onSubmit={e => {
-              if (!window.confirm("Cancel your paid Visully plan and switch to Free? Paid benefits will end when Shopify confirms cancellation.")) e.preventDefault();
-            }}>
-              <input type="hidden" name="intent" value="switch-free" />
-              <button type="submit" className={styles.select} disabled={saving}>Switch to Free</button>
-            </Form>
-          ) : <button type="button" className={styles.select} disabled>Current plan</button>}
+          <button type="button" className={styles.select} disabled={!d.paid}
+            onClick={() => { setManagementOpen(true); document.getElementById("subscription-management")?.scrollIntoView({ behavior: "smooth" }); }}>
+            {d.paid ? "Manage subscription" : "Current plan"}
+          </button>
         </section>
         {PLANS.map(plan => {
           const name = billingPlanName(plan, cycle);
@@ -192,6 +202,28 @@ export default function Billing() {
         <div><h2>Need help?</h2><p>Questions about your Visully plan or payments?</p></div>
         <a href="mailto:support@visully.io?subject=Visully%20Support%20Request" target="_top">Contact support</a>
       </section>
+      {d.paid && <section id="subscription-management" className={styles.subscriptionManagement}>
+        <button type="button" className={styles.subscriptionCard} aria-expanded={managementOpen}
+          aria-controls="subscription-details" onClick={() => setManagementOpen(open => !open)}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true">
+            <path d="M6 12V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v5M5 10a2 2 0 0 0-2 2v4h18v-4a2 2 0 0 0-4 0v1H7v-1a2 2 0 0 0-2-2ZM6 16v3m12-3v3" />
+          </svg>
+          <span className={styles.subscriptionCardText}><strong>Your Subscription</strong><span>Manage your Visully plan</span></span>
+          <span className={styles.activeBadge}>✓ Active</span>
+        </button>
+        {managementOpen && <div id="subscription-details" className={styles.subscriptionDetails}>
+          <h2>Subscription management</h2>
+          <p>Active plan: <strong>{d.activeSubscriptionName}</strong></p>
+          {d.periodEnds && <p>Current billing period ends on {date(d.periodEnds)}.</p>}
+          <p>Don't need Visully anymore? Cancel your paid subscription to switch to the Free plan.</p>
+          <Form method="post">
+            <input type="hidden" name="intent" value="switch-free" />
+            <button type="submit" className={styles.cancelSubscription} disabled={saving}>
+              <span aria-hidden="true">⊗</span> {saving ? "Cancelling…" : "Cancel Subscription"}
+            </button>
+          </Form>
+        </div>}
+      </section>}
     </s-page>
   );
 }

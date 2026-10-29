@@ -77,7 +77,7 @@ export async function ensureBillingAllowance(admin: AdminGraphql, shopId: string
     const settings = await tryora.ensureSettings(shopId);
     if (settings.paidPlanActive) await tryora.updateSettings({ ...settings, paidPlanActive: false });
     await prisma.billingEntitlement.update({
-      where: { shopId }, data: { status: "cancelled" },
+      where: { shopId }, data: { status: "cancelled", plan: "free", currentPeriodEnds: null },
     });
     await tryora.grantMonthlyAllowance(shopId, allowance);
   } else if (!shop?.paidPlanActive && !subscriptions.length &&
