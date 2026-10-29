@@ -66,7 +66,7 @@ beforeEach(() => {
   state.balance.mockReset().mockResolvedValue({ availableTotal: 100 });
   resetAssistantTurns();
   resetAssistantCatalogueCache();
-  vi.stubEnv("OPENAI_API_KEY", "test-key");
+  vi.stubEnv("OPENAI-API-CHATBOOT", "test-key");
   vi.stubEnv("OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED", "true");
 });
 afterEach(() => { setAssistantClientForTests(null); vi.unstubAllEnvs(); });

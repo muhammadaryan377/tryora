@@ -68,6 +68,7 @@ model Shop {
   issues        IssueReport[]
   events        Event[]
   providerUsage ProviderUsage[]
+  assistantTokenUsage AssistantTokenUsage[]
   customizationConfigs CustomizationConfig[]
 }
 
@@ -341,6 +342,10 @@ model ProviderUsage {
   shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
   jobId             String?
   stage             String
+  source            String   @default("image")
+  inputTokens       Int?
+  outputTokens      Int?
+  totalTokens       Int?
   outcome           String
   costMicros        Int?
   providerRequestId String?
@@ -349,6 +354,24 @@ model ProviderUsage {
 
   @@index([shopId, createdAt])
   @@index([jobId])
+}
+
+/// Per-response chatbot token metadata only; no messages, images, or visitor identifiers.
+model AssistantTokenUsage {
+  id                String   @id @default(uuid())
+  shopId            String
+  shop              Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  providerResponseId String?  @unique
+  model             String
+  source            String   @default("chatbot")
+  outcome           String
+  inputTokens       Int
+  outputTokens      Int
+  totalTokens       Int
+  cachedInputTokens Int      @default(0)
+  createdAt         DateTime @default(now())
+
+  @@index([shopId, createdAt])
 }
 
 /// A small, per-visitor lead gate. No email, images or raw visitor identifiers are stored here.

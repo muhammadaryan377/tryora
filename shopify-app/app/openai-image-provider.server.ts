@@ -78,7 +78,10 @@ export class OpenAIImageProvider implements ImageProvider {
         }
         const image = await normaliseImage(Buffer.from(encoded, "base64"));
         return { image, mimeType: "image/jpeg", providerRequestId: response.request_id ?? "unavailable",
-          model: this.model, costMicros: 0 };
+          model: this.model, costMicros: 0,
+          inputTokens: response.data.usage?.input_tokens,
+          outputTokens: response.data.usage?.output_tokens,
+          totalTokens: response.data.usage?.total_tokens };
       });
     } catch (error) {
       // Never propagate SDK error bodies, headers, credentials, prompts or customer data.

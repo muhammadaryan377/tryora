@@ -50,6 +50,7 @@ import {
   type SelectionSource,
 } from "./assistant/references.server";
 import { errorShape, logAssistant } from "./assistant/log.server";
+import { recordAssistantTokenUsage } from "./assistant/token-usage.server";
 import { planShopperTurn, type IntentPlan } from "./assistant/intent.server";
 import { rankRoomRecommendations, roomFitScore } from "./assistant/room-fit.server";
 import {
@@ -190,7 +191,7 @@ export interface AssistantReply {
 }
 
 export function assistantProviderReady(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !!env.OPENAI_API_KEY?.trim() && env.OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED === "true";
+  return !!env["OPENAI-API-CHATBOOT"]?.trim() && env.OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED === "true";
 }
 
 /** "poll" works through any app proxy; "sse" is opt-in until a real store confirms unbuffered proxying. */
@@ -1643,7 +1644,7 @@ export function setAssistantClientForTests(factory: (() => OpenAI) | null) { cli
 function openAIClient(env: NodeJS.ProcessEnv = process.env) {
   if (!assistantProviderReady(env)) throw new TryoraError("PROVIDER_UNAVAILABLE");
   return new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
+    apiKey: env["OPENAI-API-CHATBOOT"]?.trim(),
     maxRetries: 0,
     timeout: MODEL_CALL_TIMEOUT_MS,
     fetch: boundedOpenAIFetch,
@@ -2078,6 +2079,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
             } else if (event?.type === "response.completed" || event?.type === "response.incomplete") {
               response = event.response;
             } else if (event?.type === "response.failed" || event?.type === "error") {
+              if (event.response) await recordAssistantTokenUsage(input.shopId, model, event.response);
               throw Object.assign(new Error("stream_failed"), { status: event?.response?.error ? 500 : undefined });
             }
           }
@@ -2092,6 +2094,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
         }
         inputTokens += Number(response?.usage?.input_tokens ?? 0);
         outputTokens += Number(response?.usage?.output_tokens ?? 0);
+        await recordAssistantTokenUsage(input.shopId, model, response);
         return response;
       } catch (error) {
         // The shopper stopped or replaced this turn; nothing to log or retry.

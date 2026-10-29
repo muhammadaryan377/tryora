@@ -17,6 +17,12 @@ async function setup(reply?: unknown, status = 200) {
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("OpenAI Images Edit adapter (no real API calls)", () => {
+  it("returns image input/output usage from the provider response", async () => {
+    const bytes = await image("blue");
+    const { provider, req } = await setup({ data: [{ b64_json: bytes.toString("base64") }],
+      usage: { input_tokens: 123, output_tokens: 456, total_tokens: 579 } });
+    expect(await provider.generate(req)).toMatchObject({ inputTokens: 123, outputTokens: 456, totalTokens: 579 });
+  });
   it.each(["both", "colour", "texture"])("sends selected %s sample pixels after the room and product", async (kind) => {
     const { provider, fetcher, req } = await setup();
     const sample = await sharp({ create: { width: 64, height: 64, channels: 3, background: "#d7cab8" } }).png().toBuffer();

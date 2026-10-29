@@ -148,7 +148,7 @@ describe("room assistant settings", () => {
 
   it("keeps the storefront hidden until provider privacy acknowledgement is explicit, and reports the safe transport", async () => {
     state.copy = { assistant: { enabled: true, pages: { product: true } } };
-    vi.stubEnv("OPENAI_API_KEY", "key");
+    vi.stubEnv("OPENAI-API-CHATBOOT", "key");
     vi.stubEnv("OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED", "false");
     expect((await assistantStorefrontConfig(SHOP, { pageType: "product" })).enabled).toBe(false);
     vi.stubEnv("OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED", "true");
@@ -172,8 +172,9 @@ describe("room assistant settings", () => {
   });
 
   it("requires an API key and a separate assistant privacy acknowledgement", () => {
-    expect(assistantProviderReady({ OPENAI_API_KEY: "key", OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED: "true" } as any)).toBe(true);
-    expect(assistantProviderReady({ OPENAI_API_KEY: "key", OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED: "false" } as any)).toBe(false);
+    expect(assistantProviderReady({ OPENAI_API_KEY: "image-only", OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED: "true" } as any)).toBe(false);
+    expect(assistantProviderReady({ "OPENAI-API-CHATBOOT": "key", OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED: "true" } as any)).toBe(true);
+    expect(assistantProviderReady({ "OPENAI-API-CHATBOOT": "key", OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED: "false" } as any)).toBe(false);
   });
 });
 

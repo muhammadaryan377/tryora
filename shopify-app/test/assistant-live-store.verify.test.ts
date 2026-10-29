@@ -4,7 +4,7 @@
  *   TRYORA_VERIFY_SHOP=test-sofa-site.myshopify.com \
  *   TRYORA_VERIFY_TOKEN=<Admin API token with read_products> \
  *   [TRYORA_VERIFY_HANDLE=<product handle>] [TRYORA_VERIFY_BEDS="Title A|Title B"] \
- *   [TRYORA_VERIFY_CHAT=1 OPENAI_API_KEY=... OPENAI_ASSISTANT_MODEL=...] \
+ *   [TRYORA_VERIFY_CHAT=1 OPENAI-API-CHATBOOT=... OPENAI_ASSISTANT_MODEL=...] \
  *   [TRYORA_VERIFY_REPORT=<path to write a JSON report>] \
  *   npx vitest run test/assistant-live-store.verify.test.ts
  *
@@ -135,7 +135,7 @@ describe.skipIf(!SHOP || !TOKEN)(`Room Assistant against ${SHOP || "a live store
     expect(product.variants.length).toBeGreaterThan(0);
   }, 60_000);
 
-  it.runIf(process.env.TRYORA_VERIFY_CHAT === "1" && !!process.env.OPENAI_API_KEY)("chatbot: real model answers from real products on the viewed product's page", async () => {
+  it.runIf(process.env.TRYORA_VERIFY_CHAT === "1" && !!process.env["OPENAI-API-CHATBOOT"])("chatbot: real model answers from real products on the viewed product's page", async () => {
     const { snapshot } = await getCatalogue(admin, SHOP, 120_000);
     const current = snapshot!.products.find((product) => product.handle === HANDLE)!;
     const env = { ...process.env, OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED: "true" } as NodeJS.ProcessEnv;

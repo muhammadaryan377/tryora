@@ -5,6 +5,7 @@
  */
 
 export type AssistantLogEvent =
+  | "token_usage_save_failure"
   | "assistant_request"
   | "openai_failure"
   | "shopify_failure"

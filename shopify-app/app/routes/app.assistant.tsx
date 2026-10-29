@@ -82,7 +82,7 @@ export default function AssistantSettings() {
       {!data.providerReady && (
         <s-banner tone="warning" heading="AI provider setup is incomplete">
           <s-paragraph>
-            Add OPENAI_API_KEY and set OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED=true after reviewing provider data controls.
+            Add OPENAI-API-CHATBOOT and set OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED=true after reviewing provider data controls.
             The assistant stays hidden until both are configured.
           </s-paragraph>
         </s-banner>

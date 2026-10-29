@@ -277,7 +277,7 @@ describe.skipIf(!RUN)("Room Assistant 2.0 in a real browser", () => {
 
   beforeAll(async () => {
     if (!BROWSERS.length) throw new Error("No Chrome or Edge found; set TRYORA_E2E_BROWSER");
-    process.env.OPENAI_API_KEY = "e2e-not-a-real-key";
+    process.env["OPENAI-API-CHATBOOT"] = "e2e-not-a-real-key";
     process.env.OPENAI_ASSISTANT_PRIVACY_ACKNOWLEDGED = "true";
     previewImage = await sharp({ create: { width: 800, height: 600, channels: 3, background: "#cdbfa8" } }).jpeg().toBuffer();
     setAssistantClientForTests(() => model);

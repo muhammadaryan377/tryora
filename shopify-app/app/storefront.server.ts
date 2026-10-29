@@ -197,12 +197,13 @@ async function configuredProduct(admin: AdminGraphql, shopId: string, productId:
   const choices = await prisma.visualChoice.findMany({ where: { configId: config.id } });
   return { ...config, choices };
 }
-type UsageMetadata = { costMicros?: number; providerRequestId?: string; model?: string };
+type UsageMetadata = { costMicros?: number; providerRequestId?: string; model?: string; inputTokens?: number; outputTokens?: number; totalTokens?: number };
 async function measured<T extends UsageMetadata>(shopId: string, jobId: string | undefined, stage: string, work: () => Promise<T>): Promise<T> {
   try {
     const value = await work();
     await prisma.providerUsage.create({ data: {
-      shopId, jobId, stage, outcome: "completed", costMicros: value.costMicros,
+      shopId, jobId, stage, source: "image", outcome: "completed", costMicros: value.costMicros,
+      inputTokens: value.inputTokens, outputTokens: value.outputTokens, totalTokens: value.totalTokens,
       providerRequestId: value.providerRequestId, model: value.model,
     } });
     return value;
@@ -210,7 +211,7 @@ async function measured<T extends UsageMetadata>(shopId: string, jobId: string |
     // Never persist raw exceptions: upstream messages can contain shopper data.
     const cost = (e as UsageMetadata | null)?.costMicros;
     await prisma.providerUsage.create({ data: {
-      shopId, jobId, stage, outcome: "failed", costMicros: Number.isSafeInteger(cost) && cost! >= 0 ? cost : null,
+      shopId, jobId, stage, source: "image", outcome: "failed", costMicros: Number.isSafeInteger(cost) && cost! >= 0 ? cost : null,
     } }).catch(() => {});
     throw e;
   }

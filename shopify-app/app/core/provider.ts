@@ -96,6 +96,9 @@ export interface GenerateRequest {
 }
 
 export interface GenerateResult {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
   image: Uint8Array;
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   providerRequestId: string;
