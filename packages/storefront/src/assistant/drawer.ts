@@ -2032,6 +2032,15 @@ export class RoomAssistant {
         return `<button ${common}${appearanceStyle ? ` style="min-width:${data.swatchAppearance!.size}px;width:auto"` : ""} class="tryora-assistant__swatch${value.soldOut ? " is-soldout" : ""}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}">
           <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
+      if (colourKind) {
+        const selected = values.find((value) => value.selected);
+        const colour = selected?.colour && /^#[0-9a-f]{3,8}$/i.test(selected.colour) ? selected.colour : null;
+        const sample = selected?.image
+          ? `<img class="tryora-assistant__colour-sample" src="${escapeHtml(selected.image)}" alt="" loading="lazy">`
+          : colour ? `<i class="tryora-assistant__colour-sample" style="background:${colour}" aria-hidden="true"></i>` : "";
+        return `<details class="tryora-assistant__colour-picker"><summary>${sample}<span>${escapeHtml(attribute.name)}: <strong>${escapeHtml(selected?.value ?? "Choose colour")}</strong></span></summary>
+          <div class="tryora-assistant__optrow is-swatches is-colour" role="group" aria-label="${escapeHtml(attribute.name)} options">${buttons}</div></details>`;
+      }
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>
         <div class="tryora-assistant__optrow${swatches ? " is-swatches" : ""}${swatches && attribute.kind === "fabric" ? " is-fabric" : ""}${colourKind ? " is-colour" : ""}${colourKind && values.some((value) => !value.image && !(value.colour && /^#[0-9a-f]{3,8}$/i.test(value.colour))) ? " has-plain" : ""}">${buttons}</div></fieldset>`;
     }).join("");
