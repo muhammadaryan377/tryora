@@ -221,7 +221,11 @@ function managedOptions(product: CatalogueProduct, preview: any, sourceVariantId
     for (const attribute of attributes) {
       const value = values[attribute.name]; if (value === undefined) continue;
       let option = attribute.values.find((v) => v.value === value);
-      if (!option) { option = { value, image: attribute.kind === "fabric" ? preview.fabricImages?.[entry.fabric] ?? null : null, colour: null }; attribute.values.push(option); }
+      if (!option) {
+        const fabric = attribute.name === "Fabric";
+        option = { value, image: fabric ? preview.fabricImages?.[entry.fabric] ?? null : null, colour: fabric ? preview.fabricColours?.[entry.fabric] ?? null : null };
+        attribute.values.push(option);
+      }
       if (attribute.name === "Colour") { option.samples ??= Object.create(null) as NonNullable<OptionValue["samples"]>; option.samples[entry.fabric] = { image: swatch?.image ?? null, colour: swatch?.colour ?? null }; }
     }
     variants.push({ ref: variant.ref, id: variant.id, values, options: variant.options, price: variant.price, available: variant.available,

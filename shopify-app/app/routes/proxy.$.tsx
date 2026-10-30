@@ -13,6 +13,7 @@ import {
 import { guardAssistant, guardAssistantRead, guardPhotoCheck, guardPreview } from "../guard.server";
 import { leadChannel, leadVisitStatus, skipLead } from "../lead-gate.server";
 import { checkVariantPreview, productOptionsForAssistant } from "../assistant/options.server";
+import { checkAssistantRoomPhoto, ROOM_PHOTO_MESSAGES } from "../assistant/photo-check.server";
 import {
   answerRoomAssistant,
   assistantStorefrontConfig,
@@ -184,6 +185,14 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         );
       case "issue":
         return json(await reportIssue(shopId, field("job"), field("category")));
+      case "assistant/photo-check": {
+        // Validates a chat upload before it becomes the active room; never reserves a preview credit.
+        guardPhotoCheck(shopId, field("visitor"));
+        await requireAssistantEnabled(shopId);
+        const photo = await photoFrom(form);
+        if (!photo) return json({ ok: false, verdict: "unclear", message: ROOM_PHOTO_MESSAGES.unclear, checked: true });
+        return json(await checkAssistantRoomPhoto({ shopId, photo, signal: request.signal }));
+      }
       case "assistant/turn":
         return json(await startAssistantTurn(admin, shopId, form));
       case "assistant/stream":

@@ -60,6 +60,12 @@ describe("managed manual configurations in Room Assistant", () => {
     expect(valuesFor(data, data.attributes[1], { Fabric: "Velvet" })[0]?.image).toBe("velvet-ascot.jpg");
     expect(valuesFor(data, data.attributes[1], { Fabric: "Boucle" })[0]?.image).toBe("boucle-ascot.jpg");
   });
+  it("shows a real colour sample before a fabric is chosen instead of a blank dot", () => {
+    const data: any = { attributes: [{ name: "Fabric", kind: "fabric", values: [{ value: "Plush" }] },
+      { name: "Colour", kind: "colour", values: [{ value: "Black", colour: null, image: null, samples: { Plush: { image: null, colour: "#000000" } } }] }],
+      variants: [{ values: { Fabric: "Plush", Colour: "Black" }, available: true }] };
+    expect(valuesFor(data, data.attributes[1], {})[0]).toMatchObject({ colour: "#000000", disabled: false });
+  });
   it("does not treat inherited sample keys as merchant-provided colours", () => {
     const data: any = { attributes: [{ name: "Fabric", kind: "fabric", values: [{ value: "constructor" }] }, { name: "Colour", kind: "colour", values: [{ value: "Ascot", image: null, colour: null, samples: {} }] }], variants: [] };
     expect(valuesFor(data, data.attributes[1], { Fabric: "constructor" })).toEqual([]);

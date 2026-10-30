@@ -46,7 +46,12 @@ const matches = (variant: OptionVariant, selections: Record<string, string>, exc
 export function valuesFor(data: ProductOptions, attribute: OptionAttribute, selections: Record<string, string>): ValueState[] {
   const fabric = data.attributes.find((entry) => entry.kind === "fabric" && entry !== attribute);
   const family = attribute.kind === "colour" && fabric ? selections[fabric.name] : undefined;
-  const sampleFor = (option: OptionValue) => family && option.samples && Object.prototype.hasOwnProperty.call(option.samples, family) ? option.samples[family] : undefined;
+  const sampleFor = (option: OptionValue) => {
+    if (!option.samples) return undefined;
+    if (family) return Object.prototype.hasOwnProperty.call(option.samples, family) ? option.samples[family] : undefined;
+    // Before a fabric is chosen, show the colour's first real sample instead of a blank dot.
+    return Object.values(option.samples).find((sample) => sample.colour || sample.image);
+  };
   return attribute.values
     .filter((option) => !family || !!sampleFor(option) || data.variants.some((variant) => variant.values[fabric!.name] === family && variant.values[attribute.name] === option.value))
     .map((option) => {

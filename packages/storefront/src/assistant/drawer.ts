@@ -74,6 +74,7 @@ const ICONS = {
   camera: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.5" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>`,
 };
 
+const ROOM_PHOTO_READY = "Your room photo is ready!";
 const RECOMMEND_ROOM_REQUEST = "Analyse my room photo and show me suitable furniture from this store.";
 const DISCOVER_PREVIEW_REQUEST = "Show me furniture from this store that I can preview in my room.";
 
@@ -93,10 +94,10 @@ function storedVisitorId() {
   try {
     const existing = localStorage.getItem("tryora_vid");
     if (existing) return existing;
-    const id = crypto.randomUUID();
+    const id = uid();
     localStorage.setItem("tryora_vid", id);
     return id;
-  } catch { return crypto.randomUUID(); }
+  } catch { return uid(); }
 }
 
 const uid = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
@@ -112,6 +113,7 @@ export class RoomAssistant {
   private visible = false;
   private attachment: PreparedPhoto | null = null;
   private preparing = false;
+  private preparingLabel = "Preparing photo…";
   private photoEpoch = 0;
   private conversationEpoch = 0;
   private photoScreen: "visualise" | "recommend" | null = null;
@@ -147,6 +149,10 @@ export class RoomAssistant {
   private readonly checkSeq = new Map<string, number>();
   /** Typed email form values, memory only (never saved to session storage). */
   private readonly leadDrafts = new Map<string, { email: string; firstName: string; marketing: boolean }>();
+  /** The preview card the chat keeps in view until it settles, unless the shopper scrolls away to read. */
+  private followPreview: string | null = null;
+  private userScrollAt = 0;
+  private stopViewport: (() => void) | null = null;
 
   constructor(private readonly config: AssistantConfig, private readonly context: AssistantContext = {}) {
     this.shop = config.shop || (typeof location !== "undefined" ? location.hostname : "store");
@@ -178,6 +184,7 @@ export class RoomAssistant {
     this.save();
     this.syncLauncher();
     this.syncLock();
+    this.bindViewport();
     this.renderAll();
     if (this.state.entries.length) this.scrollToEnd(false);
     else if (this.scroller()) this.scroller()!.scrollTop = 0;
@@ -192,6 +199,8 @@ export class RoomAssistant {
     this.menu = "none";
     this.root.hidden = true;
     this.root.dataset.state = "minimised";
+    this.stopViewport?.();
+    this.stopViewport = null;
     this.state.ui.open = false;
     this.save();
     this.syncLauncher();
@@ -298,6 +307,7 @@ export class RoomAssistant {
     this.pendingPreview = null;
     this.state.room = null;
     this.state.roomMedia = false;
+    this.state.roomKey = undefined;
     const urls = new Set([...this.photoUrls.values(), ...this.originals.values(), this.roomPhoto?.url, this.attachment?.url].filter((url): url is string => !!url));
     for (const url of urls) URL.revokeObjectURL(url);
     this.photoUrls.clear();
@@ -309,6 +319,14 @@ export class RoomAssistant {
   }
 
   stop() { this.active?.controller.abort(); }
+
+  /** Makes a photo the active room. Every later preview uses it; earlier previews keep the room they were made in. */
+  private useRoom(photo: PreparedPhoto) {
+    if (this.roomPhoto?.url === photo.url && this.state.roomKey) return;
+    this.roomPhoto = photo;
+    this.state.roomMedia = true;
+    this.state.roomKey = uid();
+  }
 
   // ---------- conversation ----------
 
@@ -329,8 +347,7 @@ export class RoomAssistant {
     const user: Entry = { id: uid(), kind: "user", text, photo: !!photo, at: Date.now() };
     if (photo) {
       this.photoUrls.set(user.id, photo.url);
-      this.roomPhoto = photo;
-      this.state.roomMedia = true;
+      this.useRoom(photo);
       // Persist compressed browser-local photo before the request so another storefront page can restore it.
       await Promise.all([saveMedia(this.shop, "room", photo.blob), saveMedia(this.shop, `user:${user.id}`, photo.blob)]);
       this.attachment = null;
@@ -529,6 +546,15 @@ export class RoomAssistant {
         this.scrollToEnd(false);
         this.announce(`Room Assistant: ${reply.text}`);
         if (!this.visible) this.context.launcher?.classList.add("has-unread");
+        // "Show it in my room" with a room ready: start the same flow as tapping Preview in my room.
+        // Without a photo the card stays, since a file picker can only open from a tap.
+        if (final.startPreview === true && reply.visualise && (this.roomPhoto || this.attachment)) {
+          const item = this.effective(reply.visualise);
+          if (item.previewAvailable && item.variantId && item.optionValue) {
+            this.select(item, this.state.selected?.source === "conversation" ? "conversation" : "card");
+            queueMicrotask(() => void this.startPreview(item));
+          }
+        }
         return;
       }
       case "error":
@@ -609,10 +635,9 @@ export class RoomAssistant {
     this.state.selected = { productRef: chosen.productRef, variantRef: chosen.variantRef, source: keepConversationChoice ? "conversation" : "card" };
     if (this.attachment) {
       const previous = this.roomPhoto;
-      this.roomPhoto = this.attachment; this.attachment = null;
-      this.state.roomMedia = true;
-      void saveMedia(this.shop, "room", this.roomPhoto.blob);
-      if (previous?.url !== this.roomPhoto.url) {
+      this.useRoom(this.attachment); this.attachment = null;
+      void saveMedia(this.shop, "room", this.roomPhoto!.blob);
+      if (previous?.url !== this.roomPhoto!.url) {
         this.state.room = null;
         if (previous && ![...this.photoUrls.values(), ...this.originals.values()].includes(previous.url)) URL.revokeObjectURL(previous.url);
       }
@@ -630,13 +655,17 @@ export class RoomAssistant {
     if (startingEpoch !== this.conversationEpoch || !this.roomPhoto || this.previews.size > 0 ||
         this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating")) return;
     if (this.leadNeeded()) { this.openLeadForm(chosen, false); return; }
-    const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", at: Date.now() };
+    const entry: PreviewEntry = { id: uid(), kind: "preview", item: chosen, status: "generating", stage: "checking_photo", roomKey: this.state.roomKey, at: Date.now() };
     entry.idempotencyKey = entry.id;
     this.originals.set(entry.id, this.roomPhoto.url);
     this.state.entries.push(entry);
     this.save();
-    this.renderAll();
-    this.scrollToEnd(true);
+    // Append rather than re-render: rebuilding earlier preview images collapses their height and makes the chat jump.
+    this.appendEntry(entry);
+    this.refreshCards();
+    this.renderRoomChip();
+    this.followPreview = entry.id;
+    this.scrollToEntry(entry.id, true);
     const controller = new AbortController();
     this.previews.set(entry.id, controller);
     this.syncLauncher();
@@ -675,7 +704,11 @@ export class RoomAssistant {
       this.save();
       this.syncLauncher();
       // Re-enable the card's preview button (it shows "Creating preview…" while the job runs).
-      this.renderAll();
+      this.refreshCards();
+      this.renderComposer();
+      this.renderEntry(entry.id);
+      // A ready preview stays followed until its image has loaded and been scrolled into view.
+      if (entry.status !== "ready" && this.followPreview === entry.id) this.followPreview = null;
     }
     } finally {
       this.previewStarting = false;
@@ -688,7 +721,11 @@ export class RoomAssistant {
     const room = this.state.roomMedia === true || this.state.entries.some(e => e.kind === "user" && e.photo)
       ? await readMedia(this.shop, "room") : null;
     if (epoch !== this.restoreEpoch) return;
-    if (room && !this.roomPhoto) this.roomPhoto = { blob: room, url: URL.createObjectURL(room), name: "Room photo" };
+    if (room && !this.roomPhoto) {
+      this.roomPhoto = { blob: room, url: URL.createObjectURL(room), name: "Room photo" };
+      // Older sessions have no room id; the restored photo is still one room.
+      this.state.roomKey ??= uid();
+    }
     for (const entry of this.state.entries) {
       if (epoch !== this.restoreEpoch) return;
       if (entry.kind === "user" && entry.photo && !this.photoUrls.has(entry.id)) {
@@ -750,7 +787,7 @@ export class RoomAssistant {
       this.previews.delete(entry.id);
       this.save();
       this.syncLauncher();
-      if (this.visible) this.renderAll();
+      if (this.visible) { this.refreshCards(); this.renderComposer(); this.renderEntry(entry.id); }
     }
   }
 
@@ -823,6 +860,17 @@ export class RoomAssistant {
     try {
       const prepared = await (this.context.preparePhoto ?? prepareRoomPhoto)(file);
       if (epoch !== this.photoEpoch) { URL.revokeObjectURL(prepared.url); return; }
+      this.preparingLabel = "Checking your photo…";
+      this.renderComposer();
+      const check = await this.checkRoomPhoto(prepared.blob);
+      if (epoch !== this.photoEpoch) { URL.revokeObjectURL(prepared.url); return; }
+      if (!check.ok) {
+        // Not a usable room: never the active room, never a preview. A pending preview waits for a better photo.
+        URL.revokeObjectURL(prepared.url);
+        this.composerError = check.message;
+        this.announce(check.message);
+        return;
+      }
       attached = true;
       if (this.attachment && this.attachment.url !== this.roomPhoto?.url) URL.revokeObjectURL(this.attachment.url);
       this.attachment = prepared;
@@ -836,6 +884,7 @@ export class RoomAssistant {
     } finally {
       if (epoch === this.photoEpoch) {
         this.preparing = false;
+        this.preparingLabel = "Preparing photo…";
         this.renderComposer();
         this.renderPhotoScreen();
         this.renderMenus();
@@ -848,9 +897,23 @@ export class RoomAssistant {
       await this.startPreview(item);
       return;
     }
-    // Let the shopper add an optional message; only Send submits the photo for analysis.
-    this.textarea()?.focus();
-    this.announce("Photo ready. Add a message if you like, then press Send for recommendations.");
+    // Let the shopper add an optional message; nothing is sent or generated until they choose the next step.
+    if (!coarsePointer()) this.textarea()?.focus();
+    const next = this.attachmentNextStep();
+    this.announce(`${ROOM_PHOTO_READY} ${next.hint} Choose ${next.label} when you're ready.`);
+  }
+
+  /** Asks the server whether the photo is a clear room. An older server or an outage accepts it: previews re-check. */
+  private async checkRoomPhoto(photo: Blob): Promise<{ ok: boolean; message: string }> {
+    const form = new FormData();
+    form.set("visitor", storedVisitorId());
+    form.set("photo", photo, "room.jpg");
+    try {
+      const response = await fetch(`${PROXY}/assistant/photo-check`, { method: "POST", body: form, credentials: "same-origin", signal: AbortSignal.timeout(25_000) });
+      const body = await response.json().catch(() => null);
+      if (response.ok && typeof body?.ok === "boolean" && typeof body.message === "string") return { ok: body.ok, message: body.message.slice(0, 200) };
+    } catch { /* Fall through: the preview's own photo check still runs before any credit. */ }
+    return { ok: true, message: ROOM_PHOTO_READY };
   }
 
   removeAttachment() {
@@ -912,11 +975,10 @@ export class RoomAssistant {
     this.originals.set(id, roomUrl);
     void Promise.all([saveMedia(this.shop, "room", result.room), saveMedia(this.shop, `user:${userId}`, result.room), saveMedia(this.shop, `original:${id}`, result.room)]);
     void saveMedia(this.shop, `preview:${id}`, result.image);
-    this.roomPhoto = { blob: result.room, url: roomUrl, name: "Room photo" };
-    this.state.roomMedia = true;
+    this.useRoom({ blob: result.room, url: roomUrl, name: "Room photo" });
     this.state.entries.push({ id: userId, kind: "user", text: `Preview ${result.title}${result.selectionLabel ? ` / ${result.selectionLabel}` : ""} in my room.`, photo: true, at: Date.now() });
     this.previewUrls.set(id, URL.createObjectURL(result.image));
-    this.state.entries.push({ id, kind: "preview", item, status: "ready", at: Date.now() });
+    this.state.entries.push({ id, kind: "preview", item, status: "ready", roomKey: this.state.roomKey, at: Date.now() });
     this.state.selected = { productRef: item.productRef, variantRef: item.variantRef, source: "options" };
     if (result.leadDone) this.state.lead.done = true;
     this.state.previewsDelivered++;
@@ -998,6 +1060,9 @@ export class RoomAssistant {
       case "edit-room": this.pendingIntent = "recommend"; this.photoScreen = "recommend"; this.menu = "none"; this.renderAll(); return;
       case "forget-room": return this.forgetRoom();
       case "send": return void this.send();
+      // A typed message stays authoritative; otherwise the button says what the photo is for.
+      case "use-room": return void this.send(this.textarea()?.value.trim() || "Use this room instead of my previous room.");
+      case "photo-recommend": return void this.send(this.textarea()?.value.trim() || RECOMMEND_ROOM_REQUEST);
       case "stop": return this.stop();
       case "retry": return void this.retry(id);
       case "welcome": return this.welcomeAction(element.dataset.action ?? "");
@@ -1165,13 +1230,19 @@ export class RoomAssistant {
       const target = event.target as HTMLInputElement;
       if (target.name === "ta-lead-marketing" && target.dataset.entry) this.updateLeadDraft(target);
     });
+    const scroll = root.querySelector<HTMLElement>("[data-ta-scroll]")!;
+    const touched = () => { this.userScrollAt = Date.now(); };
+    for (const type of ["wheel", "touchmove", "keydown"]) scroll.addEventListener(type, touched, { passive: true });
+    scroll.addEventListener("scroll", () => this.onUserScroll(), { passive: true });
     // Image load and error events do not bubble; listen in the capture phase.
     root.addEventListener("load", (event) => {
       const thumb = (event.target as HTMLElement).closest?.(".tryora-assistant__thumb") as HTMLElement | null;
       if (thumb) thumb.dataset.state = "loaded";
+      this.previewImageSettled(event.target as HTMLElement);
     }, true);
     root.addEventListener("error", (event) => {
       const image = event.target as HTMLElement;
+      this.previewImageSettled(image);
       const thumb = image.closest?.(".tryora-assistant__thumb") as HTMLElement | null;
       if (!thumb || image.tagName !== "IMG") return;
       thumb.dataset.state = "error";
@@ -1182,6 +1253,16 @@ export class RoomAssistant {
     document.body.appendChild(root);
     this.root = root;
 
+  }
+
+  /** The finished preview image now has its real height: bring the whole result into view once, then stop following. */
+  private previewImageSettled(image: HTMLElement) {
+    const id = image.closest?.<HTMLElement>(".tryora-assistant__message--preview")?.dataset.entry;
+    if (!id || id !== this.followPreview) return;
+    const entry = this.state.entries.find((candidate) => candidate.id === id);
+    if (entry?.kind !== "preview" || entry.status === "generating") return;
+    this.scrollToEntry(id, true);
+    this.followPreview = null;
   }
 
   private textarea() { return this.root?.querySelector<HTMLTextAreaElement>("textarea") ?? null; }
@@ -1238,13 +1319,16 @@ export class RoomAssistant {
     const box = this.root.querySelector<HTMLElement>("[data-ta-attachment]")!;
     if (this.preparing) {
       box.hidden = false;
-      box.innerHTML = `<span class="tryora-assistant__spinner" aria-hidden="true"></span><span>Preparing photo…</span>`;
+      box.innerHTML = `<span class="tryora-assistant__spinner" aria-hidden="true"></span><span>${escapeHtml(this.preparingLabel)}</span>`;
     } else if (this.attachment) {
       box.hidden = false;
+      const next = this.attachmentNextStep();
+      const busy = !!this.active || this.previewStarting || this.previews.size > 0;
       box.innerHTML = `<img src="${escapeHtml(this.attachment.url)}" alt="Selected room photo">
-        <span class="tryora-assistant__attachment-name">Room photo ready</span>
+        <span class="tryora-assistant__attachment-name">${ROOM_PHOTO_READY}<small>${escapeHtml(next.hint)}</small></span>
         <button type="button" data-ta="upload" class="tryora-assistant__chip-button">Replace</button>
-        <button type="button" data-ta="remove-photo" class="tryora-assistant__chip-button" aria-label="Remove photo">Remove</button>`;
+        <button type="button" data-ta="remove-photo" class="tryora-assistant__chip-button" aria-label="Remove photo">Remove</button>
+        <button type="button" class="tryora-assistant__primary tryora-assistant__attachment-action" data-ta="${next.action}"${next.id ? ` data-id="${escapeHtml(next.id)}"` : ""} ${busy ? "disabled" : ""}>${escapeHtml(next.label)}</button>`;
     } else {
       box.hidden = true;
       box.innerHTML = "";
@@ -1255,7 +1339,7 @@ export class RoomAssistant {
     const send = this.root.querySelector<HTMLButtonElement>(".tryora-assistant__send")!;
     const textarea = this.textarea();
     if (textarea) textarea.placeholder = this.attachment
-      ? "Add a message (optional), or send for recommendations…"
+      ? "Add an optional message…"
       : "Describe your room or ask for a preview…";
     const busy = !!this.active;
     send.dataset.ta = busy ? "stop" : "send";
@@ -1265,13 +1349,31 @@ export class RoomAssistant {
     this.root.querySelector<HTMLButtonElement>("[data-ta='attach']")!.disabled = busy || this.preparing;
   }
 
+  /** The newest card for the shopper's current selection, if one is in this chat. */
+  private selectedItem(): Recommendation | null {
+    const selected = this.state.selected;
+    if (!selected) return null;
+    const items = this.state.entries.flatMap(entry => entry.kind === "assistant" ? [...entry.recommendations, ...(entry.visualise ? [entry.visualise] : [])] : entry.kind === "preview" ? [entry.item] : []);
+    return [...items].reverse().find(item => item.productRef === selected.productRef && (item.variantRef ?? null) === selected.variantRef) ?? null;
+  }
+
+  /** What a newly attached photo is for: preview the selected product, replace the current room, or get recommendations. */
+  private attachmentNextStep(): { action: string; id?: string; label: string; hint: string } {
+    const item = this.selectedItem();
+    const ready = item ? this.effective(item) : null;
+    if (ready?.previewAvailable && ready.variantId && ready.optionValue && this.config.previewsAvailable !== false) {
+      return { action: "preview", id: ready.id, label: "Preview in my room", hint: "See your selected product in this room." };
+    }
+    if (this.roomPhoto) return { action: "use-room", label: "Use this room", hint: "Replaces your current room for previews and advice." };
+    return { action: "photo-recommend", label: "Get recommendations", hint: "Furniture ideas that suit this room." };
+  }
+
   private renderRoomChip() {
     const box = this.root?.querySelector<HTMLElement>("[data-ta-room]");
     if (!box) return;
     const room = this.state.room;
     const selected = this.state.selected;
-    const items = this.state.entries.flatMap(entry => entry.kind === "assistant" ? [...entry.recommendations, ...(entry.visualise ? [entry.visualise] : [])] : entry.kind === "preview" ? [entry.item] : []);
-    const item = [...items].reverse().find(item => item.productRef === selected?.productRef && (item.variantRef ?? null) === selected?.variantRef);
+    const item = this.selectedItem();
     const selection = selected ? `<p class="tryora-assistant__selection" role="status">Selected: ${escapeHtml(item ? `${item.title}${Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value)).map(([name, value]) => " · " + name + ": " + value).join("")}` : this.context.productTitle || "this product")}</p>` : "";
     if (!room && !this.roomPhoto) { box.innerHTML = selection; return; }
     const summary = room ? [room.style, ...room.colours.slice(0, 2)].filter(Boolean).join(", ") : "photo added";
@@ -1286,7 +1388,24 @@ export class RoomAssistant {
     const near = this.nearBottom();
     node.outerHTML = this.entryHtml(entry);
     this.renderRoomChip();
-    if (near) this.scrollToEnd(false);
+    if (this.followPreview === id) this.scrollToEntry(id, false);
+    else if (near) this.scrollToEnd(false);
+  }
+
+  /** Adds one new entry at the end without rebuilding earlier messages (and their already-loaded images). */
+  private appendEntry(entry: Entry) {
+    const scroll = this.scroller();
+    if (!scroll || this.photoScreen || this.showWelcome || !scroll.querySelector("[data-entry]")) return this.renderAll();
+    scroll.insertAdjacentHTML("beforeend", this.entryHtml(entry));
+  }
+
+  /** Re-renders product cards only (for example to re-enable Preview in my room), leaving previews and scroll alone. */
+  private refreshCards() {
+    for (const entry of this.state.entries) {
+      if (entry.kind !== "assistant" || (!entry.recommendations.length && !entry.visualise)) continue;
+      const node = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(entry.id)}"]`);
+      if (node) node.outerHTML = this.entryHtml(entry);
+    }
   }
 
   private renderStatus(entry: AssistantEntry) {
@@ -1607,8 +1726,8 @@ export class RoomAssistant {
       <div>
         <span class="tryora-assistant__eyebrow">AI room preview</span>
         <h4>${escapeHtml(item.title)}</h4>
-        <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your room photo." : "You'll be asked for a room photo."} Visully places the item automatically.</p>
-        <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : this.roomPhoto ? "Generate preview" : "Upload room photo"}</button>
+        <p class="tryora-assistant__fineprint">${this.roomPhoto ? "Uses your current room photo." : "You'll be asked for a room photo."} Visully places the item automatically.</p>
+        <button type="button" class="tryora-assistant__primary" data-ta="preview" data-id="${escapeHtml(item.id)}" ${this.generating(item) ? "disabled" : ""}>${this.generating(item) ? "Creating preview…" : "Preview in my room"}</button>
       </div>
     </div>`;
   }
@@ -1637,7 +1756,9 @@ export class RoomAssistant {
           <div class="tryora-assistant__card-actions" role="group" aria-label="Compare room previews">
             ${this.originals.has(entry.id) ? `<button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="original" aria-pressed="${comparison === "original"}">Original</button>` : ""}
             <button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="preview" aria-pressed="${comparison === "preview"}">Preview</button>
-            ${this.state.entries.filter((p): p is PreviewEntry => p.kind === "preview" && p.id !== entry.id && p.status === "ready" && this.previewUrls.has(p.id)).map(p => `<button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="${escapeHtml(p.id)}" aria-pressed="${comparison === p.id}">Compare: ${escapeHtml(p.item.title)}</button>`).join("")}
+            ${this.state.entries.filter((p): p is PreviewEntry => p.kind === "preview" && p.id !== entry.id && p.status === "ready" && this.previewUrls.has(p.id) &&
+              // Only previews made in this same room are comparable; another room's result is never shown here.
+              (p.roomKey ?? null) === (entry.roomKey ?? null)).map(p => `<button class="tryora-assistant__secondary" type="button" data-ta="compare" data-id="${id}" data-source="${escapeHtml(p.id)}" aria-pressed="${comparison === p.id}" title="Compare: ${escapeHtml(p.item.title)}">Compare: ${escapeHtml(p.item.title)}</button>`).join("")}
           </div>
           <figcaption><strong>${escapeHtml(comparison === "original" ? "Original room" : displayedLabel)}</strong>
             <span>AI-generated visualisation for illustration only. Colour and placement may differ from the actual product.</span></figcaption>
@@ -2023,6 +2144,66 @@ export class RoomAssistant {
     if (!scroll) return;
     if (typeof scroll.scrollTo === "function") scroll.scrollTo({ top: scroll.scrollHeight, behavior: smooth && !reducedMotion() ? "smooth" : "auto" });
     else scroll.scrollTop = scroll.scrollHeight;
+  }
+
+  /**
+   * Brings one entry fully into view: the whole card when it fits, otherwise its top so the status or image heading
+   * is never cut off. Does nothing when it is already visible, so repeated stage updates never jiggle the chat.
+   */
+  private scrollToEntry(id: string, smooth: boolean) {
+    const scroll = this.scroller();
+    const node = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(id)}"]`);
+    if (!scroll || !node || !this.visible) return;
+    const view = scroll.getBoundingClientRect();
+    const card = node.getBoundingClientRect();
+    if (card.top >= view.top && card.bottom <= view.bottom) return;
+    const offset = card.height <= view.height - 16 ? card.bottom - view.bottom + 8 : card.top - view.top - 8;
+    const top = Math.max(0, scroll.scrollTop + offset);
+    if (typeof scroll.scrollTo === "function") scroll.scrollTo({ top, behavior: smooth && !reducedMotion() ? "smooth" : "auto" });
+    else scroll.scrollTop = top;
+  }
+
+  /** A shopper who scrolls away from a followed preview is reading something else: stop pulling them back. */
+  private onUserScroll() {
+    const id = this.followPreview;
+    if (!id || Date.now() - this.userScrollAt > 800) return;
+    const scroll = this.scroller();
+    const node = this.root?.querySelector<HTMLElement>(`[data-entry="${CSS.escape(id)}"]`);
+    if (!scroll || !node) return;
+    if (node.getBoundingClientRect().top > scroll.getBoundingClientRect().bottom) this.followPreview = null;
+  }
+
+  /**
+   * Phones: size the panel to the visual viewport, so the on-screen keyboard (iOS Safari does not resize the layout
+   * viewport) never covers the composer, and no blank band is left when it closes.
+   */
+  private bindViewport() {
+    const viewport = typeof window !== "undefined" ? window.visualViewport : undefined;
+    if (!viewport || !this.root || this.stopViewport) return;
+    const root = this.root;
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const near = this.nearBottom();
+      const keyboard = window.innerHeight - viewport.height > 120;
+      root.style.setProperty("--ta-vv-height", `${Math.round(viewport.height)}px`);
+      root.style.setProperty("--ta-vv-top", `${Math.round(viewport.offsetTop)}px`);
+      root.dataset.keyboard = keyboard ? "open" : "closed";
+      // Keep the latest message visible when the keyboard opens or closes, unless the shopper is reading above.
+      if (near) this.scrollToEnd(false);
+    };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
+    viewport.addEventListener("resize", schedule);
+    viewport.addEventListener("scroll", schedule);
+    update();
+    this.stopViewport = () => {
+      viewport.removeEventListener("resize", schedule);
+      viewport.removeEventListener("scroll", schedule);
+      if (frame) cancelAnimationFrame(frame);
+      root.style.removeProperty("--ta-vv-height");
+      root.style.removeProperty("--ta-vv-top");
+      delete root.dataset.keyboard;
+    };
   }
 
   private announce(text: string) {

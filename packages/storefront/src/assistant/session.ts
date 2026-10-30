@@ -86,7 +86,9 @@ export type Entry =
   }
   | { id: string; kind: "preview"; item: Recommendation; status: "generating" | "ready" | "failed"; stage?: string; error?: string; handoff?: string;
     /** A safe opaque server-side job identifier, never the image, token or customer data. */
-    jobId?: string; idempotencyKey?: string; at: number }
+    jobId?: string; idempotencyKey?: string;
+    /** The room photo this preview was generated in; previews are only compared within the same room. */
+    roomKey?: string; at: number }
   | { id: string; kind: "notice"; text: string; at: number }
   /** The merchant's email step for previews. The email itself is never stored here. */
   | { id: string; kind: "lead"; item: Recommendation; status: "open" | "sending" | "done" | "skipped"; after: boolean; error?: string; at: number };
@@ -100,6 +102,8 @@ export interface ChatState {
   room: RoomNotes | null;
   /** True only when the shopper explicitly supplied a photo in this session. */
   roomMedia?: boolean;
+  /** Opaque id of the active room photo; changes whenever the shopper switches rooms. */
+  roomKey?: string;
   preferences: Preferences | null;
   shown: Ref[];
   /** Every product shown in this chat's recommendation batches, so "show more" never repeats one (optional for older sessions). */
