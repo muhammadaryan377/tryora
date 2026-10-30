@@ -212,6 +212,11 @@ describe("shared storefront and server preview authority", () => {
     expect(black.available).toBe(true);
     expect(black.variants[0]!.id).toBe(f.variants[0]!.id);
     expect(data.previewOnly).toBe(true);
+    const original = await resolveConfiguredPreview(context, "__original__", f.variants[0]!.id, "revision-1");
+    expect(original.urls).toEqual(["https://cdn.shopify.com/native.jpg"]);
+    expect(original.previewOnlyAppearance).toBeUndefined();
+    expect(original.swatchUrl).toBeUndefined();
+    expect(original.fabricTextureUrl).toBeUndefined();
     const approved = await resolveConfiguredPreview(context, black.value, f.variants[0]!.id, "revision-1");
     expect(approved.urls).toEqual(["https://cdn.shopify.com/native.jpg"]);
     expect(approved.variantId).toBe(f.variants[0]!.id);

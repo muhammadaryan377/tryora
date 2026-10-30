@@ -1203,6 +1203,19 @@ describe("simple chat cards and safe direct previews", () => {
     ],
   });
 
+  it("keeps the original preview enabled without silently choosing the first virtual colour", async () => {
+    proxy.options = { ...selectableOptions(), previewOnly: true };
+    const assistant = await showCards([card({ hasOptions: true, variantCount: 3, optionValue: "__original__", options: {} })]);
+    assistant.roomPhoto = photo();
+    await settle(60);
+    expect($(".tryora-assistant__card [data-ta='preview']")!.hasAttribute("disabled")).toBe(false);
+    expect($(".tryora-assistant__card [data-ta='opt'][aria-pressed='true']")).toBeNull();
+    click(".tryora-assistant__card [data-ta='preview']");
+    await settle(1500);
+    const start = proxy.calls.find(call => call.url === "/apps/visully/preview");
+    expect(start?.body?.get("option")).toBe("__original__");
+  });
+
   it("keeps real product colour swatches in a collapsed picker on a recommended card", async () => {
     proxy.options = selectableOptions();
     await showCards([card({ hasOptions: true, variantCount: 3, options: { Fabric: "Plush", Colour: "Cream", Size: "King" } })]);

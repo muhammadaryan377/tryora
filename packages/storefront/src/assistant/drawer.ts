@@ -1683,7 +1683,8 @@ export class RoomAssistant {
     if (item.hasOptions && !panel && entryId && entryId === this.latestCardsEntry()) queueMicrotask(() => void this.loadOptions(key));
     const choices = item.hasOptions ? panel ? this.optionsPanelHtml(key, panel)
       : `<button type="button" class="tryora-assistant__chip-button" data-ta="options" data-card="${escapeHtml(key)}">Show fabric &amp; colour options</button>` : "";
-    const incomplete = !!(panel?.data && Array.isArray(panel.data.variants) && !resolveVariant(panel.data, panel.selections));
+    const originalAppearance = panel?.data?.previewOnly && Object.keys(panel.selections).length === 0;
+    const incomplete = !originalAppearance && !!(panel?.data && Array.isArray(panel.data.variants) && !resolveVariant(panel.data, panel.selections));
     const id = escapeHtml(item.id);
     // Do not show the old variant's photo or price as the newly selected appearance while it is incomplete.
     const generalPhoto = incomplete || (item.imageSource === "product" && !!item.variantRef && item.hasOptions !== false);
@@ -2010,7 +2011,7 @@ export class RoomAssistant {
 
   /** With exactly one purchasable configuration there is nothing to choose: use it and check its preview directly. */
   private autoSelectOnly(key: string, panel: CardOptionsState, knownVariantRef: string | null) {
-    if (knownVariantRef || !panel.data || !panel.data.singleVariant) return;
+    if (knownVariantRef || !panel.data || panel.data.previewOnly || !panel.data.singleVariant) return;
     const available = panel.data.variants.filter((variant) => variant.available);
     if (available.length !== 1) return;
     panel.selections = selectionsFor(panel.data, available[0]!.ref);

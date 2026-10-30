@@ -35,14 +35,15 @@ export const manualMappingAdapter: ProviderAdapter = {
     // Exact native mappings, when published, retain the stricter path below.
     const catalogue = isFabricDocument(setting.mapping) ? parseFabricDocument(setting.mapping, config.shopId, config.productId) : null;
     if (catalogue && !catalogue.published && !catalogue.draft.bindings.length) {
+      const original = request.combinationId === "__original__";
       let key: unknown;
       try { key = JSON.parse(request.combinationId); } catch { /* invalid selection */ }
-      if (!Array.isArray(key) || key.length !== 2 || key.some((id) => typeof id !== "string")) {
+      if (!original && (!Array.isArray(key) || key.length !== 2 || key.some((id) => typeof id !== "string"))) {
         return { status: "rejected", reason: "unsupported", issue: "option_not_mapped" };
       }
-      const fabric = catalogue.draft.fabrics.find((f) => f.id === key[0] && f.enabled);
-      const colour = fabric?.colours.find((c) => c.id === key[1] && c.enabled);
-      if (!fabric || !colour) return { status: "rejected", reason: "unsupported", issue: "option_not_mapped" };
+      const fabric = catalogue.draft.fabrics.find((f) => f.id === (key as string[] | undefined)?.[0] && f.enabled);
+      const colour = fabric?.colours.find((c) => c.id === (key as string[] | undefined)?.[1] && c.enabled);
+      if (!original && (!fabric || !colour)) return { status: "rejected", reason: "unsupported", issue: "option_not_mapped" };
       // Never convert a preview-only colour into a Shopify variant. The source
       // must remain the shopper's exact, real, currently available variant.
       if (!context.sourceVariantId || context.sourceVariantId !== request.nativeVariantId)
@@ -65,6 +66,15 @@ export const manualMappingAdapter: ProviderAdapter = {
         ? approvedPhoto.image.url
         : source.image?.url && safeShopifyMediaUrl(source.image.url) ? source.image.url : null;
       if (!reference) return { status: "rejected", reason: "missing_reference", issue: "missing_reference" };
+      if (original) {
+        const preview = { urls: [reference], variantId: source.id, selectedOptions: sourceOptions,
+          optionValue: "Original product appearance", referenceVersion: `${setting.revision}:original:${source.id}:${config.referenceMediaId ?? "variant"}`,
+          referenceAngle: config.referenceAngle ?? "front", itemNoun: config.itemNoun || defaultNoun(product.productType, product.title),
+          description: `${product.title}\n${product.description ?? ""}`.slice(0, 8000) };
+        return { status: "approved", scope: request.scope, nativeVariantId: source.id, options: sourceOptions,
+          referenceUrls: [reference], referenceVersion: preview.referenceVersion, product: preview };
+      }
+      if (!fabric || !colour) return { status: "rejected", reason: "unsupported", issue: "option_not_mapped" };
       const sampleIds = [colour.swatchMediaId, fabric.textureMediaId].filter((id): id is string => !!id);
       // Sample lookup is optional: keep using the saved names/HEX if Files are unavailable.
       const savedSamples = await savedFabricSampleFiles(context.admin, sampleIds, new Set(media.map((m) => m.id))).catch(() => []);
