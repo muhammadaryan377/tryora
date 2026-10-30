@@ -98,7 +98,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     try {
       guardAssistantRead(session.shop, url.searchParams.get("visitor") ?? "");
       return json(await checkVariantPreview(admin, session.shop, url.searchParams.get("product") ?? "", url.searchParams.get("variant") ?? "",
-        url.searchParams.get("sourceVariant") || undefined));
+        url.searchParams.get("sourceVariant") || undefined, url.searchParams.get("option") || undefined));
     } catch (e) {
       const code = errorCode(e);
       return json({ error: code }, code === "RATE_LIMITED" ? 429 : code === "NOT_FOUND" || code === "BAD_REQUEST" ? 404 : 503);

@@ -2007,6 +2007,8 @@ export class RoomAssistant {
     apply({ previewAvailable: false, previewStatus: "unavailable", previewReason: "Checking AI room preview for this option…" });
     const params = new URLSearchParams({ product: item.productId, variant: item.variantId ?? "", visitor: storedVisitorId() });
     if (item.previewContext?.sourceVariantId && item.previewContext.sourceVariantId !== item.variantId) params.set("sourceVariant", item.previewContext.sourceVariantId);
+    // Preview-only appearances share one source variant, so the chosen fabric/colour is checked explicitly.
+    if (item.optionValue) params.set("option", item.optionValue);
     try {
       const response = await fetch(`${PROXY}/assistant/preview-check?${params}`, { credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));

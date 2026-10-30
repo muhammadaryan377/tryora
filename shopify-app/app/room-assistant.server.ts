@@ -1262,6 +1262,8 @@ export interface PreviewCheckContext {
   selectedVariantRef: string | null;
   /** The product page the shopper is on; it keeps the live-source popup handoff without a verified selection. */
   currentProductId: string | null;
+  /** A preview-only appearance (fabric/colour) the shopper chose for an unbound catalogue, validated by its adapter. */
+  option?: string;
 }
 
 export interface PreviewCheck {
@@ -1291,6 +1293,12 @@ export async function exactPreviewStatus(ctx: PreviewCheckContext, product: Cata
       try { mapping = parseManualMapping(setting.mapping, ctx.shopId, product.id); }
       catch { return refuse((setting.mapping as { published?: unknown }).published ? "mapping_out_of_sync" : "mapping_not_published"); }
       const entry = mapping.entries.find((e) => e.variantId === variant.id);
+      if (!entry && ctx.option) {
+        // Preview-only catalogue: the variant itself is the source; the adapter rejects anything bound or published.
+        const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting, sourceVariantId: variant.id }, ctx.option, variant.id, setting.revision);
+        if (validated.variantId !== variant.id) return refuse("not_approved");
+        return { status: "available", optionValue: ctx.option, reference: imageUrl(validated.urls[0]), previewContext: { mappingRevision: setting.revision, sourceVariantId: variant.id } };
+      }
       if (!entry) return refuse("variant_not_mapped");
       const selected = ctx.selectedVariantRef;
       // A current page without a verified shopper selection must use the existing live-source popup.
