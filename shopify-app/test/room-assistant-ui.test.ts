@@ -2047,12 +2047,14 @@ describe("room photo validation on upload", () => {
     expect($("[data-ta-error]")!.hidden).toBe(true);
   });
 
-  it("accepts the photo when the check is unavailable, leaving the preview's own check in place", async () => {
+  it.each(["offline", { ok: true, verdict: "room", message: "Your room photo is ready!", checked: false }])("asks for retry without accepting the photo when the check is unavailable: %j", async (check) => {
     const assistant = makeAssistant();
     assistant.open();
-    proxy.photoCheck = "offline";
+    proxy.photoCheck = check;
     await attachFile("room.jpg");
-    expect(assistant.attachment.name).toBe("room.jpg");
-    expect($("[data-ta-error]")!.hidden).toBe(true);
+    expect(assistant.attachment).toBeNull();
+    expect($("[data-ta-error]")!.hidden).toBe(false);
+    expect($("[data-ta-error]")!.textContent).toContain("couldn't check your photo");
+    expect(previewStarts()).toHaveLength(0);
   });
 });

@@ -11,7 +11,7 @@ vi.mock("../app/db.server", () => ({
   },
 }));
 
-import { checkAssistantRoomPhoto, ROOM_PHOTO_MESSAGES } from "../app/assistant/photo-check.server";
+import { checkAssistantRoomPhoto, ROOM_PHOTO_MESSAGES, ROOM_PHOTO_UNAVAILABLE } from "../app/assistant/photo-check.server";
 import { setAssistantLogSink } from "../app/assistant/log.server";
 
 const SHOP = "demo.myshopify.com";
@@ -44,10 +44,23 @@ describe("Room Assistant photo check", () => {
     const request = (create.mock.calls[0] as any[])[0];
     expect(request.store).toBe(false);
     expect(request.text.format).toMatchObject({ type: "json_schema", strict: true });
-    expect(request.input[0].content[1]).toMatchObject({ type: "input_image", detail: "low" });
+    expect(request.input[0].content[1]).toMatchObject({ type: "input_image", detail: "high" });
     expect(request.input[0].content[1].image_url).toMatch(/^data:image\/jpeg;base64,/);
     // Billed tokens are recorded like other chatbot calls, without any photo content.
     expect(usage.rows).toEqual([expect.objectContaining({ source: "chatbot", shopId: SHOP, inputTokens: 120, outputTokens: 6 })]);
+  });
+
+  it("does not accept an incomplete response even when it contains room JSON", async () => {
+    const client = { responses: { create: vi.fn(async () => ({ status: "incomplete", output_text: '{"verdict":"room"}' })) } } as any;
+    const result = await checkAssistantRoomPhoto({ shopId: SHOP, photo: await image(900, 700, "#b8a990"), client, env: {} as any });
+    expect(result).toMatchObject({ ok: false, verdict: "unavailable", checked: false });
+  });
+
+  it("allows a separate photo model and gives it an adequate output budget", async () => {
+    const { client, create } = model('{"verdict":"room"}');
+    await checkAssistantRoomPhoto({ shopId: SHOP, photo: await image(900, 700, "#b8a990"), client,
+      env: { OPENAI_ASSISTANT_MODEL: "chat-model", OPENAI_ASSISTANT_PHOTO_MODEL: "photo-model" } as any });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: "photo-model", max_output_tokens: 2048 }), expect.anything());
   });
 
   it("uses the requested wording", () => {
@@ -73,10 +86,10 @@ describe("Room Assistant photo check", () => {
   it.each([
     ["the model is unavailable", new Error("upstream down")],
     ["the answer is not a known verdict", JSON.stringify({ verdict: "kitchen" })],
-  ])("accepts the photo, marked unchecked, when %s", async (_label, answer) => {
+  ])("keeps the photo unverified and asks for retry when %s", async (_label, answer) => {
     const { client } = model(answer as string | Error);
     const result = await checkAssistantRoomPhoto({ shopId: SHOP, photo: await image(900, 700, "#b8a990"), client, env: {} as any });
-    expect(result).toEqual({ ok: true, verdict: "room", message: ROOM_PHOTO_MESSAGES.room, checked: false });
+    expect(result).toEqual({ ok: false, verdict: "unavailable", message: ROOM_PHOTO_UNAVAILABLE, checked: false });
     expect(logs.some((line) => line.event === "room_photo_check_unavailable")).toBe(true);
     expect(JSON.stringify(logs)).not.toContain("upstream down");
   });

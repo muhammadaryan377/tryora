@@ -903,7 +903,7 @@ export class RoomAssistant {
     this.announce(`${ROOM_PHOTO_READY} ${next.hint} Choose ${next.label} when you're ready.`);
   }
 
-  /** Asks the server whether the photo is a clear room. An older server or an outage accepts it: previews re-check. */
+  /** Asks the server whether the photo is a clear room. An unavailable check asks for a retry and never replaces the active room. */
   private async checkRoomPhoto(photo: Blob): Promise<{ ok: boolean; message: string }> {
     const form = new FormData();
     form.set("visitor", storedVisitorId());
@@ -911,9 +911,9 @@ export class RoomAssistant {
     try {
       const response = await fetch(`${PROXY}/assistant/photo-check`, { method: "POST", body: form, credentials: "same-origin", signal: AbortSignal.timeout(25_000) });
       const body = await response.json().catch(() => null);
-      if (response.ok && typeof body?.ok === "boolean" && typeof body.message === "string") return { ok: body.ok, message: body.message.slice(0, 200) };
-    } catch { /* Fall through: the preview's own photo check still runs before any credit. */ }
-    return { ok: true, message: ROOM_PHOTO_READY };
+      if (response.ok && body?.checked === true && typeof body.ok === "boolean" && typeof body.message === "string") return { ok: body.ok && body.verdict === "room", message: body.message.slice(0, 200) };
+    } catch { /* A failed check must not be presented as a verified room. */ }
+    return { ok: false, message: "We couldn't check your photo right now. Please try uploading it again in a moment." };
   }
 
   removeAttachment() {
