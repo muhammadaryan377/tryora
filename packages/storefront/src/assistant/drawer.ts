@@ -1209,7 +1209,7 @@ export class RoomAssistant {
               <div class="tryora-assistant__menu tryora-assistant__menu--attach" role="dialog" aria-label="Add a photo to your message" hidden></div>
             </div>
             <label class="tryora-assistant__sr" for="tryora-assistant-input">Message the Room Assistant</label>
-            <textarea id="tryora-assistant-input" name="assistant-message" rows="1" maxlength="800" placeholder="Describe your room or ask for a preview…"></textarea>
+            <textarea id="tryora-assistant-input" name="assistant-message" rows="1" maxlength="800" placeholder="Ask about your room..."></textarea>
             <button type="button" class="tryora-assistant__send" data-ta="send" aria-label="Send message">${ICONS.send}</button>
           </div>
           <p class="tryora-assistant__fineprint">AI can make mistakes. Check product details before you buy.</p>
@@ -1340,7 +1340,7 @@ export class RoomAssistant {
     const textarea = this.textarea();
     if (textarea) textarea.placeholder = this.attachment
       ? "Add an optional message…"
-      : "Describe your room or ask for a preview…";
+      : "Ask about your room...";
     const busy = !!this.active;
     send.dataset.ta = busy ? "stop" : "send";
     send.innerHTML = busy ? ICONS.stop : ICONS.send;
@@ -1374,7 +1374,8 @@ export class RoomAssistant {
     const room = this.state.room;
     const selected = this.state.selected;
     const item = this.selectedItem();
-    const selection = selected ? `<p class="tryora-assistant__selection" role="status">Selected: ${escapeHtml(item ? `${item.title}${Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value)).map(([name, value]) => " · " + name + ": " + value).join("")}` : this.context.productTitle || "this product")}</p>` : "";
+    const pageTitle = selected && numeric(this.context.productId) === numeric(selected.productRef) ? this.context.productTitle : null;
+    const selection = selected && (item?.title || pageTitle) ? `<p class="tryora-assistant__selection" role="status">Selected: ${escapeHtml(item ? `${item.title}${Object.entries(item.options).filter(([name, value]) => !isDefaultTitle(name, value)).map(([name, value]) => " · " + name + ": " + value).join("")}` : pageTitle!)}</p>` : "";
     if (!room && !this.roomPhoto) { box.innerHTML = selection; return; }
     const summary = room ? [room.style, ...room.colours.slice(0, 2)].filter(Boolean).join(", ") : "photo added";
     box.innerHTML = `${selection}<p class="tryora-assistant__room-chip">${this.roomPhoto ? `<img src="${escapeHtml(this.roomPhoto.url)}" alt="Your selected room" width="40" height="40" style="width:40px;height:40px;min-width:40px;max-width:40px;min-height:40px;max-height:40px;flex:0 0 40px;object-fit:cover;border-radius:6px">` : ICONS.room}<span>Using your room: ${escapeHtml(summary || "photo notes")}</span>

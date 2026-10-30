@@ -760,3 +760,15 @@ html.tryora-assistant-locked { overflow: hidden; }
   .tryora-assistant__preview > .tryora-assistant__card-actions:last-child > * { flex-basis: 100%; }
   .tryora-assistant__bubble { max-width: 94%; }
 }
+
+/* Keep message rows inside the available width, including on narrow theme viewports. */
+.tryora-assistant__scroll > .tryora-assistant__message {
+  flex: 0 0 auto; width: 100%; min-width: 0; max-width: 100%; align-self: stretch;
+}
+.tryora-assistant__bubble { min-width: 0; flex-shrink: 0; }
+.tryora-assistant__text { min-width: 0; overflow-wrap: anywhere; }
+@media (max-width: 749px) {
+  .tryora-assistant__header { gap: 8px; }
+  .tryora-assistant__actions { flex-shrink: 0; }
+  .tryora-assistant__heading p { white-space: normal; overflow: visible; text-overflow: clip; font-size: 12px; }
+}

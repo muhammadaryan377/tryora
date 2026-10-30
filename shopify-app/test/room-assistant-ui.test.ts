@@ -244,7 +244,7 @@ describe("welcome screen", () => {
     const assistant = makeAssistant({ productId: undefined, openCurrentPreview: undefined });
     assistant.open();
     expect($$("[data-ta='welcome']").map((button) => button.dataset.action)).toEqual(["visualise", "recommend"]);
-    expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview\u2026");
+    expect($("textarea")!.getAttribute("placeholder")).toBe("Ask about your room...");
     const picker = $('[data-ta-file="upload"]') as HTMLInputElement;
     const pick = vi.spyOn(picker, "click");
     ($("textarea") as HTMLTextAreaElement).blur();
@@ -274,7 +274,7 @@ describe("welcome screen", () => {
     expect(actions[1]!.querySelector("small")!.textContent).toBe("Get AI-powered furniture, style and colour recommendations for your space.");
     expect(welcome.querySelector("[data-ta='product-preview']")).not.toBeNull();
     expect(welcome.querySelectorAll("[data-ta='upload'], [data-ta='camera'], [data-ta='opt'], .tryora-assistant__swatch")).toHaveLength(0);
-    expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview…");
+    expect($("textarea")!.getAttribute("placeholder")).toBe("Ask about your room...");
     expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
   });
 
