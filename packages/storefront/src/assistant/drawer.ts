@@ -1006,8 +1006,11 @@ export class RoomAssistant {
         const item = this.findItem(id);
         if (item && !item.previewAvailable && this.canPreviewFromPopup(item)) return this.openPopupPreview();
         if (item) {
+          const chosen = this.effective(item);
           this.pendingPreview = null;
-          void this.startPreview(this.effective(item));
+          // The clicked card is the shopper's choice; never swap in a different product-page variant.
+          if (chosen.previewAvailable && chosen.variantId) this.select(chosen, "card");
+          void this.startPreview(chosen);
         }
         return;
       }
