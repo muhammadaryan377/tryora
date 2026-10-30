@@ -72,7 +72,9 @@ export function resolveVariant(data: ProductOptions, selections: Record<string, 
 
 /** The selections that describe an existing variant (used to pre-fill the selector from a card's variant). */
 export function selectionsFor(data: ProductOptions, variantRef: string | null): Record<string, string> {
-  const variant = variantRef ? data.variants.find((entry) => entry.ref === variantRef) : null;
+  const matching = variantRef ? data.variants.filter((entry) => entry.ref === variantRef) : [];
+  // Preview-only appearances reuse one source variant; never guess which fabric/colour was meant.
+  const variant = matching.length === 1 ? matching[0] : null;
   if (!variant) return {};
   return Object.fromEntries(data.attributes.map((attribute) => [attribute.name, variant.values[attribute.name]!]).filter(([, value]) => value !== undefined));
 }

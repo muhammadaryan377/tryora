@@ -563,46 +563,6 @@ export class RoomAssistant {
     return this.context.currentVariantId?.() ?? null;
   }
 
-  /** Select a verified exact product card, but never start a paid generation from the card itself. */
-  private prepareCardPreview(item: Recommendation) {
-    const chosen = this.effective(item);
-    if (!chosen.previewAvailable || !chosen.variantId || !chosen.optionValue) return;
-    this.pendingPreview = chosen;
-    this.select(chosen, "card");
-    if (this.attachment) {
-      const previous = this.roomPhoto;
-      this.roomPhoto = this.attachment;
-      this.attachment = null;
-      if (previous?.url !== this.roomPhoto.url) this.state.room = null;
-    }
-    this.renderAll();
-    if (!this.roomPhoto) {
-      this.addNotice("Upload a room photo to continue. No preview starts until you confirm.");
-      this.openPicker("upload");
-    } else {
-      this.scrollToEnd(true);
-      this.root?.querySelector<HTMLElement>("[data-ta='confirm-preview']")?.focus();
-    }
-  }
-
-  /** Dedicated confirmation is outside the product card so its two CTAs stay unchanged. */
-  private previewConfirmationHtml() {
-    const item = this.pendingPreview;
-    if (!item || !this.roomPhoto || !item.previewAvailable || !item.variantId || !item.optionValue) return "";
-    const photo = item.referenceImage ?? item.image;
-    return `<section class="tryora-assistant__confirm" role="group" aria-label="Confirm room preview">
-      <div class="tryora-assistant__confirm-product">
-        ${this.thumbHtml(photo, item.title, photo ? "Preview reference" : "")}
-        <div><strong>${escapeHtml(item.title)}</strong><p>Preview this exact approved product in your uploaded room photo.</p></div>
-      </div>
-      <p class="tryora-assistant__confirm-note">Photo ready. Generation only starts when you press Generate preview.</p>
-      <div class="tryora-assistant__confirm-actions">
-        <button type="button" class="tryora-assistant__secondary" data-ta="cancel-confirm">Cancel</button>
-        <button type="button" class="tryora-assistant__primary" data-ta="confirm-preview">Generate preview</button>
-      </div>
-    </section>`;
-  }
-
   async startPreview(item: Recommendation) {
     // Acquire before any await: two products must never pass lead/variant checks concurrently.
     if (this.previewStarting || this.previews.size > 0 ||
@@ -884,13 +844,8 @@ export class RoomAssistant {
     if (!attached || epoch !== this.photoEpoch) return;
     if (this.pendingPreview) {
       const item = this.pendingPreview;
-      // Uploading a photo never triggers a charge. Keep the exact product pending for confirmation.
-      this.roomPhoto = this.attachment;
-      this.attachment = null;
-      this.state.room = null;
-      this.select(item, "card");
-      this.renderAll();
-      this.announce("Room photo ready. Choose Generate preview when you are ready.");
+      this.pendingPreview = null;
+      await this.startPreview(item);
       return;
     }
     // Let the shopper add an optional message; only Send submits the photo for analysis.
@@ -974,6 +929,12 @@ export class RoomAssistant {
   }
 
   private welcomeAction(action: string) {
+    if (action === "visualise" && !this.context.productId) {
+      this.composerError = "Please open a product page to preview that product in your room.";
+      this.renderAll();
+      return;
+    }
+    this.composerError = "";
     if (action === "visualise" && this.context.productId && this.context.openAssistantPreview) {
       this.openPopupPreview();
       return;
@@ -1044,20 +1005,12 @@ export class RoomAssistant {
       case "preview": {
         const item = this.findItem(id);
         if (item && !item.previewAvailable && this.canPreviewFromPopup(item)) return this.openPopupPreview();
-        if (item) this.prepareCardPreview(item);
+        if (item) {
+          this.pendingPreview = null;
+          void this.startPreview(this.effective(item));
+        }
         return;
       }
-      case "confirm-preview": {
-        const item = this.pendingPreview;
-        if (!item || !this.roomPhoto) return;
-        this.pendingPreview = null;
-        void this.startPreview(item);
-        return;
-      }
-      case "cancel-confirm":
-        this.pendingPreview = null;
-        this.renderAll();
-        return;
       case "unavailable-product": {
         const item = this.findItem(id);
         if (item) { this.leaveForProduct(); location.assign(item.url); }
@@ -1243,8 +1196,8 @@ export class RoomAssistant {
     this.renderHeader();
     const scroll = this.scroller()!;
     scroll.innerHTML = this.photoScreen ? this.photoScreenHtml() : !this.showWelcome && this.state.entries.length
-      ? this.state.entries.map((entry) => this.entryHtml(entry)).join("") + this.previewConfirmationHtml()
-      : this.welcomeHtml() + this.previewConfirmationHtml();
+      ? this.state.entries.map((entry) => this.entryHtml(entry)).join("")
+      : this.welcomeHtml();
     this.root.querySelector<HTMLElement>(".tryora-assistant__composer")!.hidden = !!this.photoScreen;
     if (this.photoScreen || this.showWelcome || !this.state.entries.length) scroll.scrollTop = 0;
     this.renderComposer();
@@ -2007,6 +1960,8 @@ export class RoomAssistant {
     apply({ previewAvailable: false, previewStatus: "unavailable", previewReason: "Checking AI room preview for this option…" });
     const params = new URLSearchParams({ product: item.productId, variant: item.variantId ?? "", visitor: storedVisitorId() });
     if (item.previewContext?.sourceVariantId && item.previewContext.sourceVariantId !== item.variantId) params.set("sourceVariant", item.previewContext.sourceVariantId);
+    // Preview-only appearances share one source variant, so the chosen fabric/colour is checked explicitly.
+    if (item.optionValue) params.set("option", item.optionValue);
     try {
       const response = await fetch(`${PROXY}/assistant/preview-check?${params}`, { credentials: "same-origin" });
       const body = await response.json().catch(() => ({}));

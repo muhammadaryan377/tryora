@@ -229,9 +229,37 @@ function managedOptions(product: CatalogueProduct, preview: any, sourceVariantId
       previewOption: variant.available && equivalent && swatch?.available && swatch.variants.some((v: any) => v.id === variant.id) ? swatch.value : null,
       previewContext: { mappingRevision: preview.mappingRevision, sourceVariantId: sourceVariantId ?? variant.id } });
   }
+  // Preview-only catalogues: each fabric/colour is an AI illustration over a real source variant (the popup's model).
+  // The source variant stays the Shopify identity; the swatch value is only the preview appearance.
+  if (preview.previewOnly) {
+    const sources = new Map<string, any>();
+    for (const swatch of preview.swatches) for (const v of swatch.available ? swatch.variants : []) {
+      if (!sourceVariantId || v.id === sourceVariantId) sources.set(v.id, v);
+    }
+    // Only native options that differ between sources need choosing; the rest are fixed by the source.
+    const differing = [...new Set([...sources.values()].flatMap((v) => Object.keys(v.options)))]
+      .filter((name) => !changing.has(name) && new Set([...sources.values()].map((v) => v.options[name])).size > 1);
+    for (const swatch of preview.swatches) {
+      if (!swatch.available) continue;
+      for (const source of swatch.variants) {
+        const variant = sources.has(source.id) ? product.variants.find((v) => v.id === source.id) : undefined;
+        if (!variant) continue;
+        const values: Record<string, string> = { Fabric: swatch.group, Colour: swatch.label };
+        for (const name of differing) if (source.options[name] !== undefined) values[addExtra(`native:${name}`, name)] = source.options[name];
+        for (const attribute of attributes.slice(2)) {
+          const value = values[attribute.name];
+          if (value !== undefined && !attribute.values.some((v) => v.value === value)) attribute.values.push({ value, image: null, colour: null });
+        }
+        variants.push({ ref: variant.ref, id: variant.id, values, options: variant.options, price: variant.price, available: variant.available,
+          image: variant.image, referenceImage: source.image ?? variant.image,
+          previewOption: variant.available ? swatch.value : null,
+          previewContext: { mappingRevision: preview.mappingRevision, sourceVariantId: variant.id } });
+      }
+    }
+  }
   // Unbound samples stay visible with disabled choices; they never create synthetic native variants.
   for (const swatch of preview.swatches) {
-    if (!attributes[0]!.values.some((v) => v.value === swatch.group)) attributes[0]!.values.push({ value: swatch.group, image: preview.fabricImages?.[swatch.group] ?? null, colour: null });
+    if (!attributes[0]!.values.some((v) => v.value === swatch.group)) attributes[0]!.values.push({ value: swatch.group, image: preview.fabricImages?.[swatch.group] ?? null, colour: preview.fabricColours?.[swatch.group] ?? null });
     let colour = attributes[1]!.values.find((v) => v.value === swatch.label);
     if (!colour) { colour = { value: swatch.label, image: null, colour: null }; attributes[1]!.values.push(colour); }
     colour.samples ??= Object.create(null) as NonNullable<OptionValue["samples"]>; colour.samples[swatch.group] = { image: swatch.image, colour: swatch.colour };
@@ -256,7 +284,7 @@ export interface VariantPreviewCheck {
  * same strict validation startPreview runs (exact variant, stock, fixed options, approved reference, reviewed mapping),
  * so the card only offers a preview that can actually be generated, and otherwise says precisely why not.
  */
-export async function checkVariantPreview(admin: AdminGraphql, shopId: string, productId: string, variantId: string, sourceVariantId?: string): Promise<VariantPreviewCheck> {
+export async function checkVariantPreview(admin: AdminGraphql, shopId: string, productId: string, variantId: string, sourceVariantId?: string, option?: string): Promise<VariantPreviewCheck> {
   const ref = productId.split("/").pop() ?? "";
   if (!/^gid:\/\/shopify\/Product\/\d{1,20}$/.test(productId) || !isRef(ref) || !/^gid:\/\/shopify\/ProductVariant\/\d{1,20}$/.test(variantId) ||
     (sourceVariantId !== undefined && !/^gid:\/\/shopify\/ProductVariant\/\d{1,20}$/.test(sourceVariantId))) throw new TryoraError("BAD_REQUEST");
@@ -269,7 +297,8 @@ export async function checkVariantPreview(admin: AdminGraphql, shopId: string, p
     where: { shopId, productId: product.id, enabled: true, readiness: "ready" }, include: { choices: true },
   }) ?? undefined : undefined;
   // The card's source configuration is the shopper's explicit selection, so it is never the page-popup handoff.
-  const check = await exactPreviewStatus({ admin, shopId, selectedVariantRef: sourceVariantId ? sourceVariantId.split("/").pop()! : null, currentProductId: null },
+  if (option !== undefined && option.length > 4096) throw new TryoraError("BAD_REQUEST");
+  const check = await exactPreviewStatus({ admin, shopId, selectedVariantRef: sourceVariantId ? sourceVariantId.split("/").pop()! : null, currentProductId: null, option },
     product, variant, config);
   if (check.issue) logAssistant("preview_unavailable", { shop: shopId, product: product.ref, variant: variant.ref, reason: check.issue }, "info");
   return {
