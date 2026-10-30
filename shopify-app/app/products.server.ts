@@ -1,3 +1,4 @@
+import { hasPreviewOnlyColours } from "./customization/fabric-manager";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import prisma from "./db.server";
 import { defaultPlacement, resolveSwatches, type Placement, type ResolvedSwatch } from "./core/index";
@@ -196,8 +197,8 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
   const swatchAutoFill = shop?.swatchAutoFill ?? false;
   const autoEnabled = shop?.autoEnableProducts ?? false;
   const providerRows = providerSettingsEnabled(shopId) ? (await prisma.customizationConfig.findMany({
-    where: { shopId }, select: { shopId: true, productId: true, providerId: true, active: true, revision: true },
-  })).map((r) => ({ ...r, mapping: null })) : [];
+    where: { shopId }, select: { shopId: true, productId: true, providerId: true, active: true, revision: true, mapping: true },
+  })) : [];
   const byId = new Map(configs.map((c) => [c.productId, c]));
   return products.map((p) => {
     const c = byId.get(p.id);
@@ -210,7 +211,7 @@ export async function productRows(shopId: string, products: ShopProduct[]): Prom
     const r = readinessOf(enabled, referenceMediaId, p);
     const mappingStatus = previewOptionStatus(p.options, visualOptionName, c);
     const provider = effectiveSetting(shopId, p.id, providerRows);
-    const customizationProvider = providerSummary(provider.providerId, provider.active);
+    const customizationProvider = providerSummary(provider.providerId, provider.active, hasPreviewOnlyColours(provider.mapping, shopId, p.id));
     const mappingBlocked = provider.providerId === "shopify_native" && !!mappingStatus.warning;
     return {
       ...p,

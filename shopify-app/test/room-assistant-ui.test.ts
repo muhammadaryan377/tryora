@@ -244,7 +244,7 @@ describe("welcome screen", () => {
     const assistant = makeAssistant({ productId: undefined, openCurrentPreview: undefined });
     assistant.open();
     expect($$("[data-ta='welcome']").map((button) => button.dataset.action)).toEqual(["visualise", "recommend"]);
-    expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview\u2026");
+    expect($("textarea")!.getAttribute("placeholder")).toBe("Ask about your room...");
     const picker = $('[data-ta-file="upload"]') as HTMLInputElement;
     const pick = vi.spyOn(picker, "click");
     ($("textarea") as HTMLTextAreaElement).blur();
@@ -274,7 +274,7 @@ describe("welcome screen", () => {
     expect(actions[1]!.querySelector("small")!.textContent).toBe("Get AI-powered furniture, style and colour recommendations for your space.");
     expect(welcome.querySelector("[data-ta='product-preview']")).not.toBeNull();
     expect(welcome.querySelectorAll("[data-ta='upload'], [data-ta='camera'], [data-ta='opt'], .tryora-assistant__swatch")).toHaveLength(0);
-    expect($("textarea")!.getAttribute("placeholder")).toBe("Describe your room or ask for a preview…");
+    expect($("textarea")!.getAttribute("placeholder")).toBe("Ask about your room...");
     expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
   });
 
@@ -2047,12 +2047,14 @@ describe("room photo validation on upload", () => {
     expect($("[data-ta-error]")!.hidden).toBe(true);
   });
 
-  it("accepts the photo when the check is unavailable, leaving the preview's own check in place", async () => {
+  it.each(["offline", { ok: true, verdict: "room", message: "Your room photo is ready!", checked: false }])("asks for retry without accepting the photo when the check is unavailable: %j", async (check) => {
     const assistant = makeAssistant();
     assistant.open();
-    proxy.photoCheck = "offline";
+    proxy.photoCheck = check;
     await attachFile("room.jpg");
-    expect(assistant.attachment.name).toBe("room.jpg");
-    expect($("[data-ta-error]")!.hidden).toBe(true);
+    expect(assistant.attachment).toBeNull();
+    expect($("[data-ta-error]")!.hidden).toBe(false);
+    expect($("[data-ta-error]")!.textContent).toContain("couldn't check your photo");
+    expect(previewStarts()).toHaveLength(0);
   });
 });

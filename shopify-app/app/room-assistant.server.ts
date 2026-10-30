@@ -1,4 +1,4 @@
-import { isFabricDocument } from "./customization/fabric-manager";
+import { isFabricDocument, hasPreviewOnlyColours } from "./customization/fabric-manager";
 import { parseManualMapping } from "./customization/option-model";
 import { combinationKey } from "./customization/adapters/manual-mapping.server";
 import OpenAI from "openai";
@@ -1289,6 +1289,12 @@ export async function exactPreviewStatus(ctx: PreviewCheckContext, product: Cata
     const setting = await loadProviderSetting(ctx.shopId, product.id);
     const adapter = providerAdapter(setting.providerId);
     if (!adapter.capabilities.authorization) return refuse("provider_not_supported");
+    if (setting.providerId === "manual_mapping" && hasPreviewOnlyColours(setting.mapping, ctx.shopId, product.id)) {
+      if (!ctx.option) return { status: "choose_options", optionValue: null };
+      const validated = await resolveConfiguredPreview({ admin: ctx.admin, config, setting, sourceVariantId: variant.id }, ctx.option, variant.id, setting.revision);
+      if (validated.variantId !== variant.id) return refuse("not_approved");
+      return { status: "available", optionValue: ctx.option, reference: imageUrl(validated.urls[0]), previewContext: { mappingRevision: setting.revision, sourceVariantId: variant.id } };
+    }
     if (setting.providerId !== "shopify_native" && !setting.active) return refuse("mapping_not_published");
     if (setting.providerId === "manual_mapping" && isFabricDocument(setting.mapping)) {
       let mapping;

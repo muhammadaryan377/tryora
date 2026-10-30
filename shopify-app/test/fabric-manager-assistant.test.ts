@@ -1,3 +1,6 @@
+import * as registry from "../app/customization/registry.server";
+import { emptyFabricDraft, hasPreviewOnlyColours } from "../app/customization/fabric-manager";
+import { providerSummary } from "../app/customization/provider-catalog";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { providerFixture, shopId, productId } from "./fixtures/provider-mapping";
 const state = vi.hoisted(() => ({ context: null as any, preview: null as any }));
@@ -8,7 +11,7 @@ vi.mock("../app/db.server", () => ({ default: {
   customizationConfig: { findMany: vi.fn(async () => [state.context.setting]) },
 } }));
 import { productOptionsForAssistant } from "../app/assistant/options.server";
-import { answerRoomAssistant } from "../app/room-assistant.server";
+import { answerRoomAssistant, exactPreviewStatus } from "../app/room-assistant.server";
 import { DEFAULT_ROOM_ASSISTANT_SETTINGS } from "../app/room-assistant-settings";
 import { resetAssistantCatalogueCache } from "../app/assistant/catalogue.server";
 import { setAssistantLogSink } from "../app/assistant/log.server";
@@ -78,5 +81,33 @@ describe("managed manual configurations in Room Assistant", () => {
   it("requires a source choice on the current page and rejects conflicting size/storage sources", async () => {
     expect((await ask(undefined, productId)).visualise).toBeNull();
     expect((await ask({ productRef: "1", variantRef: "14", source: "options" })).visualise).toBeNull();
+  });
+});
+
+describe("saved preview-only catalogue compatibility", () => {
+  const saved = () => {
+    const draft = emptyFabricDraft();
+    draft.fabrics.push({ id: "linen", name: "Linen", description: "", enabled: true, textureMediaId: null,
+      colours: [{ id: "grey", name: "Grey", enabled: true, hex: "#888888", swatchMediaId: null }] });
+    return { kind: "fabric_colour_manager", schemaVersion: 1, shopId, productId, draft, published: null };
+  };
+  it("recognizes saved colours without claiming unfinished exact mappings are ready", () => {
+    const mapping = saved();
+    expect(hasPreviewOnlyColours(mapping, shopId, productId)).toBe(true);
+    expect(providerSummary("manual_mapping", false, true).blocked).toBe(false);
+    expect(providerSummary("manual_mapping", false).blocked).toBe(true);
+    expect(hasPreviewOnlyColours(mapping, "other.myshopify.com", productId)).toBe(false);
+    mapping.draft.fabrics[0]!.enabled = false;
+    expect(hasPreviewOnlyColours(mapping, shopId, productId)).toBe(false);
+  });
+  it("validates a saved illustrative colour without demanding a published native mapping", async () => {
+    state.context.setting = { ...state.context.setting, active: false, mapping: saved() };
+    const variant = { id: "gid://shopify/ProductVariant/11", available: true } as any;
+    const resolve = vi.spyOn(registry, "resolveConfiguredPreview").mockResolvedValue({ variantId: variant.id, urls: ["https://cdn.shopify.com/reference.jpg"] } as any);
+    const result = await exactPreviewStatus({ shopId, admin, option: '["linen","grey"]' } as any,
+      { id: productId } as any, variant, state.context.config);
+    expect(result.status).toBe("available");
+    expect(resolve).toHaveBeenCalled();
+    expect((await exactPreviewStatus({ shopId, admin } as any, { id: productId } as any, variant, state.context.config)).status).toBe("choose_options");
   });
 });
