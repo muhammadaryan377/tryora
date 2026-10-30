@@ -694,3 +694,69 @@ html.tryora-assistant-locked { overflow: hidden; }
 .tryora-assistant__colour-toggle:focus-visible { outline:2px solid var(--ta-ink); outline-offset:2px; }
 .tryora-assistant__colour-picker > .tryora-assistant__optrow { padding:10px 0; max-height:220px; overflow-y:auto; overscroll-behavior:contain; }
 .tryora-assistant__colour-picker > [data-colour-options][hidden] { display:none !important; }
+
+/* Room Assistant: next step after a photo, overflow-safe cards and previews, phone keyboard handling. */
+.tryora-assistant__scroll { overflow-x: hidden; }
+.tryora-assistant__attachment { flex-wrap: wrap; }
+.tryora-assistant__attachment-name small { display: block; color: var(--ta-muted); font-size: 12px; font-weight: 400; line-height: 1.35; }
+.tryora-assistant__attachment-action { flex: 1 0 100%; min-height: 40px; }
+.tryora-assistant__visualise { grid-template-columns: 88px minmax(0, 1fr); }
+.tryora-assistant__visualise > div, .tryora-assistant__preview, .tryora-assistant__preview figcaption, .tryora-assistant__lead { min-width: 0; }
+.tryora-assistant__card h4, .tryora-assistant__visualise h4, .tryora-assistant__preview figcaption strong,
+.tryora-assistant__preview.is-loading strong, .tryora-assistant__attachment-name, .tryora-assistant__notice { overflow-wrap: anywhere; }
+/* Preview actions wrap instead of pushing the chat sideways; long "Compare: <title>" labels truncate. */
+.tryora-assistant__preview .tryora-assistant__card-actions > * { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+/* Ellipsis needs a block box: a centred flex button would clip both ends of a long product name. */
+.tryora-assistant__preview [data-ta="compare"] { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; line-height: 20px; }
+.tryora-assistant__preview.is-loading > div { flex: 1 1 220px; }
+.tryora-assistant__preview.is-loading { scroll-margin: 12px; }
+
+@media (max-width: 749px) {
+  /* Follow the visual viewport: the composer stays above the keyboard and the panel never leaves a blank band. */
+  .tryora-assistant__panel, .tryora-assistant[data-view] .tryora-assistant__panel {
+    top: var(--ta-vv-top, 0px); bottom: auto; height: var(--ta-vv-height, 100%); max-height: 100%;
+  }
+  .tryora-assistant[data-keyboard="open"] .tryora-assistant__panel { padding-top: 0; }
+  .tryora-assistant[data-keyboard="open"] .tryora-assistant__fineprint:not(.tryora-assistant__visualise .tryora-assistant__fineprint),
+  .tryora-assistant[data-keyboard="open"] .tryora-assistant__selection { display: none; }
+  .tryora-assistant[data-keyboard="open"] .tryora-assistant__composer { padding-bottom: 8px; }
+  /* While typing, keep only what is needed to send: the photo stays, its explanation and room chip step aside. */
+  .tryora-assistant[data-keyboard="open"] [data-ta-room],
+  .tryora-assistant[data-keyboard="open"] .tryora-assistant__attachment-name small { display: none; }
+  .tryora-assistant__heading h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tryora-assistant__selection { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tryora-assistant__room-chip .tryora-assistant__link { white-space: nowrap; }
+  .tryora-assistant__attachment { gap: 6px 8px; }
+  .tryora-assistant__attachment img { width: 40px; height: 40px; }
+  .tryora-assistant__attachment-name { flex: 1 1 calc(100% - 52px); }
+  .tryora-assistant__attachment-name small { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .tryora-assistant__attachment > .tryora-assistant__chip-button { flex: 0 0 auto; }
+  .tryora-assistant__attachment-action { flex: 1 1 130px; min-height: 40px; }
+  .tryora-assistant__preview.is-loading > div { flex: 1 1 calc(100% - 40px); }
+  .tryora-assistant__composer { gap: 6px; padding: 8px 10px calc(8px + env(safe-area-inset-bottom)); }
+  .tryora-assistant__attach, .tryora-assistant__send { width: 44px; height: 44px; }
+  .tryora-assistant__row { padding: 3px; }
+  .tryora-assistant__row textarea { height: 44px; min-height: 44px; max-height: 120px; padding: 11px 4px; font-size: 16px; line-height: 1.35; }
+  .tryora-assistant__row textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tryora-assistant__room-chip { flex-wrap: nowrap; }
+  .tryora-assistant__room-chip > span { flex: 1 1 auto; }
+  .tryora-assistant__chip-button { min-height: 36px; padding: 6px 12px; }
+  .tryora-assistant__scroll { padding: 12px 12px 8px; -webkit-overflow-scrolling: touch; }
+  .tryora-assistant__message--preview > * { width: 100%; }
+  .tryora-assistant .tryora-assistant__preview > img { width: 100%; max-width: 100%; max-height: min(420px, 55vh); max-height: min(420px, 55dvh); }
+  .tryora-assistant__preview .tryora-assistant__card-actions > * { min-height: 44px; }
+  .tryora-assistant__preview > .tryora-assistant__card-actions:last-child > * { flex: 1 1 calc(50% - 6px); }
+  .tryora-assistant__preview.is-loading > .tryora-assistant__chip-button { flex: 1 1 calc(50% - 6px); }
+  .tryora-assistant__user-photo { width: min(220px, 70%); }
+  .tryora-assistant__visualise { grid-template-columns: 72px minmax(0, 1fr); padding: 10px; }
+  .tryora-assistant__visualise > .tryora-assistant__thumb { width: 72px; }
+  .tryora-assistant__visualise .tryora-assistant__primary { align-self: stretch; min-height: 44px; }
+}
+@media (max-width: 360px) {
+  .tryora-assistant__scroll { padding: 10px 10px 8px; }
+  .tryora-assistant__card, .tryora-assistant[data-view=fullscreen] .tryora-assistant__card { grid-template-columns: 72px minmax(0, 1fr); padding: 10px; gap: 8px; }
+  .tryora-assistant__card .tryora-assistant__thumb, .tryora-assistant[data-view=fullscreen] .tryora-assistant__card .tryora-assistant__thumb { width: 72px; height: 88px; }
+  .tryora-assistant__card > .tryora-assistant__card-actions { gap: 8px; }
+  .tryora-assistant__preview > .tryora-assistant__card-actions:last-child > * { flex-basis: 100%; }
+  .tryora-assistant__bubble { max-width: 94%; }
+}

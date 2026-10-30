@@ -5,7 +5,32 @@
  */
 export type ShopperIntent =
   | "acknowledgement" | "product_discovery" | "room_recommendation" | "more_options"
-  | "product_question" | "comparison" | "preview" | "room_analysis" | "store_support" | "general";
+  | "product_question" | "comparison" | "preview" | "room_analysis" | "room_switch" | "store_support" | "general";
+
+// Common misspellings are part of the pattern: shoppers type quickly on phones.
+const USE = "(?:use|us|ues|uze|usee|try|take|go with|pick|choose)";
+const THIS = "(?:this|thsi|tis|ths|thi|that|the|my|new|other)";
+const PHOTO = "(?:room|rom|roome|photo|foto|pic|picture|image|pik|space|one|1)";
+const ROOM_SWITCH = new RegExp([
+  `\\b${USE}\\s+(?:${THIS}\\s+)?(?:new\\s+|other\\s+|second\\s+|different\\s+)?${PHOTO}\\b(?!\\s+(?:bed|sofa|chair|table|product|colou?r|fabric))`,
+  "\\b(?:replace|switch|swap|change|update)\\b[^.!?]{0,40}\\b(?:room|rom|photo|pic(?:ture)?|image)\\b",
+  "\\b(?:new|different|another|other|second)\\s+(?:room|rom|photo|pic(?:ture)?)\\b",
+  "\\b(?:this|here)\\s+is\\s+(?:my|the)\\s+(?:new\\s+|other\\s+|actual\\s+|real\\s+)?(?:room|rom)\\b",
+  "\\b(?:instead|not the (?:old|previous|first|last) (?:one|room|photo))\\b",
+  // Roman Urdu: "is room ko use karo", "ye room lo", "naya room"
+  "\\b(?:is|ye|yeh|iss)\\s+(?:room|rom|photo|pic)\\s+(?:ko|ka|ki|mein|me)?\\s*(?:use|lo|lein|rakho|karo|kro)\\b",
+  "\\b(?:naya|nayi|dusra|doosra|dusri)\\s+(?:room|rom|photo|pic)\\b",
+].join("|"), "i");
+
+/** "Use this room", "replace the previous room", "switch to this photo": the shopper is changing the active room. */
+export function wantsRoomSwitch(message: string): boolean {
+  return ROOM_SWITCH.test(message);
+}
+
+/** "Use this one" only means a room when it names a room/photo or comes with a new photo; otherwise it may be a product. */
+export function namesRoomExplicitly(message: string): boolean {
+  return /\b(?:room|rom|roome|photo|foto|pic|picture|image|space)\b/i.test(message);
+}
 
 export interface IntentPlan {
   intent: ShopperIntent;
@@ -60,10 +85,14 @@ export function planShopperTurn(input: {
   const discovery = /\b(show|recommend|suggest|find|looking for|need|pick|choose|best for|what (?:would|will) (?:suit|look|work|be)|which (?:one|furniture))\b/i.test(lower);
   const explanation = /\bwhy\b.*\b(?:only|show|shown|two|three|\d+)\b/i.test(lower);
   const roomMention = /\b(room|bedroom|living room|my space|this space|here)\b/i.test(lower) || input.newRoomPhoto;
+  // A room change needs a new photo, or words that clearly name the room (then the reply asks for the photo).
+  const roomSwitch = wantsRoomSwitch(latest) && (input.newRoomPhoto || namesRoomExplicitly(latest)) && !compare;
   const intent: ShopperIntent =
     ACK.test(latest) ? "acknowledgement" :
     explanation ? "product_question" :
     compare ? "comparison" :
+    // "Use this room and preview the bed" is a preview in the new room; the photo already replaces the room.
+    roomSwitch && !preview && !discovery ? "room_switch" :
     preview ? "preview" :
     more ? "more_options" :
     input.newRoomPhoto && !discovery && !mentionedCategory ? "room_analysis" :
@@ -82,6 +111,7 @@ export function planShopperTurn(input: {
     ...(intent === "comparison" ? ["Answer the comparison directly using verified prices or attributes. Do not generate another recommendation batch unless explicitly requested."] : []),
     ...(intent === "product_question" ? ["Answer the actual question first. Do not replace it with new product cards or a generic preview offer."] : []),
     ...(intent === "acknowledgement" ? ["Respond briefly and naturally. Do not repeat a product card or preview."] : []),
+    ...(intent === "room_switch" ? ["The shopper is replacing the active room with the attached photo. Record its observations; do not describe it at length or recommend products unless asked."] : []),
     "Use the latest request to override conflicting earlier preferences. Do not infer an unstated price, variant or product.",
   ];
   return {

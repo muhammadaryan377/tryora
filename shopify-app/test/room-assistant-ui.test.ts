@@ -33,6 +33,10 @@ function fakeProxy() {
     }
     if (url === "/apps/visully/lead/skip") { proxy.leadSatisfied = true; return respond({ ok: true }); }
     if (url.startsWith("/apps/visully/assistant/suggestions?")) return respond({ suggestions: proxy.suggestions, recommendation: proxy.recommendation });
+    if (url === "/apps/visully/assistant/photo-check") {
+      if (proxy.photoCheck === "offline") throw new TypeError("Failed to fetch");
+      return respond(proxy.photoCheck ?? { ok: true, verdict: "room", message: "Your room photo is ready!", checked: true });
+    }
     if (url === "/apps/visully/assistant/turn") { forms.push(init.body as FormData); return respond({ turnId: `turn${forms.length}` }); }
     const poll = url.match(/assistant\/turn\/turn(\d+)\?visitor=[^&]+&after=(\d+)/);
     if (poll) {
@@ -50,7 +54,10 @@ function fakeProxy() {
     }
     if (/assistant\/turn\/turn\d+\/cancel/.test(url)) return respond({ cancelled: true });
     if (url === "/apps/visully/preview") return respond(proxy.previewError ? { error: proxy.previewError } : { jobId: "job1" }, proxy.previewError ? 400 : 200);
-    if (url.startsWith("/apps/visully/preview/job1")) return respond({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "tok", expiresAt: Date.now() + 60_000 });
+    if (url.startsWith("/apps/visully/preview/job1")) {
+      if (proxy.previewGate) await proxy.previewGate;
+      return respond({ stage: "ready", image: "data:image/jpeg;base64,YQ==", token: "tok", expiresAt: Date.now() + 60_000 });
+    }
     if (url === "/apps/visully/ack") return respond({ ok: true });
     if (url.startsWith("/apps/visully/assistant/options?")) return proxy.options ? respond(proxy.options) : respond({ error: "NOT_FOUND" }, 404);
     if (url.startsWith("/apps/visully/assistant/preview-check?")) {
@@ -74,7 +81,7 @@ function fakeProxy() {
     leadSatisfied: false,
     suggestions: [] as string[],
     recommendation: null as any,
-    fetcher, forms, calls, turns, previewError: "" as string, options: null as any, check: null as any, checkGate: null as Promise<void> | null,
+    fetcher, forms, calls, turns, previewError: "" as string, previewGate: null as Promise<void> | null, photoCheck: null as any, options: null as any, check: null as any, checkGate: null as Promise<void> | null,
     script(...batches: any[][]) { turns.push(batches); },
     hold() { let release!: () => void; pollGate = new Promise((resolve) => { release = resolve; }); return () => { pollGate = null; release(); }; },
     holdLeadStatus() { let release!: () => void; leadStatusGate = new Promise((resolve) => { release = resolve; }); return () => { leadStatusGate = null; release(); }; },
@@ -1812,4 +1819,240 @@ it("remembers a selected product card in later show-more requests", async () => 
   await type("show me moes"); click("[data-ta='send']"); await settle(90);
   expect(JSON.parse(String(proxy.forms.at(-1)!.get("explored")))).toContainEqual({ productRef: "1", variantRef: "11" });
   expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
+});
+
+
+describe("room switching, preview follow-scroll and next steps", () => {
+  const previewStarts = () => proxy.calls.filter((call) => call.url === "/apps/visully/preview");
+  const rect = (top: number, bottom: number) => ({ top, bottom, height: bottom - top, left: 0, right: 0, width: 0, x: 0, y: top, toJSON() {} }) as DOMRect;
+  async function cards(context: Record<string, unknown> = {}) {
+    const assistant = makeAssistant(context);
+    proxy.script([{ type: "recommendations", items: [card()] }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await type("beds?");
+    click("[data-ta='send']");
+    await settle(60);
+    return assistant;
+  }
+  /** Places the scroll area at 0-400px and every preview card far below it, like a long chat. */
+  function layout() {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.matches("[data-ta-scroll]")) return rect(0, 400);
+      if (this.matches(".tryora-assistant__message--preview")) return rect(900, 1000);
+      return rect(0, 0);
+    });
+    const scrollTo = vi.fn();
+    $("[data-ta-scroll]")!.scrollTo = scrollTo as any;
+    return scrollTo;
+  }
+  afterEach(() => vi.restoreAllMocks());
+
+  it("uses a newly sent room for later previews, keeps the product, and never compares previews across rooms", async () => {
+    const assistant = await cards();
+    await attachFile("first.jpg");
+    // A previewable product is selected, so the photo's next step is that preview.
+    expect($(".tryora-assistant__attachment-action")!.textContent).toBe("Preview in my room");
+    click(".tryora-assistant__attachment-action");
+    await settle(1500);
+    const [first] = assistant.state.entries.filter((entry: any) => entry.kind === "preview");
+    expect(first.status).toBe("ready");
+    const firstRoom = first.roomKey;
+    expect(firstRoom).toBeTruthy();
+
+    proxy.script([{ type: "room", room: { colours: ["green"], walls: "green", floor: "carpet", style: "cottage", lighting: "", furniture: [], layout: "", placement: [], notes: "" } }],
+      [{ type: "final", reply: { message: "Done, I'm now using your new room.", recommendations: [] } }, { type: "done" }]);
+    await attachFile("second.jpg");
+    await type("use this room");
+    click("[data-ta='send']");
+    await settle(60);
+    expect(proxy.forms.at(-1)!.get("photo")).toBeTruthy();
+    expect(assistant.roomPhoto.name).toBe("second.jpg");
+    expect(assistant.state.roomKey).not.toBe(firstRoom);
+    expect(assistant.state.selected).toMatchObject({ productRef: "1", variantRef: "11" });
+
+    click(".tryora-assistant__card [data-ta='preview']");
+    await settle(1500);
+    const second = assistant.state.entries.filter((entry: any) => entry.kind === "preview")[1];
+    expect(previewStarts()).toHaveLength(2);
+    expect(second.roomKey).toBe(assistant.state.roomKey);
+    expect(second.roomKey).not.toBe(firstRoom);
+    // The earlier preview belongs to the first room: it stays as it was and is never offered as a comparison.
+    expect(first.roomKey).toBe(firstRoom);
+    expect($$("[data-ta='compare']").some((button) => button.textContent!.startsWith("Compare:"))).toBe(false);
+  });
+
+  it("scrolls to the generating preview card and stops following when the shopper scrolls up", async () => {
+    let release!: () => void;
+    proxy.previewGate = new Promise((resolve) => { release = resolve; });
+    const assistant = await cards();
+    assistant.roomPhoto = photo();
+    const scrollTo = layout();
+    click(".tryora-assistant__card [data-ta='preview']");
+    await settle(30);
+    expect($(".tryora-assistant__preview.is-loading")).not.toBeNull();
+    expect(scrollTo).toHaveBeenCalledWith({ top: 608, behavior: "smooth" });
+    scrollTo.mockClear();
+    const scroller = $("[data-ta-scroll]")!;
+    scroller.dispatchEvent(new Event("wheel"));
+    scroller.dispatchEvent(new Event("scroll"));
+    expect(assistant.followPreview).toBeNull();
+    release();
+    await settle(1500);
+    expect($(".tryora-assistant__preview img")).not.toBeNull();
+    expect(scrollTo).not.toHaveBeenCalledWith(expect.objectContaining({ top: 608 }));
+  });
+
+  it("keeps a failed preview in view with a retry button", async () => {
+    proxy.previewError = "FAILED";
+    const assistant = await cards();
+    assistant.roomPhoto = photo();
+    const scrollTo = layout();
+    click(".tryora-assistant__card [data-ta='preview']");
+    await settle(300);
+    expect($(".tryora-assistant__message--preview .tryora-assistant__failed")).not.toBeNull();
+    expect($(".tryora-assistant__message--preview [data-ta='preview']")!.textContent).toBe("Try again");
+    expect(scrollTo).toHaveBeenCalledWith({ top: 608, behavior: "auto" });
+    expect(assistant.followPreview).toBeNull();
+  });
+
+  it("starts one preview however often Preview in my room is tapped", async () => {
+    let release!: () => void;
+    proxy.previewGate = new Promise((resolve) => { release = resolve; });
+    const assistant = await cards();
+    assistant.roomPhoto = photo();
+    for (let i = 0; i < 3; i += 1) ($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).click();
+    await settle(60);
+    for (let i = 0; i < 2; i += 1) ($(".tryora-assistant__card [data-ta='preview']") as HTMLButtonElement).click();
+    release();
+    await settle(300);
+    expect(previewStarts()).toHaveLength(1);
+    expect(assistant.state.entries.filter((entry: any) => entry.kind === "preview")).toHaveLength(1);
+  });
+
+  it("offers the right next step for a new photo: recommendations, or replacing the current room", async () => {
+    const assistant = makeAssistant({ productId: undefined, currentVariantId: () => null });
+    assistant.open();
+    await attachFile("living.jpg");
+    expect($(".tryora-assistant__attachment-action")!.textContent).toBe("Get recommendations");
+    expect($(".tryora-assistant__attachment-name")!.textContent).toContain("Your room photo is ready!");
+    expect(proxy.forms).toHaveLength(0);
+    assistant.roomPhoto = photo("old-room.jpg");
+    assistant.renderComposer();
+    expect($(".tryora-assistant__attachment-action")!.textContent).toBe("Use this room");
+    proxy.script([{ type: "final", reply: { message: "Done, I'm now using your new room.", recommendations: [] } }, { type: "done" }]);
+    click(".tryora-assistant__attachment-action");
+    await settle(60);
+    expect(String(proxy.forms[0]!.get("history"))).toContain("Use this room instead of my previous room.");
+    expect(proxy.forms[0]!.get("photo")).toBeTruthy();
+    expect(assistant.roomPhoto.name).toBe("living.jpg");
+  });
+
+  it("starts a preview the shopper asked for in chat only when a room photo is ready", async () => {
+    const reply = { message: "Your preview will appear below.", recommendations: [], visualise: card(), startPreview: true };
+    const withRoom = makeAssistant();
+    withRoom.roomPhoto = photo();
+    withRoom.open();
+    proxy.script([{ type: "final", reply }, { type: "done" }]);
+    await type("preview it in my room");
+    click("[data-ta='send']");
+    await settle(1500);
+    expect(previewStarts()).toHaveLength(1);
+
+    document.body.innerHTML = ""; sessionStorage.clear();
+    const without = makeAssistant();
+    without.open();
+    proxy.script([{ type: "final", reply }, { type: "done" }]);
+    await type("preview it in my room");
+    click("[data-ta='send']");
+    await settle(300);
+    expect(previewStarts()).toHaveLength(1);
+    expect($(".tryora-assistant__visualise [data-ta='preview']")!.textContent).toBe("Preview in my room");
+  });
+
+  it("sizes the phone panel to the visual viewport while the keyboard is open, and releases it when minimised", () => {
+    const listeners = new Map<string, () => void>();
+    const viewport = { height: 420, offsetTop: 30, addEventListener: (type: string, fn: () => void) => listeners.set(type, fn), removeEventListener: (type: string) => listeners.delete(type) };
+    Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true });
+    Object.defineProperty(window, "innerHeight", { value: 800, configurable: true });
+    const assistant = makeAssistant();
+    assistant.open();
+    const root = $(".tryora-assistant")!;
+    expect(root.style.getPropertyValue("--ta-vv-height")).toBe("420px");
+    expect(root.style.getPropertyValue("--ta-vv-top")).toBe("30px");
+    expect(root.dataset.keyboard).toBe("open");
+    expect(listeners.has("resize")).toBe(true);
+    assistant.minimise();
+    expect(root.style.getPropertyValue("--ta-vv-height")).toBe("");
+    expect(root.dataset.keyboard).toBeUndefined();
+    expect(listeners.size).toBe(0);
+    Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true });
+  });
+});
+
+
+describe("room photo validation on upload", () => {
+  const previewStarts = () => proxy.calls.filter((call) => call.url === "/apps/visully/preview");
+  const photoChecks = () => proxy.calls.filter((call) => call.url === "/apps/visully/assistant/photo-check");
+  const rejected = (verdict: string, message: string) => ({ ok: false, verdict, message, checked: true });
+
+  it.each([
+    ["unclear", "This photo is a little unclear. Could you upload a clearer picture of your room?"],
+    ["unrelated", "This doesn't look like a room photo. Please upload a picture of the room you'd like to furnish."],
+    ["product_only", "I can see the furniture, but I'll need a photo of your room to create a preview."],
+  ])("rejects a %s photo without making it the room or starting a preview", async (verdict, message) => {
+    const assistant = makeAssistant();
+    assistant.open();
+    assistant.roomPhoto = photo("current-room.jpg");
+    proxy.photoCheck = rejected(verdict, message);
+    await attachFile("selfie.jpg");
+    expect(photoChecks()).toHaveLength(1);
+    expect(photoChecks()[0]!.body!.get("photo")).toBeTruthy();
+    expect($("[data-ta-error]")!.textContent).toBe(message);
+    expect($("[data-ta-error]")!.hidden).toBe(false);
+    expect(assistant.attachment).toBeNull();
+    expect(assistant.roomPhoto.name).toBe("current-room.jpg");
+    expect($("[data-ta-attachment]")!.hidden).toBe(true);
+    expect(previewStarts()).toHaveLength(0);
+    expect(proxy.forms).toHaveLength(0);
+  });
+
+  it("keeps a pending preview waiting through a rejected photo, then starts it with a valid one", async () => {
+    const assistant = makeAssistant();
+    proxy.script([{ type: "recommendations", items: [card()] }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
+    assistant.open();
+    await type("beds?");
+    click("[data-ta='send']");
+    await settle(60);
+    click(".tryora-assistant__card [data-ta='preview']");
+    proxy.photoCheck = rejected("unrelated", "This doesn't look like a room photo. Please upload a picture of the room you'd like to furnish.");
+    await attachFile("dog.jpg");
+    await settle(300);
+    expect(previewStarts()).toHaveLength(0);
+    expect(assistant.roomPhoto).toBeNull();
+    expect(document.body.textContent).toContain("This doesn't look like a room photo.");
+    proxy.photoCheck = null;
+    await attachFile("bedroom.jpg");
+    await settle(1500);
+    expect(previewStarts()).toHaveLength(1);
+    expect(assistant.roomPhoto.name).toBe("bedroom.jpg");
+    expect($("[data-ta-error]")!.hidden).toBe(true);
+  });
+
+  it("shows the photo as ready once it is a valid room", async () => {
+    const assistant = makeAssistant({ productId: undefined, currentVariantId: () => null });
+    assistant.open();
+    await attachFile("living.jpg");
+    expect(assistant.attachment.name).toBe("living.jpg");
+    expect($(".tryora-assistant__attachment-name")!.textContent).toContain("Your room photo is ready!");
+    expect($("[data-ta-error]")!.hidden).toBe(true);
+  });
+
+  it("accepts the photo when the check is unavailable, leaving the preview's own check in place", async () => {
+    const assistant = makeAssistant();
+    assistant.open();
+    proxy.photoCheck = "offline";
+    await attachFile("room.jpg");
+    expect(assistant.attachment.name).toBe("room.jpg");
+    expect($("[data-ta-error]")!.hidden).toBe(true);
+  });
 });

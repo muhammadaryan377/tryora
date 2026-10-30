@@ -18,6 +18,8 @@ export type AssistantLogEvent =
   | "recommendation_dropped"
   | "auto_config_failure"
   | "preview_unavailable"
+  | "room_photo_rejected"
+  | "room_photo_check_unavailable"
   | "lead_capture_failure";
 
 type Field = string | number | boolean | null | undefined;

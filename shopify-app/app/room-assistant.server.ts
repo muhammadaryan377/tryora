@@ -188,6 +188,8 @@ export interface AssistantReply {
   /** Budget and audience in force after this turn; the browser stores and returns them. */
   constraints: Constraints;
   model: string;
+  /** The shopper explicitly asked to see the offered product in their room and has a room photo: the browser may start it. */
+  startPreview?: boolean;
 }
 
 export function assistantProviderReady(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -1146,7 +1148,7 @@ async function runSelect(ctx: RequestContext, args: { productRef: string; varian
     ...cardSummary(item, 0),
     options: product ? Object.fromEntries(realOptions(product.options).map((option) => [option.name, option.values.slice(0, 25)])) : {},
     note: item.previewAvailable
-      ? "The product card has View details and Preview in my room; room photo and Generate preview confirmation are separate steps."
+      ? "The product card has View details and Preview in my room. Tapping Preview in my room starts the preview (it asks for a room photo first if none is ready)."
       : "This product has no unique approved preview configuration. Its card still links to product details; do not request variant choices.",
   };
 }
@@ -1196,8 +1198,8 @@ async function runVisualise(ctx: RequestContext, args: { productRef: string; var
     ...(overBudget ? { budgetNote: `This is above the shopper's budget of ${ctx.constraints.budgetCurrency ?? ""}${ctx.constraints.budgetMax}; mention the difference once.` } : {}),
     needsPhoto: !ctx.hasPhoto,
     note: ctx.hasPhoto
-      ? "A preview card is shown. The shopper confirms it to generate the image with their room photo. Visully places the item automatically; do not promise exact positions."
-      : "A preview card is shown. Ask the shopper to attach a room photo, then confirm the card.",
+      ? "A preview card is shown. The shopper taps Preview in my room to generate the image with their active room photo. Never say the preview is ready, generated or opened. Visully places the item automatically; do not promise exact positions."
+      : "A preview card is shown. Ask the shopper to tap Preview in my room and add a room photo. Never say the preview is ready, generated or opened.",
   };
 }
 
@@ -1621,6 +1623,30 @@ const ABSENCE_CLAIM = new RegExp(String.raw`\b(?:(?:does\s+not|doesn['’]t|do\s
  * Removes "the store has none" sentences when no complete catalogue check proved it. Such claims are what a failed
  * or partial catalogue lookup produces, and they are exactly what must never reach a shopper unverified.
  */
+/**
+ * The chat never generates or opens a preview itself; the browser does, after a tap. Remove any sentence claiming a
+ * preview exists, and point to the real next step instead.
+ */
+export function guardPreviewClaims(message: string, previewOffered: boolean, autoStart = false): string {
+  const claim = /[^.!?\n]*\b(?:here(?:'s| is) (?:your|the) (?:ai )?(?:room )?preview|i(?:'ve| have)? (?:just )?(?:generated|created|made|opened|started|rendered) (?:a |an |the |your )?(?:ai )?(?:room )?(?:preview|visuali[sz]ation)|(?:your|the) (?:ai )?(?:room )?(?:preview|visuali[sz]ation) (?:is|has been|was) (?:now )?(?:ready|generated|created|done|opened|complete))\b[^.!?\n]*[.!?]?/gi;
+  const cleaned = message.replace(claim, " ").replace(/[ \t]+/g, " ").replace(/\s+([.!?,])/g, "$1").trim();
+  if (cleaned === message.trim()) return message;
+  const next = autoStart ? "Your preview will appear below." : previewOffered ? "Tap Preview in my room to create it." : "";
+  return [cleaned, next].filter(Boolean).join(" ") || "Tap Preview in my room on a product card to create a preview.";
+}
+
+/** Confirms a room switch only after the new photo was analysed, and keeps the selected product ready to preview. */
+async function roomSwitchReply(ctx: RequestContext): Promise<string> {
+  const selection = ctx.selection;
+  if (selection) {
+    const offer = await runVisualise(ctx, { productRef: selection.productRef, variantRef: selection.variantRef }).catch(() => null) as { offered?: boolean } | null;
+    const title = ctx.visualise?.title ?? ctx.selected?.title;
+    if (offer?.offered && title) return `Done, I'm now using your new room. Tap Preview in my room to see the ${title} in it.`;
+    if (title) return `Done, I'm now using your new room and kept the ${title} selected.`;
+  }
+  return "Done, I'm now using your new room. Would you like furniture suggestions for it, or to preview a product?";
+}
+
 /** A model may still ask for colour, fabric or size despite instructions.
  * Never forward that extra selection step into the shopper's final chat response.
  * Merchants can still discuss product specifications when directly asked.
@@ -1648,6 +1674,8 @@ export function guardAbsenceClaims(message: string, current: Pick<CatalogueProdu
 let clientOverride: (() => OpenAI) | null = null;
 /** Test and local-harness hook: supplies the model client used when a turn does not pass one. */
 export function setAssistantClientForTests(factory: (() => OpenAI) | null) { clientOverride = factory; }
+/** The chatbot's own OpenAI client (separate credentials from preview generation). */
+export function assistantOpenAI(env: NodeJS.ProcessEnv = process.env): OpenAI { return clientOverride?.() ?? openAIClient(env); }
 
 function openAIClient(env: NodeJS.ProcessEnv = process.env) {
   if (!assistantProviderReady(env)) throw new TryoraError("PROVIDER_UNAVAILABLE");
@@ -1675,9 +1703,10 @@ Purpose:
 - You are the store’s room advisor and preview guide. For unrelated general-chat requests, briefly redirect to room styling, real store furniture or a room preview.
 - Help shoppers find real furniture for their room, understand their space and preview a specific verified product as pictured. Do not force size, fabric or colour questions in chat prose. A shopper can voluntarily choose real merchant-configured Fabric and Colour options on a product card. Answer direct product questions instead of diverting them into preview generation.
 - The "Find the perfect furniture for my room" action begins with the room photo. First call record_room_observations for actual visible room colours, walls, flooring, lighting, existing furniture and style. Then discover categories this store sells and show two or three verified room-suitable product cards with individual grounded reasons; give concise matching style and colour guidance grounded in photo observations and real catalogue attributes, without inventing available product options or charging a preview.
-- The "Preview this product in my room" action starts with a room photo. On a product page, use its exact verified merchant-approved reference to offer a preview and only generate if the shopper confirms. On other pages, show verified preview-eligible product cards to choose from first; never guess the product or start a paid generation automatically.
+- The "Preview this product in my room" action starts with a room photo. On a product page, use its exact verified merchant-approved reference to offer a preview; it generates when the shopper taps Preview in my room. On other pages, show verified preview-eligible product cards to choose from first; never guess the product or start a paid generation automatically.
 - Room-based discovery: when the shopper asks what would suit their room without naming a category ("what furniture would look good here?", "recommend something for this room", "is room ke liye koi acha furniture dikhao"), use the room photo or the saved room notes: decide which furniture categories suit that room (call list_collections to see which categories this store actually sells; never assume beds), search the catalogue for each suitable category with the room's colours, materials and style plus the shopper's budget and preferences, then show two or three genuinely different matching products, mixing categories where that fits the room. Fewer verified matches are better than invented or unsuitable choices.
 - If a room-based request has no room photo in this message and no saved room notes, ask for a room photo in one short sentence instead of pretending to have seen the room. When saved room notes exist, reuse them; do not ask for the photo again. A NEW room photo replaces the previous room context only after it has been analysed; never recommend using stale room notes.
+- When the shopper attaches a new photo and says "use this room", "use this one", "replace the previous room" or similar, they are switching rooms: keep the selected product, use only the new room from now on, and confirm the switch briefly instead of describing the photo. If the request is genuinely unclear (a room change or a product choice), ask one short clarifying question.
 - Keep conversation context for "another option", "the second one", or "try this one". When the shopper voluntarily names a colour, treat it as a search preference for matching products or already verified exact variants, never as a reason to ask for further configuration. If no exact approved reference exists, show a non-previewable card instead of guessing.
 - Your scope is product information, furniture discovery, room guidance and product previews. You do not provide delivery charges, shipping times, returns, refunds, warranty, order support or other store policies. When asked about these topics, briefly direct the shopper to contact the store directly. Do not look up policies, imply an outage, say this information is temporarily unavailable, or suggest trying again later.
 - For "who are you?" or "what can you do?", introduce yourself without a tool call: "I'm Room Assistant. I can help you find furniture, answer product questions and preview products in your room." Do not mention missing store information or policies in greetings or introductions.
@@ -1699,7 +1728,7 @@ Grounding:
 - Do not provide delivery times, shipping costs, discounts, promotions or warranty terms, even if earlier chat or a product description mentions them. Direct those questions to the store.
 - You cannot see orders or customer accounts. For order status, point the shopper to their order confirmation or ask them to contact the store directly. Do not invent contact details.
 Conversation:
-- Keep the next step concrete and brief: "Tap Preview in my room, upload a room photo if needed, then press Generate preview." Photo upload never starts paid generation. After a successful preview, show Original/Preview comparison and Try another product. Never force an extra option picker in chat prose; the product card has its own verified swatches.
+- Keep the next step concrete and brief: "Tap Preview in my room" (it asks for a room photo if none is ready). Uploading a photo by itself never starts paid generation. Never say a preview was generated, created, opened or is ready: the app shows it when it actually is. After a successful preview, show Original/Preview comparison and Try another product. Never force an extra option picker in chat prose; the product card has its own verified swatches.
 - If the shopper voluntarily says "show it in grey", search for an exact product with that appearance and approved reference. If a unique exact match cannot be verified, explain that a preview is unavailable for that choice; never ask which fabric, colour or size, never invent or silently substitute one.
 - The "Authoritative conversation state" in the context is computed by the server from the shopper's own actions and latest message. Follow it over anything said earlier: the product it says the latest message refers to is the product to use, and the budget and audience it lists are standing constraints. Tools refuse choices that contradict it.
 - "The second one", "it", "that bed" and similar refer to the numbered recommendations or the selected product in the conversation context. Do not ask which product they mean when the context establishes it.
@@ -1712,7 +1741,7 @@ Conversation:
 Room photos and visualisation:
 - When a photo is attached, first call record_room_observations with broad visible colours, walls, floor, style, lighting, furniture, layout and plausible placement areas. Do not identify people or infer sensitive traits.
 - Recommendations concern appearance: colour coordination, fabric, style and room lighting. Do not proactively mention sizes, dimensions or ask for measurements. Do not claim an exact fit from a photo. Preserve any explicit existing configuration internally; if it cannot be resolved safely, explain briefly without guessing.
-- When a shopper wants to see a product in their room, show a verified product card rather than ask for a configuration. The customer clicks Preview in my room, uploads a room photo if missing, then explicitly presses Generate preview to start paid generation. If the user did not identify one product, show distinct verified cards rather than prompt for fabric, colour or size. Do not promise custom colours or exact positioning.
+- When a shopper wants to see a product in their room, show a verified product card rather than ask for a configuration. The customer taps Preview in my room (adding a room photo first if missing), which starts the preview. If the user did not identify one product, show distinct verified cards rather than prompt for fabric, colour or size. Do not promise custom colours or exact positioning.
 - The chat handles room photos and any email the store needs for previews. Do not ask for an email, and mention a missing room photo at most once.
 Room match:
 - Inspect the actual uploaded image before searching. Record only visible evidence; distinguish uncertain observations from facts. If the image is not a usable room photo, explain what is missing and ask for a clear room view instead of guessing.
@@ -1960,6 +1989,19 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     emit({ type: "final", reply });
     return;
   }
+  // "Use this room" without a photo cannot switch anything: ask for the photo instead of pretending.
+  if (!input.roomPhoto && planShopperTurn({ latest: history.at(-1)!.content, previousUserMessages: [], roomKnown: false, newRoomPhoto: false }).intent === "room_switch") {
+    const message = "Please attach the room photo you want to use with the camera button, then send it. I'll switch to that room and keep your selected product.";
+    const reply: AssistantReply = {
+      message, room: null, preferences: null, recommendations: [], visualise: null, selected: null,
+      selection: normaliseSelection(input.selected),
+      constraints: nextConstraints(normaliseConstraints(input.constraints), history.at(-1)!.content),
+      model: "local-room-switch",
+    };
+    await emitVerifiedReply(message, emit, input.signal);
+    emit({ type: "final", reply });
+    return;
+  }
   // A newly uploaded image must never reuse the previous room's observations while being analysed.
   const room = input.roomPhoto ? null : normaliseRoomContext(input.room);
   const preferences = normalisePreferences(input.preferences);
@@ -2125,6 +2167,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   const running: any[] = [...conversation];
   const picturedProducts = new Set<string>();
   let final: any = null;
+  let roomSwitched = false;
   for (; rounds < MAX_TOOL_ROUNDS; rounds += 1) {
     const response = await call({
       input: running,
@@ -2160,6 +2203,24 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
         if (photos.length) running.push({ role: "user", content: photos });
       }
     }
+    // A room switch is complete once the new photo's observations are recorded; nothing else was asked.
+    if (ctx.intentPlan?.intent === "room_switch" && ctx.room) { roomSwitched = true; break; }
+  }
+  if (roomSwitched) {
+    const message = await roomSwitchReply(ctx);
+    const reply: AssistantReply = {
+      message, room: ctx.room, preferences: ctx.preferences, recommendations: ctx.recommendations, visualise: ctx.visualise, selected: ctx.selected,
+      selection: ctx.selected
+        ? { productRef: ctx.selected.productRef, variantRef: ctx.selected.variantRef, source: ctx.selectionSource ?? "conversation" }
+        : ctx.selection,
+      constraints: ctx.constraints,
+      model,
+    };
+    logAssistant("assistant_request", { shop: input.shopId, durationMs: Date.now() - started, rounds: rounds + 1, toolCalls, shopifyCalls: ctx.budget.calls,
+      cache: ctx.cacheState, inputTokens, outputTokens, recommendations: 0, photo: true, roomSwitch: true, model }, "info");
+    await emitVerifiedReply(message, emit, input.signal);
+    emit({ type: "final", reply });
+    return;
   }
   if (!final) final = await call({ input: running, tool_choice: "none" });
 
@@ -2182,11 +2243,12 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   // Prefer a concise grounded introduction over contradicting what was actually returned.
   const contradictsCards = ctx.recommendations.length > 0 &&
     /\b(?:found no|couldn['’]t find|cannot find|no (?:matching|suitable|available)|nothing matches|no beds|no sofas)\b/i.test(guarded.message);
-  const conciseMessage = conciseAssistantReply(removeAppearanceChoiceRequests(contradictsCards
+  const startPreview = ctx.intentPlan?.intent === "preview" && ctx.hasPhoto && !!ctx.visualise?.previewAvailable;
+  const conciseMessage = conciseAssistantReply(guardPreviewClaims(removeAppearanceChoiceRequests(contradictsCards
     ? (ctx.recommendations.length === 1
       ? "Here is one verified option from this store to consider."
       : "Here are verified options from this store to compare. You can preview an approved product in your room.")
-    : guarded.message), ctx.recommendations.length, ctx.latestMessage);
+    : guarded.message), !!ctx.visualise, startPreview), ctx.recommendations.length, ctx.latestMessage);
   const groundedIntro = ctx.recommendations.length
     ? recommendationIntro(ctx.recommendations.length, ctx.latestMessage, ctx.activeRoom)
     : conciseMessage;
@@ -2208,6 +2270,7 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
       : ctx.selection,
     constraints: ctx.constraints,
     model,
+    ...(startPreview ? { startPreview: true } : {}),
   };
   logAssistant("assistant_request", {
     shop: input.shopId,

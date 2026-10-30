@@ -39,8 +39,10 @@ import {
   conciseAssistantReply,
   isConversationAcknowledgement,
   wantsRoomPreview,
+  guardPreviewClaims,
   type AssistantEvent,
 } from "../app/room-assistant.server";
+import { planShopperTurn, wantsRoomSwitch } from "../app/assistant/intent.server";
 import {
   DEFAULT_ROOM_ASSISTANT_SETTINGS,
   roomAssistantSettings,
@@ -1005,5 +1007,79 @@ describe("live shopping follow-up regressions", () => {
     expect(reply.recommendations.length).toBeGreaterThan(0);
     expect(reply.recommendations.length).toBeLessThan(10);
     expect(reply.recommendations.every(p => Number(p.price) <= 305)).toBe(true);
+  });
+});
+
+
+describe("switching rooms", () => {
+  const plan = (latest: string, newRoomPhoto: boolean) => planShopperTurn({ latest, previousUserMessages: [], roomKnown: true, newRoomPhoto }).intent;
+
+  it("recognises room switches, including typos and Roman Urdu, only with a photo or an explicit room", () => {
+    for (const text of ["use this room", "Use this one", "ues thsi room", "replace the previous room", "switch to this photo", "this is my new room", "is room ko use karo", "use this pic instead"]) {
+      expect(plan(text, true), text).toBe("room_switch");
+    }
+    expect(plan("use this room", false)).toBe("room_switch");
+    // Without a photo or the word room, "this one" may be a product.
+    expect(plan("use this one", false)).not.toBe("room_switch");
+    // A preview or a product request in the new room is that request, not just a switch.
+    expect(plan("use this room and preview the bed in it", true)).toBe("preview");
+    expect(plan("show me sofas for this new room", true)).not.toBe("room_switch");
+    expect(wantsRoomSwitch("what colour is this one?")).toBe(false);
+  });
+
+  it("confirms a new room only after analysing it, keeps the selected product and offers its preview", async () => {
+    const cream = variantOf(aria, { Colour: "Cream", Size: "King" });
+    const { client, requests } = scriptedModel([
+      observeRoom({ colours: ["green"], walls: "sage green", floor: "carpet", style: "cottage" }),
+      finalAnswer("This room has sage green walls, a carpet and soft daylight."),
+    ]);
+    const roomPhoto = await sharp({ create: { width: 500, height: 400, channels: 3, background: "#9aa68a" } }).jpeg().toBuffer();
+    const reply = await ask(fixtureAdmin([aria]), client, "use this room instead", {
+      roomPhoto, room: { colours: ["white"], walls: "white", floor: "oak", style: "modern", lighting: "", furniture: [], layout: "", placement: [], notes: "" },
+      selected: { productRef: ref(aria.id), variantRef: ref(cream.id), source: "card" }, hasPhoto: true,
+    });
+    expect(reply.message).toBe(`Done, I'm now using your new room. Tap Preview in my room to see the ${aria.title} in it.`);
+    expect(reply.message).not.toMatch(/sage|carpet/);
+    expect(reply.room).toMatchObject({ walls: "sage green" });
+    expect(reply.visualise).toMatchObject({ productId: aria.id, variantId: cream.id, previewAvailable: true });
+    expect(reply.selection).toMatchObject({ productRef: ref(aria.id), variantRef: ref(cream.id), source: "card" });
+    expect(reply.startPreview).toBeUndefined();
+    // The old room is never sent while the new photo is analysed, and nothing else is asked of the model.
+    expect(JSON.stringify(requests[0].input)).not.toContain("oak");
+    expect(requests).toHaveLength(1);
+  });
+
+  it("asks for the photo instead of pretending to switch when none is attached", async () => {
+    const { client, requests } = scriptedModel([finalAnswer("Switched!")]);
+    const reply = await ask(fixtureAdmin([aria]), client, "replace the previous room with my new one", {
+      selected: { productRef: ref(aria.id), variantRef: null, source: "card" }, hasPhoto: true,
+    });
+    expect(reply.message).toMatch(/^Please attach the room photo you want to use/);
+    expect(reply.selection).toMatchObject({ productRef: ref(aria.id) });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("lets the browser start an explicitly requested preview only when a room photo is ready", async () => {
+    const cream = variantOf(aria, { Colour: "Cream", Size: "King" });
+    const script = () => scriptedModel([
+      toolCall("request_visualisation", { productRef: ref(aria.id), variantRef: ref(cream.id) }),
+      finalAnswer("Here is your preview of the Aria in your room!"),
+    ]);
+    const selected = { productRef: ref(aria.id), variantRef: ref(cream.id), source: "card" };
+    const ready = await ask(fixtureAdmin([aria]), script().client, "Preview it in my room", { selected, hasPhoto: true });
+    expect(ready.startPreview).toBe(true);
+    expect(ready.message).not.toMatch(/here is your preview/i);
+    const noPhoto = await ask(fixtureAdmin([aria]), script().client, "Preview it in my room", { selected, hasPhoto: false });
+    expect(noPhoto.startPreview).toBeUndefined();
+    expect(noPhoto.message).toContain("Tap Preview in my room");
+  });
+});
+
+describe("preview claims", () => {
+  it("removes claims that a preview exists and points to the real next step", () => {
+    expect(guardPreviewClaims("Here's your preview of the Aria Bed. It suits the oak floor.", true)).toBe("It suits the oak floor. Tap Preview in my room to create it.");
+    expect(guardPreviewClaims("I've generated a preview for you!", true, true)).toBe("Your preview will appear below.");
+    expect(guardPreviewClaims("The preview is ready.", false)).toBe("Tap Preview in my room on a product card to create a preview.");
+    expect(guardPreviewClaims("Tap Preview in my room to see it in your space.", true)).toBe("Tap Preview in my room to see it in your space.");
   });
 });
