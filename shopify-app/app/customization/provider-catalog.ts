@@ -7,8 +7,9 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   manual_mapping: "Manual / Custom Mapping", unsupported: "Other providers — not yet supported",
 };
 export function isProviderId(value: string): value is ProviderId { return (PROVIDERS as readonly string[]).includes(value); }
-export function providerSummary(id: string, active: boolean) {
+export function providerSummary(id: string, active: boolean, previewOnly = false) {
   if (id === "shopify_native") return { id, label: "Shopify Native Options", status: "Validated per preview", blocked: false };
+  if (id === "manual_mapping" && previewOnly) return { id, label: "Manual / Custom Mapping", status: "AI preview colours configured; validated per preview", blocked: false };
   if (id === "manual_mapping") return { id, label: "Manual / Custom Mapping", status: active ? "Mapping active; validated per preview" : "Needs setup: reviewed product mapping required", blocked: !active };
   if (id === "cloudlift") return { id, label: "Live Product Options by Cloudlift (native-linked mapping)",
     status: active ? "Native-linked mapping active; validated against Shopify per preview" : "Needs setup: reviewed exact Shopify variants and media required",

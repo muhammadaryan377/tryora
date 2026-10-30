@@ -96,3 +96,13 @@ export function parseFabricDocument(raw: unknown, shopId: string, productId: str
       raw.schemaVersion !== 1 || raw.shopId !== shopId || raw.productId !== productId || !(raw.published === null || record(raw.published))) throw new FabricConfigError("Fabric configuration belongs to a different shop/product or has an unsupported format.");
   return { kind: "fabric_colour_manager", schemaVersion: 1, shopId, productId, draft: parseFabricDraft(raw.draft), published: raw.published as ManualMapping | null };
 }
+
+/** Recognize saved illustrative catalogues without treating unfinished exact mappings as ready. */
+export function hasPreviewOnlyColours(raw: unknown, shopId: string, productId: string): boolean {
+  if (!isFabricDocument(raw)) return false;
+  try {
+    const document = parseFabricDocument(raw, shopId, productId);
+    return !document.published && document.draft.bindings.length === 0 &&
+      document.draft.fabrics.some(fabric => fabric.enabled && fabric.colours.some(colour => colour.enabled));
+  } catch { return false; }
+}
