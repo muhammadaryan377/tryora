@@ -1104,7 +1104,8 @@ export class RoomAssistant {
         if (!colours) return;
         const expanded = element.getAttribute("aria-expanded") !== "true";
         element.setAttribute("aria-expanded", String(expanded));
-        element.textContent = expanded ? "Hide colors" : "Show colors";
+        const label = element.querySelector<HTMLElement>("[data-colour-toggle-label]");
+        if (label) label.textContent = expanded ? "Hide colors" : "Show colors";
         colours.hidden = !expanded;
         return;
       }
@@ -2123,7 +2124,12 @@ export class RoomAssistant {
           <span class="tryora-assistant__swatch-dot${colour || value.image ? "" : " is-plain"}"${appearanceStyle ? ` style="${appearanceStyle}"` : ""}>${dot}</span><span class="tryora-assistant__swatch-name">${escapeHtml(value.value)}</span></button>`;
       }).join("");
       if (colourKind) {
-        return `<div class="tryora-assistant__colour-picker"><button type="button" class="tryora-assistant__colour-toggle" data-ta="toggle-colours" aria-expanded="false">Show colors</button>
+        const selected = values.find(value => value.selected);
+        const hex = selected?.colour && /^#[0-9a-f]{3,8}$/i.test(selected.colour) ? selected.colour : null;
+        const sample = selected?.image ? `<img class="tryora-assistant__colour-current-dot" src="${escapeHtml(selected.image)}" alt="">`
+          : hex ? `<i class="tryora-assistant__colour-current-dot" style="background:${hex}" aria-hidden="true"></i>` : "";
+        const summary = selected ? `<span class="tryora-assistant__colour-current">${sample}<span>Colour: ${escapeHtml(selected.value)}</span></span>` : "";
+        return `<div class="tryora-assistant__colour-picker"><button type="button" class="tryora-assistant__colour-toggle" data-ta="toggle-colours" aria-expanded="false">${summary}<span data-colour-toggle-label>Show colors</span></button>
           <div class="tryora-assistant__optrow is-swatches is-colour" data-colour-options role="group" aria-label="${escapeHtml(attribute.name)} options" hidden>${buttons}</div></div>`;
       }
       return `<fieldset class="tryora-assistant__optgroup"><legend>${escapeHtml(attribute.name)}${panel.selections[attribute.name] ? `: <strong>${escapeHtml(panel.selections[attribute.name]!)}</strong>` : ""}</legend>

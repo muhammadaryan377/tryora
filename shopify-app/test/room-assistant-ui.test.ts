@@ -1213,14 +1213,14 @@ describe("simple chat cards and safe direct previews", () => {
     const toggle = picker.querySelector<HTMLButtonElement>("[data-ta='toggle-colours']")!;
     const colours = picker.querySelector<HTMLElement>("[data-colour-options]")!;
     expect(colours.hidden).toBe(true);
-    expect(toggle.textContent).toBe("Show colors");
+    expect(toggle.querySelector("[data-colour-toggle-label]")!.textContent).toBe("Show colors");
     toggle.click();
     expect(colours.hidden).toBe(false);
-    expect(toggle.textContent).toBe("Hide colors");
+    expect(toggle.querySelector("[data-colour-toggle-label]")!.textContent).toBe("Hide colors");
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
     toggle.click();
     expect(colours.hidden).toBe(true);
-    expect(toggle.textContent).toBe("Show colors");
+    expect(toggle.querySelector("[data-colour-toggle-label]")!.textContent).toBe("Show colors");
     expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Plush']")).not.toBeNull();
     expect(element.querySelector("[data-ta='opt'][data-attr='Fabric'][data-value='Teddy']")).not.toBeNull();
     expect(element.querySelector("[data-ta='opt'][data-attr='Colour'][data-value='Cream']")).not.toBeNull();
@@ -1255,8 +1255,9 @@ describe("simple chat cards and safe direct previews", () => {
     expect(chosen.querySelector(".tryora-assistant__thumb img")!.getAttribute("src")).toBe("https://cdn.shopify.com/aria-13.jpg");
     expect(chosen.querySelector("a[data-ta='view-details']")!.getAttribute("href")).toBe("/products/aria?variant=13");
     expect(chosen.textContent).toContain("Colour: Orange");
+    expect(chosen.querySelector(".tryora-assistant__colour-current")!.textContent).toBe("Colour: Orange");
     expect(chosen.querySelector<HTMLElement>("[data-colour-options]")!.hidden).toBe(true);
-    expect(chosen.querySelector("[data-ta='toggle-colours']")!.textContent).toBe("Show colors");
+    expect(chosen.querySelector("[data-colour-toggle-label]")!.textContent).toBe("Show colors");
     expect(assistant.state.selected).toEqual({ productRef: "1", variantRef: "13", source: "options" });
     expect(proxy.calls.some(call => call.url.includes("/assistant/preview-check?") && call.url.includes("ProductVariant%2F13"))).toBe(true);
     expect(proxy.calls.some(call => call.url === "/apps/visully/preview")).toBe(false);
