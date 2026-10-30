@@ -20,6 +20,7 @@ export interface OptionVariant {
   previewContext?: { mappingRevision: string; sourceVariantId: string; pageSourceVariantId?: string };
 }
 export interface ProductOptions {
+  previewOnly?: boolean;
   swatchAppearance?: { shape: "circle" | "rectangle"; size: number };
   productRef: string;
   productId: string;
@@ -77,6 +78,8 @@ export function resolveVariant(data: ProductOptions, selections: Record<string, 
 
 /** The selections that describe an existing variant (used to pre-fill the selector from a card's variant). */
 export function selectionsFor(data: ProductOptions, variantRef: string | null): Record<string, string> {
+  // Virtual appearances share a native ID: never infer a colour from the first matching row.
+  if (data.previewOnly) return {};
   const matching = variantRef ? data.variants.filter((entry) => entry.ref === variantRef) : [];
   // Preview-only appearances reuse one source variant; never guess which fabric/colour was meant.
   const variant = matching.length === 1 ? matching[0] : null;

@@ -108,6 +108,8 @@ describe("saved preview-only catalogue compatibility", () => {
       { id: productId } as any, variant, state.context.config);
     expect(result.status).toBe("available");
     expect(resolve).toHaveBeenCalled();
-    expect((await exactPreviewStatus({ shopId, admin } as any, { id: productId } as any, variant, state.context.config)).status).toBe("choose_options");
+    const original = await exactPreviewStatus({ shopId, admin } as any, { id: productId } as any, variant, state.context.config);
+    expect(original).toMatchObject({ status: "available", optionValue: "__original__" });
+    expect(resolve).toHaveBeenLastCalledWith(expect.anything(), "__original__", variant.id, "revision-1");
   });
 });
