@@ -155,8 +155,10 @@ describe("conversation memory", () => {
     const offer = await ask(admin, second.client, [
       { role: "user", content: "I like the second one" }, { role: "assistant", content: "Good choice." }, { role: "user", content: "Show it in my room" },
     ], { selected: { productRef: liked.selected!.productRef, variantRef: liked.selected!.variantRef }, hasPhoto: true });
-    expect(second.requests[0].input.find((item: any) => item.role === "developer").content).toContain(`selected most recently: productRef ${ref(thames.id)}`);
+    // The remembered selection is previewed directly, without asking the model which product "it" is.
+    expect(second.requests).toHaveLength(0);
     expect(offer.visualise).toMatchObject({ productId: thames.id, previewAvailable: true, optionValue: "__single__" });
+    expect(offer.startPreview).toBe(true);
   });
 
   it("refuses a multi-option preview without requesting fabric or colour from the shopper", async () => {
@@ -164,7 +166,10 @@ describe("conversation memory", () => {
     const { client, requests } = scriptedModel([toolCall("request_visualisation", { productRef: ref(egerie.id), variantRef: null }), finalAnswer("Pick a fabric first.")]);
     const reply = await ask(fixtureAdmin([egerie]), client, [{ role: "user", content: "Show it in my room" }], { selected: { productRef: ref(egerie.id), variantRef: null } });
     expect(reply.visualise).toBeNull();
-    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: false, reason: "An exact approved product appearance could not be verified for room preview." });
+    expect(reply.startPreview).toBeUndefined();
+    expect(requests).toHaveLength(0);
+    // The product card has its own fabric/colour choices; the chat never asks for them in prose.
+    expect(reply.message).not.toMatch(/fabric|colou?r|which/i);
   });
 
   it("keeps shopper-stated room facts and earlier preferences in later turns", async () => {

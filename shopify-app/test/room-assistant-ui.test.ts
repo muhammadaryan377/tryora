@@ -2072,3 +2072,70 @@ describe("room photo validation on upload", () => {
     expect(previewStarts()).toHaveLength(0);
   });
 });
+
+
+describe("previews requested in chat start automatically", () => {
+  const previewStarts = () => proxy.calls.filter((call) => call.url === "/apps/visully/preview");
+  const requested = (message = "Sure, I'm creating a preview of the Aria Bed in your room.") =>
+    [{ type: "final", reply: { message, recommendations: [], visualise: card(), startPreview: true } }, { type: "done" }];
+  async function ask(text: string) {
+    await type(text);
+    click("[data-ta='send']");
+    await settle(60);
+  }
+
+  it("asks for a room photo, then starts the requested preview as soon as a valid photo is added", async () => {
+    const assistant = makeAssistant();
+    assistant.open();
+    proxy.script(requested("Please upload a photo of your room and I'll create the preview of the Aria Bed straight away."));
+    await ask("show the aria in my room");
+    expect(previewStarts()).toHaveLength(0);
+    expect(assistant.pendingPreview).toMatchObject({ productId: "gid://shopify/Product/1", variantId: "gid://shopify/ProductVariant/11" });
+    await attachFile("bedroom.jpg");
+    await settle(1500);
+    expect(previewStarts()).toHaveLength(1);
+    expect(previewStarts()[0]!.body!.get("variant")).toBe("gid://shopify/ProductVariant/11");
+    expect(previewStarts()[0]!.body!.get("option")).toBe("Cream");
+  });
+
+  it("shows the existing preview again for the same product, variant and room instead of generating another", async () => {
+    const assistant = makeAssistant();
+    assistant.open();
+    proxy.script([{ type: "recommendations", items: [card()] }], [{ type: "final", reply: { message: "Here you go.", recommendations: [] } }, { type: "done" }]);
+    await ask("beds?");
+    await attachFile("bedroom.jpg");
+    click(".tryora-assistant__attachment-action");
+    await settle(1500);
+    expect(previewStarts()).toHaveLength(1);
+    proxy.script(requested());
+    await ask("show me the first one in my room");
+    await settle(300);
+    expect(previewStarts()).toHaveLength(1);
+    const reply = assistant.state.entries.filter((entry: any) => entry.kind === "assistant").at(-1);
+    expect(reply.text).toBe("Here's your preview of the Aria Bed in this room.");
+    // A different appearance is a new preview.
+    proxy.script([{ type: "final", reply: { message: "Sure.", recommendations: [], visualise: card({ id: "1:12", variantRef: "12", variantId: "gid://shopify/ProductVariant/12", optionValue: "Grey", options: { Colour: "Grey" } }), startPreview: true } }, { type: "done" }]);
+    await ask("show it in grey in my room");
+    await settle(1500);
+    expect(previewStarts()).toHaveLength(2);
+  });
+
+  it("never starts a second preview while one is being created", async () => {
+    let release!: () => void;
+    proxy.previewGate = new Promise((resolve) => { release = resolve; });
+    const assistant = makeAssistant();
+    assistant.roomPhoto = photo();
+    assistant.open();
+    proxy.script(requested());
+    await ask("preview the aria in my room");
+    await settle(60);
+    expect(previewStarts()).toHaveLength(1);
+    proxy.script(requested());
+    await ask("show it in my room again");
+    expect(previewStarts()).toHaveLength(1);
+    expect(document.body.textContent).toContain("Another preview is still being created. Ask again once it's ready.");
+    release();
+    await settle(1500);
+    expect(previewStarts()).toHaveLength(1);
+  });
+});

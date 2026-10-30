@@ -546,15 +546,7 @@ export class RoomAssistant {
         this.scrollToEnd(false);
         this.announce(`Room Assistant: ${reply.text}`);
         if (!this.visible) this.context.launcher?.classList.add("has-unread");
-        // "Show it in my room" with a room ready: start the same flow as tapping Preview in my room.
-        // Without a photo the card stays, since a file picker can only open from a tap.
-        if (final.startPreview === true && reply.visualise && (this.roomPhoto || this.attachment)) {
-          const item = this.effective(reply.visualise);
-          if (item.previewAvailable && item.variantId && item.optionValue) {
-            this.select(item, this.state.selected?.source === "conversation" ? "conversation" : "card");
-            queueMicrotask(() => void this.startPreview(item));
-          }
-        }
+        if (final.startPreview === true && reply.visualise) this.continueRequestedPreview(reply, reply.visualise);
         return;
       }
       case "error":
@@ -713,6 +705,47 @@ export class RoomAssistant {
     } finally {
       this.previewStarting = false;
     }
+  }
+
+  /**
+   * The shopper asked in chat to see this product in their room: run the same flow as tapping Preview in my room.
+   * An existing preview of the same product, variant and appearance in the same room is shown again instead of
+   * generating (and paying for) another. Without a room photo the request waits for a valid upload, since a file
+   * picker can only open from a tap.
+   */
+  private continueRequestedPreview(reply: AssistantEntry, offered: Recommendation) {
+    const item = this.effective(offered);
+    if (!item.previewAvailable || !item.variantId || !item.optionValue) return;
+    this.select(item, this.state.selected?.source === "conversation" ? "conversation" : "card");
+    const existing = this.reusablePreview(item);
+    if (existing) {
+      reply.text = `Here's your preview of the ${item.title} in this room.`;
+      this.save();
+      this.renderEntry(reply.id);
+      this.followPreview = null;
+      this.scrollToEntry(existing.id, true);
+      this.announce(reply.text);
+      return;
+    }
+    if (this.previewStarting || this.previews.size > 0 || this.state.entries.some((entry) => entry.kind === "preview" && entry.status === "generating")) {
+      this.addNotice("Another preview is still being created. Ask again once it's ready.");
+      return;
+    }
+    if (!this.roomPhoto && !this.attachment) {
+      this.pendingPreview = item;
+      this.renderComposer();
+      return;
+    }
+    queueMicrotask(() => void this.startPreview(item));
+  }
+
+  /** A finished preview of exactly this product, variant and appearance, made in the current room. */
+  private reusablePreview(item: Recommendation): PreviewEntry | null {
+    // A photo attached but not yet used is a different room.
+    if (this.attachment || !this.state.roomKey) return null;
+    return [...this.state.entries].reverse().find((entry): entry is PreviewEntry => entry.kind === "preview" && entry.status === "ready" &&
+      this.previewUrls.has(entry.id) && entry.roomKey === this.state.roomKey && entry.item.productId === item.productId &&
+      entry.item.variantId === item.variantId && entry.item.optionValue === item.optionValue) ?? null;
   }
 
   /** Rehydrate only this shop/tab's local images and reattach to the same server preview job. */

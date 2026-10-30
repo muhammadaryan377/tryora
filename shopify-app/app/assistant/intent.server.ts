@@ -22,6 +22,35 @@ const ROOM_SWITCH = new RegExp([
   "\\b(?:naya|nayi|dusra|doosra|dusri)\\s+(?:room|rom|photo|pic)\\b",
 ].join("|"), "i");
 
+const ROOM_PLACE = "(?:room|rom|bedroom|bed room|living ?room|lounge|space|home|house|flat|apartment|place)";
+const IN_MY_ROOM = `\\b(?:in|into|inside|within)\\s+(?:my|the|this|our|mine|me)\\s+(?:\\w+\\s+)?${ROOM_PLACE}\\b`;
+const PREVIEW_REQUEST = new RegExp([
+  // Typos included: phones autocorrect badly.
+  "\\b(?:preview|previw|preveiw|previews|visuali[sz]e|visuali[sz]ation|visuali[sz]ed|visuli[sz]e|visulai[sz]e|vizuali[sz]e)\\b",
+  `\\b(?:show|see|put|place|try|view|display|add|fit|imagine|test)\\b[^.!?]{0,60}${IN_MY_ROOM}`,
+  "\\bhow\\s+(?:would|will|does|do|might|could|it'?d|wud)\\s+(?:it|this|that|they|these|those|(?:the|this|that)\\s+\\w+(?:\\s+\\w+)?)\\s+look\\b",
+  `\\bwhat\\s+(?:would|will|does|might)\\s+(?:it|this|that|they|(?:the|this|that)\\s+\\w+(?:\\s+\\w+)?)\\s+look\\s+like${"[^.!?]{0,20}"}${IN_MY_ROOM}`,
+  // Roman Urdu: "mere room mein dikhao", "is ko mere kamre me lagao"
+  "\\b(?:mere|mery|meray|mera|apne|hamare)\\s+(?:room|rom|kamre|kamray|kamra|bedroom)\\s*(?:me|mein|main|mai|mn)?\\b[^.!?]{0,30}\\b(?:dikhao|dikhaen|dikhayein|dikha|lagao|laga|rakho|dekhna|dekhao)\\b",
+].join("|"), "i");
+// "Show me the 3rd one", "and that one?": a bare reference that continues an earlier preview request.
+const BARE_REFERENCE = /^\s*(?:and\s+|now\s+|also\s+|ok(?:ay)?,?\s+|what about\s+|how about\s+|then\s+)?(?:(?:can you\s+|please\s+)?(?:show|try|do|see|preview)\s+(?:me\s+)?)?(?:the\s+)?(?:first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth|last|1st|2nd|3rd|[4-9]th|10th|this|that|next|other|same)(?:\s+(?:one|bed|sofa|chair|table|product|option|item))?(?:\s+(?:too|as well|please))?\s*[?.!]*\s*$/i;
+
+/**
+ * The shopper wants to see a product in their room, however it is phrased. A bare reference ("show me the 3rd one")
+ * counts only right after a preview request; on its own it may just mean "show me its card".
+ */
+export function wantsProductPreview(message: string, previousUserMessages: string[] = []): boolean {
+  if (PREVIEW_REQUEST.test(message)) return true;
+  const previous = previousUserMessages.at(-1);
+  return !!previous && PREVIEW_REQUEST.test(previous) && BARE_REFERENCE.test(message);
+}
+
+/** "Show me sofas in my room" asks for a category, not a specific product. */
+export function mentionsCategory(message: string): boolean {
+  return CATEGORY.test(message);
+}
+
 /** "Use this room", "replace the previous room", "switch to this photo": the shopper is changing the active room. */
 export function wantsRoomSwitch(message: string): boolean {
   return ROOM_SWITCH.test(message);
@@ -77,7 +106,7 @@ export function planShopperTurn(input: {
     .map(categoryOf).find((value): value is string => !!value) ?? null;
   const inheritedCategory = !mentionedCategory && FOLLOW_UP.test(latest) ? previousCategory : null;
   const knownCategory = mentionedCategory ?? inheritedCategory;
-  const preview = /\b(preview|visuali[sz]e)\b|\b(?:show|see)\b[^.!?]*\b(?:in my room|in this room)\b|\bhow (?:does|would|will) (?:it|this|that) look\b/i.test(lower);
+  const preview = wantsProductPreview(latest, input.previousUserMessages);
   const compare = /\b(compare|versus|vs\.?|difference|which (?:is|one is) (?:better|cheaper|more expensive)|which one (?:costs? less|costs? more)|cheapest|least expensive|most expensive|lower price|higher price)\b/i.test(lower);
   const more = /\b(show|see|give|any)\s+(?:me\s+)?(?:more|moes|mroe)\b|\b(?:more|other|different|another)\s+(?:options?|products?|choices?|ones?|sofas?|beds?)\b|\b(?:something else|anything else)\b/i.test(lower);
   const support = /\b(ship|ships|shipping|deliver(?:y|ies)?|return(?:s)?|refund|warrant(?:y|ies)|order status|opening hours|contact)\b/i.test(lower);
