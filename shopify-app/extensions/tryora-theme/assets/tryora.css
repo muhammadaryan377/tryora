@@ -772,3 +772,8 @@ html.tryora-assistant-locked { overflow: hidden; }
   .tryora-assistant__actions { flex-shrink: 0; }
   .tryora-assistant__heading p { white-space: normal; overflow: visible; text-overflow: clip; font-size: 12px; }
 }
+
+.tryora-assistant__colour-toggle { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.tryora-assistant__colour-current { display:flex; align-items:center; gap:7px; min-width:0; overflow-wrap:anywhere; font-weight:600; }
+.tryora-assistant__colour-current-dot { display:block; width:18px; height:18px; flex:0 0 18px; object-fit:cover; border:1px solid var(--ta-line); border-radius:50%; }
+.tryora-assistant__colour-toggle [data-colour-toggle-label] { font-weight:400; text-decoration:underline; }
