@@ -42,7 +42,7 @@ import {
   guardPreviewClaims,
   type AssistantEvent,
 } from "../app/room-assistant.server";
-import { planShopperTurn, wantsRoomSwitch } from "../app/assistant/intent.server";
+import { planShopperTurn, wantsProductPreview, wantsRoomSwitch } from "../app/assistant/intent.server";
 import {
   DEFAULT_ROOM_ASSISTANT_SETTINGS,
   roomAssistantSettings,
@@ -422,13 +422,10 @@ describe("visualisation in the conversation", () => {
       shown: recommendations.recommendations, room: recommendations.room, preferences, constraints: recommendations.constraints, hasPhoto: true,
     });
     expect(preview.visualise).toMatchObject({ productId: alt.id, variantId: alt.variants[0]!.id, optionValue: "Cream", options: { Colour: "Cream", Size: "King" }, previewAvailable: true });
-    const context = followup.requests[0].input.find((item: any) => item.role === "developer").content;
-    expect(context).toContain("floor oak");
-    expect(context).toContain("budget up to 1100");
-    expect(context).toContain("colours Cream");
-    expect(context).toContain("sizes King");
-    expect(JSON.stringify(followup.requests)).not.toContain("input_image");
-    expect(toolOutputs(followup.requests, "call-request_visualisation")[0]).toMatchObject({ offered: true, needsPhoto: false });
+    // "The second one" is resolved from the cards on the server, so no model call (or room photo upload) is needed.
+    expect(followup.requests).toHaveLength(0);
+    expect(preview.startPreview).toBe(true);
+    expect(preview.constraints).toMatchObject({ budgetMax: 1100 });
   });
 
   it("offers an AI preview card only for a strictly verified variant", async () => {
@@ -441,8 +438,9 @@ describe("visualisation in the conversation", () => {
       selected: { productRef: ref(aria.id), variantRef: ref(cream.id) }, hasPhoto: true,
     });
     expect(reply.visualise).toMatchObject({ productId: aria.id, variantId: cream.id, previewAvailable: true, optionValue: "Cream" });
-    expect(toolOutputs(requests, "call-request_visualisation")[0]).toMatchObject({ offered: true, needsPhoto: false });
-    expect(requests[0].input.find((item: any) => item.role === "developer").content).toContain(`selected most recently: productRef ${ref(aria.id)}, variantRef ${ref(cream.id)}`);
+    // The selected exact variant is previewed directly; the model is not asked to pick it.
+    expect(requests).toHaveLength(0);
+    expect(reply.startPreview).toBe(true);
   });
 
   it("never offers a preview for a sold-out, unconfigured or Cloudlift-mapped variant", async () => {
@@ -1068,10 +1066,11 @@ describe("switching rooms", () => {
     const selected = { productRef: ref(aria.id), variantRef: ref(cream.id), source: "card" };
     const ready = await ask(fixtureAdmin([aria]), script().client, "Preview it in my room", { selected, hasPhoto: true });
     expect(ready.startPreview).toBe(true);
-    expect(ready.message).not.toMatch(/here is your preview/i);
+    expect(ready.message).toBe("Sure, I'm creating a preview of the Aria Bed in your room.");
+    // Without a room photo the request still stands: the browser asks for one and continues after a valid upload.
     const noPhoto = await ask(fixtureAdmin([aria]), script().client, "Preview it in my room", { selected, hasPhoto: false });
-    expect(noPhoto.startPreview).toBeUndefined();
-    expect(noPhoto.message).toContain("Tap Preview in my room");
+    expect(noPhoto.startPreview).toBe(true);
+    expect(noPhoto.message).toBe("Please upload a photo of your room and I'll create the preview of the Aria Bed straight away.");
   });
 });
 
@@ -1081,5 +1080,104 @@ describe("preview claims", () => {
     expect(guardPreviewClaims("I've generated a preview for you!", true, true)).toBe("Your preview will appear below.");
     expect(guardPreviewClaims("The preview is ready.", false)).toBe("Tap Preview in my room on a product card to create a preview.");
     expect(guardPreviewClaims("Tap Preview in my room to see it in your space.", true)).toBe("Tap Preview in my room to see it in your space.");
+  });
+});
+
+
+describe("previews requested in chat", () => {
+  const luna = fixtureProduct({ id: 40, title: "Luna Bed", productType: "Bed", options: { Colour: ["Cream", "Grey"], Size: ["King"] }, price: 749 });
+  const willow = fixtureProduct({ id: 41, title: "Willow Bed", productType: "Bed", options: { Colour: ["Cream"], Size: ["King"] }, price: 849 });
+  const ariaCream = () => variantOf(aria, { Colour: "Cream", Size: "King" });
+  const admin = () => fixtureAdmin([aria, luna, willow, oslo]);
+  const cards = () => [
+    { productRef: ref(aria.id), variantRef: ref(ariaCream().id) },
+    { productRef: ref(luna.id), variantRef: ref(luna.variants[0]!.id) },
+    { productRef: ref(willow.id), variantRef: ref(willow.variants[0]!.id) },
+  ];
+  // No model call is expected when the product is known; any call would consume this script.
+  const unused = () => scriptedModel([finalAnswer("unused")]);
+  beforeEach(() => { state.configs.push({ ...ariaConfig(), id: "luna", productId: luna.id }, { ...ariaConfig(), id: "willow", productId: willow.id }); });
+
+  it.each([
+    "Show me Oxford Bed in my room.",
+    "Can you show this bed in my bedroom?",
+    "How would this look in my room?",
+    "Try this product in my room.",
+    "I want to see the second bed in my room.",
+    "Can I visualize this one?",
+    "Put this bed in my room.",
+    "What would this look like in my space?",
+    "previw the aria in my room",
+    "is ko mere room mein dikhao",
+  ])("recognises %j as a preview request", (phrase) => {
+    expect(planShopperTurn({ latest: phrase, previousUserMessages: [], roomKnown: true, newRoomPhoto: false }).intent).toBe("preview");
+  });
+
+  it("treats a bare reference as a preview only right after a preview request", () => {
+    expect(wantsProductPreview("Show me the 3rd one", ["Show the first one in my room"])).toBe(true);
+    expect(wantsProductPreview("and the last one?", ["Can I see the Aria in my room?"])).toBe(true);
+    expect(wantsProductPreview("Show me the 3rd one", ["Show me beds"])).toBe(false);
+    expect(wantsProductPreview("What does the Aria look like?")).toBe(false);
+  });
+
+  it("previews the third of the recommended products with its card's variant, without asking the model", async () => {
+    const model = unused();
+    const reply = await ask(admin(), model.client, "Show me the 3rd one in my room", { shown: cards(), hasPhoto: true });
+    expect(reply.visualise).toMatchObject({ productId: willow.id, variantId: willow.variants[0]!.id, previewAvailable: true });
+    expect(reply.startPreview).toBe(true);
+    expect(reply.message).toBe("Sure, I'm creating a preview of the Willow Bed in your room.");
+    expect(model.requests).toHaveLength(0);
+  });
+
+  it("continues a preview request with a bare ordinal", async () => {
+    const reply = await answerRoomAssistant({ admin: admin(), shopId: SHOP, client: unused().client, env: {} as any, settings,
+      history: [{ role: "user", content: "Show the first one in my room" }, { role: "assistant", content: "Sure." }, { role: "user", content: "now the last one" }],
+      shown: cards(), hasPhoto: true });
+    expect(reply.visualise).toMatchObject({ productId: willow.id });
+    expect(reply.startPreview).toBe(true);
+  });
+
+  it("previews a product named from the catalogue", async () => {
+    const reply = await ask(admin(), unused().client, "Can you put the Willow bed in my bedroom?", { hasPhoto: true });
+    expect(reply.visualise).toMatchObject({ productId: willow.id, previewAvailable: true });
+    expect(reply.startPreview).toBe(true);
+  });
+
+  it("previews the product being discussed with the shopper's chosen colour", async () => {
+    const grey = variantOf(luna as typeof aria, { Colour: "Grey", Size: "King" });
+    const reply = await ask(admin(), unused().client, "How would this look in my room?", {
+      shown: cards(), selected: { productRef: ref(luna.id), variantRef: ref(grey.id), source: "options" }, hasPhoto: true,
+    });
+    expect(reply.visualise).toMatchObject({ productId: luna.id, variantId: grey.id, options: { Colour: "Grey", Size: "King" } });
+    expect(reply.selection).toMatchObject({ productRef: ref(luna.id), variantRef: ref(grey.id) });
+  });
+
+  it("previews the product page being viewed when nothing else is referenced", async () => {
+    const reply = await ask(admin(), unused().client, "show it in my room", { currentProductId: willow.id, hasPhoto: true });
+    expect(reply.visualise).toMatchObject({ productId: willow.id });
+    expect(reply.startPreview).toBe(true);
+  });
+
+  it("asks which product when the reference is ambiguous, and never picks one", async () => {
+    const model = unused();
+    const reply = await ask(admin(), model.client, "Can I visualize this one?", { shown: cards(), hasPhoto: true });
+    expect(reply.visualise).toBeNull();
+    expect(reply.startPreview).toBeUndefined();
+    expect(reply.message).toBe("Which one would you like to see in your room: 1. Aria Bed, 2. Luna Bed, 3. Willow Bed?");
+    expect(model.requests).toHaveLength(0);
+  });
+
+  it("says when the product cannot be previewed instead of starting anything", async () => {
+    const reply = await ask(admin(), unused().client, "Show me the Oslo Couch in my room", { hasPhoto: true });
+    expect(reply.visualise).toBeNull();
+    expect(reply.startPreview).toBeUndefined();
+    expect(reply.message).toMatch(/^The Oslo Couch can't be previewed in a room yet\./);
+  });
+
+  it("leaves a category request such as \"show me beds in my room\" to product discovery", async () => {
+    const model = scriptedModel([search({ query: "bed" }), finalAnswer("Here are some beds for your room.")]);
+    const reply = await ask(admin(), model.client, "show me beds in my room", { selected: { productRef: ref(aria.id), variantRef: ref(ariaCream().id), source: "card" }, hasPhoto: true });
+    expect(model.requests.length).toBeGreaterThan(0);
+    expect(reply.startPreview).toBeUndefined();
   });
 });

@@ -80,7 +80,10 @@ describe("managed manual configurations in Room Assistant", () => {
   });
   it("requires a source choice on the current page and rejects conflicting size/storage sources", async () => {
     expect((await ask(undefined, productId)).visualise).toBeNull();
-    expect((await ask({ productRef: "1", variantRef: "14", source: "options" })).visualise).toBeNull();
+    // The shopper's own Grey / Double choice is previewed exactly; the King variant the model asked for never replaces it.
+    const double = await ask({ productRef: "1", variantRef: "14", source: "options" });
+    expect(double.visualise).toMatchObject({ variantId: "gid://shopify/ProductVariant/14", previewContext: { sourceVariantId: "gid://shopify/ProductVariant/14" } });
+    expect(double.visualise!.variantId).not.toBe("gid://shopify/ProductVariant/12");
   });
 });
 

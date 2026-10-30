@@ -241,7 +241,8 @@ describe("state is rebuilt from structured data every turn", () => {
       finalAnswer("Confirm on the card."),
     ]);
     const { reply } = await turn(client, messages, { shown: [card(oslo), card(egerie)], selected: { ...card(oslo), source: "card" }, hasPhoto: true });
-    expect(toolOutputs(requests, "call-stale")[0]).toMatchObject({ error: "reference_mismatch", expectedProductRef: ref(oslo.id) });
+    // The latest card selection is resolved on the server; the model is never asked, so it cannot pick the old product.
+    expect(requests).toHaveLength(0);
     expect(reply.visualise.productRef).toBe(ref(oslo.id));
   });
 });

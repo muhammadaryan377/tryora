@@ -51,7 +51,8 @@ import {
 } from "./assistant/references.server";
 import { errorShape, logAssistant } from "./assistant/log.server";
 import { recordAssistantTokenUsage } from "./assistant/token-usage.server";
-import { planShopperTurn, type IntentPlan } from "./assistant/intent.server";
+import { mentionsCategory, planShopperTurn, type IntentPlan } from "./assistant/intent.server";
+import { normaliseText } from "./assistant/text";
 import { rankRoomRecommendations, roomFitScore } from "./assistant/room-fit.server";
 import {
   roomAssistantSettings,
@@ -1641,6 +1642,75 @@ export function guardPreviewClaims(message: string, previewOffered: boolean, aut
   return [cleaned, next].filter(Boolean).join(" ") || "Tap Preview in my room on a product card to create a preview.";
 }
 
+type PreviewTarget = { productRef: string; variantRef: string | null } | "ambiguous";
+
+/**
+ * Which product a preview request means: a name, a position in the latest cards, "this/that", the product being
+ * discussed, or the product page being viewed. "Show me sofas in my room" names a category, so it is discovery (null).
+ */
+function previewTargetOf(ctx: RequestContext, shown: ShownRecommendation[]): PreviewTarget | null {
+  const target = previewReference(ctx, shown);
+  // "Show this bed in grey": a different colour/fabric/size in the message needs the model's verified variant lookup.
+  return target && target !== "ambiguous" && namesOtherAppearance(ctx, target) ? null : target;
+}
+
+/**
+ * Whether the message names a colour, fabric or size the chosen variant does not have. Matched word by word, since
+ * real option values are often composite ("Plush Velvet: Grey | Storage: None").
+ */
+function namesOtherAppearance(ctx: RequestContext, target: { productRef: string; variantRef: string | null }): boolean {
+  const product = ctx.fresh.get(target.productRef) ?? ctx.snapshot?.byRef.get(target.productRef);
+  if (!product) return false;
+  const words = (text: string) => new Set(normaliseText(text).split(" ").filter((word) => word.length > 2 && !/^\d+$/.test(word)));
+  const chosen = target.variantRef ? product.variants.find((variant) => variant.ref === target.variantRef) : null;
+  const chosenWords = words(chosen ? Object.values(chosen.options).join(" ") : "");
+  const optionWords = words(realOptions(product.options).flatMap((option) => option.values).join(" "));
+  const titleWords = words(product.title);
+  return [...words(ctx.latestMessage)].some((word) => optionWords.has(word) && !chosenWords.has(word) && !titleWords.has(word));
+}
+
+function previewReference(ctx: RequestContext, shown: ShownRecommendation[]): PreviewTarget | null {
+  const resolution = ctx.resolution;
+  // The card the shopper saw keeps its fabric/colour; a selection keeps the variant they chose.
+  const variantOf = (ref: string) => ctx.selection?.productRef === ref ? ctx.selection.variantRef
+    : shown.find((entry) => entry.productRef === ref)?.variantRef ?? null;
+  if (resolution.kind === "selected") return { productRef: resolution.productRef, variantRef: resolution.variantRef };
+  if (resolution.kind === "named" || resolution.kind === "ordinal") return { productRef: resolution.productRef, variantRef: variantOf(resolution.productRef) };
+  if (resolution.kind === "ambiguous") return "ambiguous";
+  if (resolution.kind === "choose_for_me" || mentionsCategory(ctx.latestMessage)) return null;
+  if (ctx.selection) return { productRef: ctx.selection.productRef, variantRef: ctx.selection.variantRef };
+  if (ctx.currentProduct) return { productRef: ctx.currentProduct.ref, variantRef: null };
+  return null;
+}
+
+/** Offers the exact product through the usual preview checks; the browser starts it (or asks for a room photo first). */
+async function previewReply(ctx: RequestContext, target: PreviewTarget): Promise<{ message: string; start: boolean }> {
+  if (target === "ambiguous") {
+    const candidates = ctx.resolution.kind === "ambiguous" ? ctx.resolution.candidates : [];
+    const names = candidates.map((ref, index) => `${index + 1}. ${titleOf(ctx, ref)}`).join(", ");
+    return { message: names ? `Which one would you like to see in your room: ${names}?` : "Which product would you like to see in your room?", start: false };
+  }
+  ctx.emit({ type: "status", stage: "checking_preview" });
+  const offer = await runVisualise(ctx, target).catch(() => null) as { offered?: boolean; previewableAlternatives?: { title: string }[] } | null;
+  const title = ctx.visualise?.title ?? ctx.selected?.title;
+  if (offer?.offered && title) {
+    return {
+      message: ctx.hasPhoto ? `Sure, I'm creating a preview of the ${title} in your room.`
+        : `Please upload a photo of your room and I'll create the preview of the ${title} straight away.`,
+      start: true,
+    };
+  }
+  // A product page whose appearance is chosen in its own preview window: the card's button opens it.
+  if (title && ctx.selected?.previewStatus === "product_page") {
+    return { message: `Tap Preview in my room on the ${title} card to choose how it looks and see it in your room.`, start: false };
+  }
+  if (title) {
+    const alternatives = (offer?.previewableAlternatives ?? []).map((item) => `the ${item.title}`);
+    return { message: `The ${title} can't be previewed in a room yet.${alternatives.length ? ` You could preview ${alternatives.join(" or ")} instead.` : ""}`, start: false };
+  }
+  return { message: "I couldn't find that product. Which one would you like to see in your room?", start: false };
+}
+
 /** Confirms a room switch only after the new photo was analysed, and keeps the selected product ready to preview. */
 async function roomSwitchReply(ctx: RequestContext): Promise<string> {
   const selection = ctx.selection;
@@ -2081,6 +2151,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     selectedProductName: ctx.selection ? titleOf(ctx, ctx.selection.productRef) : null,
   });
   emit({ type: "constraints", constraints: ctx.constraints });
+  // A preview of a specific product is resolved here, not by the model, so it is never a guess.
+  const previewTarget = ctx.intentPlan.intent === "preview" ? previewTargetOf(ctx, shown) : null;
   if (current) {
     ctx.fresh.set(current.ref, current);
     notePrices(ctx, current.minPrice, current.maxPrice, ...current.variants.map((variant) => variant.price));
@@ -2175,6 +2247,8 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
   let final: any = null;
   let roomSwitched = false;
   for (; rounds < MAX_TOOL_ROUNDS; rounds += 1) {
+    // Nothing for the model to decide once the product is known (a new photo is still analysed first).
+    if (previewTarget && !ctx.photoNeedsAnalysis) break;
     const response = await call({
       input: running,
       // The first round must consult the store, so even small talk cannot produce ungrounded product claims.
@@ -2224,6 +2298,23 @@ async function run(input: AssistantTurnInput, emit: (event: AssistantEvent) => v
     };
     logAssistant("assistant_request", { shop: input.shopId, durationMs: Date.now() - started, rounds: rounds + 1, toolCalls, shopifyCalls: ctx.budget.calls,
       cache: ctx.cacheState, inputTokens, outputTokens, recommendations: 0, photo: true, roomSwitch: true, model }, "info");
+    await emitVerifiedReply(message, emit, input.signal);
+    emit({ type: "final", reply });
+    return;
+  }
+  if (previewTarget) {
+    const { message, start } = await previewReply(ctx, previewTarget);
+    const reply: AssistantReply = {
+      message, room: ctx.room, preferences: ctx.preferences, recommendations: ctx.recommendations, visualise: ctx.visualise, selected: ctx.selected,
+      selection: ctx.selected
+        ? { productRef: ctx.selected.productRef, variantRef: ctx.selected.variantRef, source: ctx.selectionSource ?? "conversation" }
+        : ctx.selection,
+      constraints: ctx.constraints,
+      model: rounds ? model : "local-preview",
+      ...(start ? { startPreview: true } : {}),
+    };
+    logAssistant("assistant_request", { shop: input.shopId, durationMs: Date.now() - started, rounds, toolCalls, shopifyCalls: ctx.budget.calls,
+      cache: ctx.cacheState, inputTokens, outputTokens, recommendations: 0, photo: !!input.roomPhoto, model: reply.model }, "info");
     await emitVerifiedReply(message, emit, input.signal);
     emit({ type: "final", reply });
     return;
