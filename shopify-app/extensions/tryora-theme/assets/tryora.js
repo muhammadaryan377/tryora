@@ -73,12 +73,12 @@ ${i.content}`.slice(-2e3)}:i}else s.push(i);return s.slice(-12)}var Ae=(o,t,e)=>
       <h3>${h(this.config.greeting)}</h3>
       <p>Find furniture that suits your room, then see it in your space.</p>
       <div class="tryora-assistant__actions-grid">
-        <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
+        ${this.context.productId?`<button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
           ${t(S.photo)}
           <span><strong>Preview this product in my room</strong>
             <small>Upload a photo of your room and see how this product looks in your space.</small></span>
           <b aria-hidden="true">&rsaquo;</b>
-        </button>
+        </button>`:""}
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="recommend">
           ${t(S.sofa)}
           <span><strong data-ta-recommend-title>${h(this.recommendationCopy().title)}</strong>
