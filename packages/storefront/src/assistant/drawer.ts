@@ -1569,8 +1569,8 @@ export class RoomAssistant {
   }
 
   private welcomeHtml() {
-    // Exactly two home cards on product and non-product pages. Product pages must
-    // not bypass these cards to reveal an extra upload form on the home screen.
+    // Show the product preview action only when Shopify supplies a current product.
+    // Keep recommendation as the first (and only) card on non-product pages.
     const actionIcon = (icon: string) => `<span class="tryora-assistant__action-icon">${icon}<i>${ICONS.camera}</i></span>`;
     const previewLink = this.context.productId && (this.context.openAssistantPreview || this.context.openCurrentPreview)
       ? `<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>` : "";
@@ -1579,12 +1579,12 @@ export class RoomAssistant {
       <h3>${escapeHtml(this.config.greeting)}</h3>
       <p>Find furniture that suits your room, then see it in your space.</p>
       <div class="tryora-assistant__actions-grid">
-        <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
+        ${this.context.productId ? `<button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="visualise">
           ${actionIcon(ICONS.photo)}
           <span><strong>Preview this product in my room</strong>
             <small>Upload a photo of your room and see how this product looks in your space.</small></span>
           <b aria-hidden="true">&rsaquo;</b>
-        </button>
+        </button>` : ""}
         <button type="button" class="tryora-assistant__action" data-ta="welcome" data-action="recommend">
           ${actionIcon(ICONS.sofa)}
           <span><strong data-ta-recommend-title>${escapeHtml(this.recommendationCopy().title)}</strong>
