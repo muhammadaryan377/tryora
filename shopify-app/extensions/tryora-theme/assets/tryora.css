@@ -461,7 +461,7 @@ html.tryora-assistant-locked { overflow: hidden; }
   --ta-accent: #181818;
   --ta-accent-ink: #ffffff;
   position: fixed; bottom: calc(20px + var(--ta-avoid, 0px)); z-index: 2147482000; display: inline-flex; align-items: center; gap: 9px;
-  min-height: 48px; padding: 7px 18px 7px 7px; border: 0; border-radius: 999px;
+  min-height: 48px; padding: 7px 18px; border: 0; border-radius: 999px;
   background: var(--ta-accent); color: var(--ta-accent-ink); cursor: pointer;
   font: 600 14.5px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif; letter-spacing: -.005em;
   box-shadow: 0 10px 28px rgba(28,28,20,.24), 0 2px 6px rgba(28,28,20,.12), inset 0 1px 0 rgba(255,255,255,.16);
@@ -502,7 +502,7 @@ html.tryora-assistant-locked { overflow: hidden; }
   .tryora-assistant__card .tryora-assistant__thumb { width: 84px; }
   .tryora-assistant__bubble { max-width: 92%; }
   html:has(.tryora-assistant[data-state="open"]) { overflow: hidden; }
-  .tryora-assistant-launch { bottom: calc(14px + env(safe-area-inset-bottom) + var(--ta-avoid, 0px)); min-height: 46px; padding-right: 15px; font-size: 14px; }
+  .tryora-assistant-launch { bottom: calc(14px + env(safe-area-inset-bottom) + var(--ta-avoid, 0px)); min-height: 46px; padding-inline: 15px; font-size: 14px; }
   .tryora-assistant-launch--bottom-right { right: 14px; }
   .tryora-assistant-launch--bottom-left { left: 14px; }
   .tryora-assistant-launch.tryora-assistant-launch--stacked { bottom: calc(14px + env(safe-area-inset-bottom) + var(--ta-stack, 56px) + var(--ta-avoid, 0px)); }

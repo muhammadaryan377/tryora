@@ -2,7 +2,6 @@
  * Room Assistant entry points used by the storefront boot: the floating launcher and the config request.
  * The drawer itself lives in ./assistant/drawer.ts.
  */
-import { VISULLY_LOGO } from "./brand.js";
 import { escapeHtml } from "./assistant/format.js";
 import { applyAssistantTheme, storefrontAssistantTheme } from "./assistant/theme.js";
 import type { AssistantConfig } from "./assistant/drawer.js";
@@ -23,8 +22,7 @@ export function buildAssistantLauncher(config: AssistantConfig, open: () => void
   button.setAttribute("aria-label", `${config.launcher.label}, AI shopping assistant`);
   button.setAttribute("aria-haspopup", "dialog");
   button.setAttribute("aria-expanded", "false");
-  button.innerHTML = `<span class="tryora-assistant-launch__icon">${VISULLY_LOGO}</span>` +
-    `<span class="tryora-assistant-launch__label">${escapeHtml(config.launcher.label)}</span>` +
+  button.innerHTML = `<span class="tryora-assistant-launch__label">${escapeHtml(config.launcher.label)}</span>` +
     `<span class="tryora-assistant-launch__dot" aria-hidden="true"></span>`;
   button.addEventListener("click", open);
   avoidFloatingWidgets(button);
