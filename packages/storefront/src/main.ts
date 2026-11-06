@@ -1,3 +1,4 @@
+import { VISULLY_LOGO } from "./brand.js";
 import { swatchAppearanceStyle, type SwatchAppearance } from "./swatch-appearance.js";
 import type { PopupPreviewHandoff } from "./preview-handoff.js";
 /**
@@ -723,7 +724,7 @@ export class Tryora {
       <div class="tryora__backdrop"></div>
       <div class="tryora__dialog" role="dialog" aria-modal="true" aria-labelledby="tryora-h">
         <div class="tryora__top">
-          <span class="tryora__brand">${esc(document.title.split(/[|–-]/).pop()?.trim() || "")}</span>
+          <span class="tryora__brand">${VISULLY_LOGO}${esc(document.title.split(/[|–-]/).pop()?.trim() || "")}</span>
           <button class="tryora__x" data-act="close" aria-label="Close">×</button>
         </div>
         <h2 class="tryora__h" id="tryora-h">${heading}</h2>

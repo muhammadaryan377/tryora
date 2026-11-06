@@ -5,6 +5,8 @@ export default function App() {
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
+        <link rel="icon" type="image/jpeg" href="/visully-logo.jpeg" />
+        <link rel="apple-touch-icon" href="/visully-logo.jpeg" />
         <meta name="viewport" content="width=device-width,initial-scale=1" />
         <link rel="preconnect" href="https://cdn.shopify.com/" />
         <link

@@ -1,3 +1,4 @@
+import { VISULLY_LOGO } from "../brand.js";
 import { swatchAppearanceStyle } from "../swatch-appearance.js";
 import type { PopupPreviewDelivery, PopupPreviewHandoff } from "../preview-handoff.js";
 /**
@@ -1215,7 +1216,7 @@ export class RoomAssistant {
     root.innerHTML = `<div class="tryora-assistant__backdrop"></div>
       <section class="tryora-assistant__panel" role="dialog" aria-labelledby="tryora-assistant-title" aria-describedby="tryora-assistant-subtitle">
         <header class="tryora-assistant__header">
-          <span class="tryora-assistant__avatar">${ICONS.spark}</span>
+          <span class="tryora-assistant__avatar">${VISULLY_LOGO}</span>
           <div class="tryora-assistant__heading">
             <h2 id="tryora-assistant-title">Room Assistant</h2>
             <p id="tryora-assistant-subtitle">Find furniture for your room</p>
@@ -1575,7 +1576,7 @@ export class RoomAssistant {
     const previewLink = this.context.productId && (this.context.openAssistantPreview || this.context.openCurrentPreview)
       ? `<button type="button" class="tryora-assistant__link tryora-assistant__welcome-link" data-ta="product-preview">Use product preview instead</button>` : "";
     return `<div class="tryora-assistant__welcome">
-      <span class="tryora-assistant__welcome-icon">${ICONS.spark}</span>
+      <span class="tryora-assistant__welcome-icon">${VISULLY_LOGO}</span>
       <h3>${escapeHtml(this.config.greeting)}</h3>
       <p>Find furniture that suits your room, then see it in your space.</p>
       <div class="tryora-assistant__actions-grid">

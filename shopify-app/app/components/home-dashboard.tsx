@@ -374,7 +374,7 @@ export function HomeDashboard({ data: d }: { data: DashboardData }) {
         <div className={styles.main}>
           <header className={styles.header}>
             <div>
-              <h1>Welcome to Visully</h1>
+              <h1 style={{ display: "flex", alignItems: "center", gap: 10 }}><img src="/visully-logo.jpeg" alt="" width={36} height={36} style={{ flexShrink: 0, borderRadius: 8, objectFit: "contain" }} />Welcome to Visully</h1>
               <p>Create stunning AI product visualizations for your shoppers</p>
             </div>
             <div className={styles.store} title={d.shop}>
